@@ -11,5 +11,6 @@ This repository contains generic architectural patterns and logic skeletons deve
 - Infraction Notifier `TBD`
 - Absence Notifier `v0.2.1`
 - Review Notifier `TBD`
+- Auto Schedule Generator `0.0.3`
 
 Future projects will be added here
