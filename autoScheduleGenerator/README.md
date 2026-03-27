@@ -15,14 +15,14 @@ The script would also include weighing the following in order to generate prefer
 4. Output: Push the best fitting arrangement back into the spreadsheet or a new "generated sheet"
 
 ## Manager Guide:
-This section is desiged to explain the logic to someone who doesn't care about code, but cares about results.
+This section is designed to explain the logic to someone who doesn't care about code, but cares about results.
 
 The **Goal**: To create a fair, full schedule that meets daily staffing needs while honoring employee seniority and requested days off and vacation/personal time
 
 1. The brains of the operation (Seniority Logic)
 The tool does not pick names at random. It calculates a seniority rank for every person based on:
 - Length of service: How long they have been with the company.
-- Employment status: Full time roles are priorized for hours over part time roles.
+- Employment status: Full time roles are prioritized for hours over part time roles.
 - Why does this matter: High seniority employees get the first "pick" for their preferred days off or consecutive shifts.
 
 2. The "rules" (Staffing requirements)
