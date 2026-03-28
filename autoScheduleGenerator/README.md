@@ -30,4 +30,4 @@ You tell the tool how many people you need each day (e.g., 6 people scheduled mo
 The tool then works backward to fill those slots, ensuring that there are no "gaps" and building in any overlap to cover potential call-outs
 
 3. The process
-- Input: You as a manager update the Master Employee list and enter the department, 
+- Input: You as a manager update the Master Employee list and enter the department,
