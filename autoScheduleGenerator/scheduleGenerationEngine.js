@@ -14,7 +14,7 @@
  *                                                                                               __/ |                         
  *                                                                                              |___/                          
  * Built by: Adam Roy
- * Version 0.0.11
+ * Version 0.0.12
  * /
 
 /**
@@ -23,15 +23,15 @@
 function generateWeeklySchedule() {
     const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     const configurationSheet = activeSpreadsheet.getSheetByName(CONFIGURATION_SHEET_NAME);
-    const templateSheet      = activeSpreadsheet.getSheetByName(TEMPLATE_SHEET_NAME);
+    const templateSheet = activeSpreadsheet.getSheetByName(TEMPLATE_SHEET_NAME);
 
     const weeklySheetLabel = generateWeeklyDateLabel();
-    let newScheduleSheet   = activeSpreadsheet.getSheetByName(weeklySheetLabel);
-    
+    let newScheduleSheet = activeSpreadsheet.getSheetByName(weeklySheetLabel);
+
     if (newScheduleSheet) {
         activeSpreadsheet.deleteSheet(newScheduleSheet);
     }
-    
+
     newScheduleSheet = templateSheet.copyTo(activeSpreadsheet).setName(weeklySheetLabel);
     newScheduleSheet.showSheet();
 
@@ -44,18 +44,17 @@ function generateWeeklySchedule() {
     rosterData.forEach(employeeRecord => {
         const employeeName = employeeRecord[COLUMN_INDEX_NAME];
 
-        // Row labels
-        newScheduleSheet.getRange(currentDestinationRow, 1).setValue("VAC");
-        newScheduleSheet.getRange(currentDestinationRow + 1, 1).setValue("RDO");
-        newScheduleSheet.getRange(currentDestinationRow + 2, 1).setValue("SHIFT");
-        
+        // Write row labels
+        const labelRange = newScheduleSheet.getRange(currentDestinationRow, 1, 3, 1);
+        labelRange.setValues([["VAC"], ["RDO"], ["SHIFT"]]);
+
         // Optional styling so you know its just a label not actual data
-        newScheduleSheet.getRange(currentDestinationRow, 1, 3, 1)
-            .setFontSize(8)
+        labelRange.setFontSize(8)
             .setFontColor("#666666")
             .setHorizontalAlignment("right")
-            .setVerticalAlignment("middle"); 
-        
+            .setVerticalAlignment("middle")
+            .setFontStyle("italic");
+
         // Merge the name blocks in column B across 3 rows
         newScheduleSheet.getRange(currentDestinationRow, 2).setValue(employeeName);
         newScheduleSheet.getRange(currentDestinationRow, 2, 3, 1).merge().setVerticalAlignment("center");
@@ -80,7 +79,7 @@ function generateWeeklySchedule() {
     });
 
     attachStaffingSummary(newScheduleSheet, currentDestinationRow - 1);
-    
+
     for (let columnCounter = 3; columnCounter <= 9; columnCounter++) {
         resolveSeniorityConflicts(newScheduleSheet, weekDayNames[columnCounter - 3], columnCounter);
     }
@@ -93,10 +92,10 @@ function attachStaffingSummary(currentScheduleSheet, lastEmployeeRowNumber) {
     // 1. Calculate how many total employees are on this specific sheet
     // Formula: (Last Row used for employees - Header offset) / 2 rows per employee
     const totalEmployeeCount = (lastEmployeeRowNumber - 5) / 3;
-    
+
     const summaryHeaderRowIndex = lastEmployeeRowNumber + 2;
     const weekDayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    
+
     // 2. Clear the summary area to ensure a clean slate
     currentScheduleSheet.getRange(summaryHeaderRowIndex, 2, 5, 8).clearContent();
 
@@ -108,22 +107,22 @@ function attachStaffingSummary(currentScheduleSheet, lastEmployeeRowNumber) {
     // 4. Loop through each day to set formulas
     for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
         const columnNumber = 3 + dayIndex;
-        const columnLetter = String.fromCharCode(67 + dayIndex); 
+        const columnLetter = String.fromCharCode(67 + dayIndex);
         const minimumRequired = getMinimumStaffRequiredForDay(weekDayNames[dayIndex]);
 
         // Set the 'Required' value from SETTINGS
         currentScheduleSheet.getRange(summaryHeaderRowIndex, columnNumber).setValue(minimumRequired);
-        
+
         // Define the range where checkboxes live (Row 6 to the last employee row)
         const startRow = 6;
         const endRow = lastEmployeeRowNumber;
-        
+
         /** * ACTUAL STAFF FORMULA:
          * We take the total count and subtract anyone who has a checkmark in 
          * EITHER their vacation row OR their preference row.
          */
         const actualStaffFormula = `=${totalEmployeeCount} - COUNTIF(${columnLetter}${startRow}:${columnLetter}${endRow}, TRUE)`;
-        
+
         currentScheduleSheet.getRange(summaryHeaderRowIndex + 1, columnNumber)
             .setFormula(actualStaffFormula)
             .setFontWeight("bold")
@@ -141,58 +140,63 @@ function attachStaffingSummary(currentScheduleSheet, lastEmployeeRowNumber) {
  * Final resolution logic: Assigns Shift Times to working staff and bumps juniors if over-staffed.
  */
 function resolveSeniorityConflicts(currentScheduleSheet, dayName, columnNumber) {
-    const minimumRequiredStaff = getMinimumStaffRequiredForDay(dayName);
-    const lastRowInSheet       = currentScheduleSheet.getLastRow();
-    
-    // We calculate count by looking at merged cells in Column B
-    const employeeNamesList     = currentScheduleSheet.getRange("B6:B" + lastRowInSheet).getValues().filter(String);
-    const totalEmployeesOnSheet = employeeNamesList.length;
-    const maximumAllowedOff     = totalEmployeesOnSheet - minimumRequiredStaff;
+    const minStaff = getMinimumStaffRequiredForDay(dayName);
+    const lastRow = currentScheduleSheet.getLastRow();
 
-    let currentOffCount = 0;
-    let employeesMarkedAsWorking = [];
+    // Get all names and calculate total based on actual data present
+    const names = currentScheduleSheet.getRange("B6:B" + lastRow).getValues().filter(String);
+    const totalEmployees = names.length;
+    const maxAllowedOff = totalEmployees - minStaff;
 
-    // Step A: Determine Who is Working
-    for (let rowIndex = 6; rowIndex < 6 + (totalEmployeesOnSheet * 3); rowIndex += 3) {
-        const isOnVacation      = currentScheduleSheet.getRange(rowIndex, columnNumber).getValue();
-        const requestedDayOff   = currentScheduleSheet.getRange(rowIndex + 1, columnNumber).getValue();
-        const currentEmployeeName = currentScheduleSheet.getRange(rowIndex, 2).getValue();
+    let offCount = 0;
 
-        if (isOnVacation === true) {
-            currentOffCount++;
-            currentScheduleSheet.getRange(rowIndex + 1, columnNumber).setValue(false);
-            currentScheduleSheet.getRange(rowIndex + 2, columnNumber).setValue("VAC").setFontColor("#cc0000");
-        } else if (requestedDayOff === true && currentOffCount < maximumAllowedOff) {
-            currentOffCount++;
-            currentScheduleSheet.getRange(rowIndex + 2, columnNumber).setValue("OFF").setFontColor("#666666"); // Clear time if they are off
-        } else {
-            // This employee is Working
-            currentScheduleSheet.getRange(rowIndex + 1, columnNumber).setValue(false);
-            employeesMarkedAsWorking.push({ row: rowIndex, name: currentEmployeeName });
-        }
+    // Reset Column J for this day's calculation to prevent stacking errors
+    // (Only do this on Monday/Column 3 to start fresh)
+    if (columnNumber === 3) {
+        currentScheduleSheet.getRange(6, 10, totalEmployees * 3, 1).setValue(0);
     }
 
-    // Step B: Assign Timing based on SETTINGS
-    const configurationSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
-    const fullRosterData     = configurationSheet.getRange(2, 1, configurationSheet.getLastRow(), 8).getValues();
+    // Step A: Determine Who is Working (Increment by 3)
+    for (let i = 0; i < totalEmployees; i++) {
+        const row = 6 + (i * 3);
+        const isVacation = currentScheduleSheet.getRange(row, columnNumber).getValue();
+        const isRDO = currentScheduleSheet.getRange(row + 1, columnNumber).getValue();
+        const empName = currentScheduleSheet.getRange(row, 2).getValue();
+        const shiftCell = currentScheduleSheet.getRange(row + 2, columnNumber);
 
-    employeesMarkedAsWorking.forEach(worker => {
-        const employeeConfigRecord = fullRosterData.find(record => record[COLUMN_INDEX_NAME] === worker.name);
-        const employmentStatus     = employeeConfigRecord ? employeeConfigRecord[COLUMN_INDEX_EMPLOYMENT_STATUS] : "PT";
-        const shiftPreference      = employeeConfigRecord ? employeeConfigRecord[COLUMN_INDEX_SHIFT_PREFERENCE] : "Morning";
+        // 1. Check Vacation First (Non-negotiable)
+        if (isVacation === true) {
+            offCount++;
+            currentScheduleSheet.getRange(row + 1, columnNumber).setValue(false); // Clear RDO
+            shiftCell.setValue("VAC").setFontColor("#cc0000").setHorizontalAlignment("center");
+        }
+        // 2. Check RDO (Only if we haven't hit the limit)
+        else if (isRDO === true && offCount < maxAllowedOff) {
+            offCount++;
+            shiftCell.setValue("OFF").setFontColor("#666666").setHorizontalAlignment("center");
+        }
+        // 3. Otherwise: Assign Shift
+        else {
+            currentScheduleSheet.getRange(row + 1, columnNumber).setValue(false); // Clear RDO if bumped
 
-        const formattedShiftTime = getShiftTimingFromSettings(shiftPreference, employmentStatus);
+            // Get shift info from Roster/Settings
+            const config = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
+            const roster = config.getRange(2, 1, config.getLastRow(), 8).getValues();
+            const person = roster.find(r => r[COLUMN_INDEX_NAME] === empName);
 
-        currentScheduleSheet.getRange(worker.row + 2, columnNumber)
-            .setValue(formattedShiftTime.text)
-            .setFontSize(8)
-            .setHorizontalAlignment("center")
-            .setFontColor("#000000");
-        
-        const totalHoursCell = currentScheduleSheet.getRange(worker.row + 2, 10);
-        const existingHours  = totalHoursCell.getValue() || 0;
-        totalHoursCell.setValue(existingHours + shiftInfo.hours);
-    });
+            const status = person ? person[COLUMN_INDEX_EMPLOYMENT_STATUS] : "PT";
+            const pref = person ? person[COLUMN_INDEX_SHIFT_PREFERENCE] : "Morning";
+
+            const shiftInfo = getShiftTimingFromSettings(pref, status);
+
+            // Stamp Shift Time
+            shiftCell.setValue(shiftInfo.text).setFontColor("#000000").setFontSize(8).setHorizontalAlignment("center");
+
+            // Update Total Hours in Column J
+            const totalCell = currentScheduleSheet.getRange(row + 2, 10);
+            totalCell.setValue((totalCell.getValue() || 0) + shiftInfo.hours);
+        }
+    }
 }
 
 /**
@@ -202,21 +206,21 @@ function resolveSeniorityConflicts(currentScheduleSheet, dayName, columnNumber) 
 function generateWeeklyDateLabel() {
     const todayDate = new Date();
     const dayOfWeekIndex = todayDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    
+
     // Calculate how many days to subtract to get back to the most recent Monday
     // If today is Sunday (0), we go back 6 days. Otherwise, we go back (day - 1) days.
     const daysToSubtractToReachMonday = (dayOfWeekIndex === 0) ? 6 : dayOfWeekIndex - 1;
-    
+
     const mondayDate = new Date(todayDate);
     mondayDate.setDate(todayDate.getDate() - daysToSubtractToReachMonday);
 
     // Format components with leading zeros
     const calendarMonth = (mondayDate.getMonth() + 1).toString().padStart(2, '0');
-    const calendarDay   = mondayDate.getDate().toString().padStart(2, '0');
-    const shortYear     = mondayDate.getFullYear().toString().slice(-2);
+    const calendarDay = mondayDate.getDate().toString().padStart(2, '0');
+    const shortYear = mondayDate.getFullYear().toString().slice(-2);
 
     const finalWeeklyLabel = "Week_" + calendarMonth + "_" + calendarDay + "_" + shortYear;
-    
+
     Logger.log("Generated Sheet Label: " + finalWeeklyLabel);
     return finalWeeklyLabel;
 }
