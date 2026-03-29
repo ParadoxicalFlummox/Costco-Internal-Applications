@@ -14,7 +14,7 @@
  *                                                                                               __/ |                         
  *                                                                                              |___/                          
  * Built by: Adam Roy
- * Version 0.0.12
+ * Version 0.0.15
  * /
 
 /**
@@ -26,63 +26,40 @@ function generateWeeklySchedule() {
     const templateSheet = activeSpreadsheet.getSheetByName(TEMPLATE_SHEET_NAME);
 
     const weeklySheetLabel = generateWeeklyDateLabel();
-    let newScheduleSheet = activeSpreadsheet.getSheetByName(weeklySheetLabel);
-
-    if (newScheduleSheet) {
-        activeSpreadsheet.deleteSheet(newScheduleSheet);
-    }
-
-    newScheduleSheet = templateSheet.copyTo(activeSpreadsheet).setName(weeklySheetLabel);
+    let newScheduleSheet = activeSpreadsheet.getSheetByName(weeklySheetLabel) || 
+                           templateSheet.copyTo(activeSpreadsheet).setName(weeklySheetLabel);
+    
     newScheduleSheet.showSheet();
 
     const rosterData = configurationSheet.getRange(2, 1, configurationSheet.getLastRow() - 1, 8).getValues();
-    rosterData.sort((firstEmployee, secondEmployee) => secondEmployee[COLUMN_INDEX_SENIORITY_RANK] - firstEmployee[COLUMN_INDEX_SENIORITY_RANK]);
+    rosterData.sort((a, b) => b[COLUMN_INDEX_SENIORITY_RANK] - a[COLUMN_INDEX_SENIORITY_RANK]);
 
     let currentDestinationRow = 6;
     const weekDayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
     rosterData.forEach(employeeRecord => {
-        const employeeName = employeeRecord[COLUMN_INDEX_NAME];
-
-        // Write row labels
-        const labelRange = newScheduleSheet.getRange(currentDestinationRow, 1, 3, 1);
-        labelRange.setValues([["VAC"], ["RDO"], ["SHIFT"]]);
-
-        // Optional styling so you know its just a label not actual data
-        labelRange.setFontSize(8)
-            .setFontColor("#666666")
-            .setHorizontalAlignment("right")
-            .setVerticalAlignment("middle")
-            .setFontStyle("italic");
-
-        // Merge the name blocks in column B across 3 rows
-        newScheduleSheet.getRange(currentDestinationRow, 2).setValue(employeeName);
+        // 1. Labels (A) and Name (B) - Minimal formatting
+        newScheduleSheet.getRange(currentDestinationRow, 1, 3, 1).setValues([["VAC"], ["RDO"], ["SHIFT"]]);
+        newScheduleSheet.getRange(currentDestinationRow, 2).setValue(employeeRecord[COLUMN_INDEX_NAME]);
         newScheduleSheet.getRange(currentDestinationRow, 2, 3, 1).merge().setVerticalAlignment("center");
 
-        // Insert checkboxes in the first two (of three) rows only
+        // 2. Checkboxes
         newScheduleSheet.getRange(currentDestinationRow, 3, 2, 7).insertCheckboxes();
 
+        // 3. Set RDO Preferences
         const preferences = [employeeRecord[COLUMN_INDEX_PREFERENCE_ONE], employeeRecord[COLUMN_INDEX_PREFERENCE_TWO]];
-        preferences.forEach(preferenceDay => {
-            if (preferenceDay) {
-                const dayIndex = weekDayNames.indexOf(preferenceDay);
-                if (dayIndex !== -1) {
-                    newScheduleSheet.getRange(currentDestinationRow, 3 + dayIndex).setValue(true);
-                }
-            }
+        preferences.forEach(day => {
+            const dayIndex = weekDayNames.indexOf(day);
+            if (dayIndex !== -1) newScheduleSheet.getRange(currentDestinationRow + 1, 3 + dayIndex).setValue(true);
         });
-
-        const totalHoursCell = newScheduleSheet.getRange(currentDestinationRow + 2, 10);
-        totalHoursCell.setBackground("#f3f3f3").setFontWeight("bold").setHorizontalAlignment("center");
 
         currentDestinationRow += 3;
     });
 
     attachStaffingSummary(newScheduleSheet, currentDestinationRow - 1);
-
-    for (let columnCounter = 3; columnCounter <= 9; columnCounter++) {
-        resolveSeniorityConflicts(newScheduleSheet, weekDayNames[columnCounter - 3], columnCounter);
-    }
+    
+    // RUN THE BULK ENGINE
+    resolveEntireWeek(newScheduleSheet);
 }
 
 /**
@@ -139,66 +116,56 @@ function attachStaffingSummary(currentScheduleSheet, lastEmployeeRowNumber) {
 /**
  * Final resolution logic: Assigns Shift Times to working staff and bumps juniors if over-staffed.
  */
-function resolveSeniorityConflicts(currentScheduleSheet, dayName, columnNumber) {
-    const minStaff = getMinimumStaffRequiredForDay(dayName);
+function resolveEntireWeek(currentScheduleSheet) {
     const lastRow = currentScheduleSheet.getLastRow();
+    const numEmployees = Math.round((lastRow - 5) / 3);
+    const weekDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-    // Get all names and calculate total based on actual data present
-    const names = currentScheduleSheet.getRange("B6:B" + lastRow).getValues().filter(String);
-    const totalEmployees = names.length;
-    const maxAllowedOff = totalEmployees - minStaff;
+    // 1. Read the entire spreadsheet: Grab C6:J[End] (Checkboxes, Shifts, and Hours)
+    const gridRange = currentScheduleSheet.getRange(6, 3, numEmployees * 3, 8);
+    let gridValues = gridRange.getValues();
+    const names = currentScheduleSheet.getRange("B6:B" + lastRow).getValues();
 
-    let offCount = 0;
+    // 2. Load the data into a map
+    const config = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
+    const roster = config.getRange(2, 1, config.getLastRow() - 1, 8).getValues();
+    const rosterMap = {};
+    roster.forEach(r => rosterMap[r[COLUMN_INDEX_NAME]] = { status: r[COLUMN_INDEX_EMPLOYMENT_STATUS], pref: r[COLUMN_INDEX_SHIFT_PREFERENCE] });
 
-    // Reset Column J for this day's calculation to prevent stacking errors
-    // (Only do this on Monday/Column 3 to start fresh)
-    if (columnNumber === 3) {
-        currentScheduleSheet.getRange(6, 10, totalEmployees * 3, 1).setValue(0);
-    }
+    // 3. Bulk process the entire schedule matrix
+    for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
+        const minStaff = getMinimumStaffRequiredForDay(weekDays[dayIdx]);
+        const maxOff = numEmployees - minStaff;
+        let offCount = 0;
 
-    // Step A: Determine Who is Working (Increment by 3)
-    for (let i = 0; i < totalEmployees; i++) {
-        const row = 6 + (i * 3);
-        const isVacation = currentScheduleSheet.getRange(row, columnNumber).getValue();
-        const isRDO = currentScheduleSheet.getRange(row + 1, columnNumber).getValue();
-        const empName = currentScheduleSheet.getRange(row, 2).getValue();
-        const shiftCell = currentScheduleSheet.getRange(row + 2, columnNumber);
+        for (let empIdx = 0; empIdx < numEmployees; empIdx++) {
+            const base = empIdx * 3;
+            const empName = names[base][0];
+            const isVac = gridValues[base][dayIdx];
+            const isRdo = gridValues[base + 1][dayIdx];
 
-        // 1. Check Vacation First (Non-negotiable)
-        if (isVacation === true) {
-            offCount++;
-            currentScheduleSheet.getRange(row + 1, columnNumber).setValue(false); // Clear RDO
-            shiftCell.setValue("VAC").setFontColor("#cc0000").setHorizontalAlignment("center");
-        }
-        // 2. Check RDO (Only if we haven't hit the limit)
-        else if (isRDO === true && offCount < maxAllowedOff) {
-            offCount++;
-            shiftCell.setValue("OFF").setFontColor("#666666").setHorizontalAlignment("center");
-        }
-        // 3. Otherwise: Assign Shift
-        else {
-            currentScheduleSheet.getRange(row + 1, columnNumber).setValue(false); // Clear RDO if bumped
-
-            // Get shift info from Roster/Settings
-            const config = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
-            const roster = config.getRange(2, 1, config.getLastRow(), 8).getValues();
-            const person = roster.find(r => r[COLUMN_INDEX_NAME] === empName);
-
-            const status = person ? person[COLUMN_INDEX_EMPLOYMENT_STATUS] : "PT";
-            const pref = person ? person[COLUMN_INDEX_SHIFT_PREFERENCE] : "Morning";
-
-            const shiftInfo = getShiftTimingFromSettings(pref, status);
-
-            // Stamp Shift Time
-            shiftCell.setValue(shiftInfo.text).setFontColor("#000000").setFontSize(8).setHorizontalAlignment("center");
-
-            // Update Total Hours in Column J
-            const totalCell = currentScheduleSheet.getRange(row + 2, 10);
-            totalCell.setValue((totalCell.getValue() || 0) + shiftInfo.hours);
+            if (isVac === true) {
+                offCount++;
+                gridValues[base + 1][dayIdx] = false;
+                gridValues[base + 2][dayIdx] = "VAC";
+            } else if (isRdo === true && offCount < maxOff) {
+                offCount++;
+                gridValues[base + 2][dayIdx] = "OFF";
+            } else {
+                gridValues[base + 1][dayIdx] = false; // Bumped
+                const person = rosterMap[empName] || { status: "PT", pref: "Morning" };
+                const shift = getShiftTimingFromSettings(person.pref, person.status);
+                
+                gridValues[base + 2][dayIdx] = shift.text;
+                // Add hours to Column J (Index 7)
+                gridValues[base + 2][7] = (gridValues[base + 2][7] || 0) + shift.hours;
+            }
         }
     }
+
+    // 4. Bulk write, slams the entire week's worth of data down at once instead of multiple trips
+    gridRange.setValues(gridValues);
 }
-
 /**
  * Generates a standardized label for the weekly schedule tab (e.g., "Week_03_23_26").
  * It identifies the coming Monday to ensure consistent naming.

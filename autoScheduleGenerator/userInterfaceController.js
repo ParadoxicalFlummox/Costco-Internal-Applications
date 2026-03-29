@@ -14,7 +14,7 @@
  *                                                                                                                             
  *                                                                                                                             
  * Built by: Adam Roy
- * Version 0.0.11
+ * Version 0.0.15
  */
 
 
@@ -35,30 +35,34 @@ function onOpen() {
 }
 
 /**
- * Handles live spreadsheet edits.
+ * Handles live spreadsheet edits (now with bulk editing logic).
  */
 function onEdit(event) {
     const editedRange = event.range;
     const editedSheet = editedRange.getSheet();
     const sheetName   = editedSheet.getName();
-    const columnNumber = editedRange.getColumn();
-    const rowNumber    = editedRange.getRow();
+    const column      = editedRange.getColumn();
+    const row         = editedRange.getRow();
 
-    // Handle Seniority and Shift updates on the Configuration tab
-    if (sheetName === CONFIGURATION_SHEET_NAME && rowNumber > 1) {
-        const isStatusColumn = (columnNumber === (COLUMN_INDEX_EMPLOYMENT_STATUS + 1));
-        const isShiftColumn  = (columnNumber === (COLUMN_INDEX_SHIFT_PREFERENCE + 1));
-        
-        if (isStatusColumn || isShiftColumn) {
-            calculateEmployeeSeniority(rowNumber);
-        }
-        return;
+    // 1. IGNORE edits on the CONFIG or SETTINGS sheets
+    if (sheetName === CONFIGURATION_SHEET_NAME || sheetName === SETTINGS_SHEET_NAME) {
+        return; 
     }
 
-    // Handle Live Conflict Resolution on Weekly Schedule tabs
-    if (sheetName.startsWith("Week_") && columnNumber >= 3 && columnNumber <= 9 && rowNumber >= 6) {
-        const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-        const selectedDayName = dayNames[columnNumber - 3];
-        resolveSeniorityConflicts(editedSheet, selectedDayName, columnNumber);
+    // 2. TARGET: Weekly Schedule Tabs ("Week_")
+    // Only trigger if the edit is in the Checkbox Range (Cols C-I, Row 6+)
+    if (sheetName.startsWith("Week_") && column >= 3 && column <= 9 && row >= 6) {
+        
+        // K.I.S.S. Check: Is this a VAC or RDO row? 
+        // (Row - 6) % 3 == 0 is VAC, % 3 == 1 is RDO.
+        const relativeRow = (row - 6) % 3;
+        
+        if (relativeRow === 0 || relativeRow === 1) {
+            // OPTIONAL: Provide a UI hint that the script is "thinking"
+            SpreadsheetApp.getActiveSpreadsheet().toast("Re-calculating seniority and hours...", "System Sync", 2);
+            
+            // Trigger the Bulk Engine to fix the whole week instantly
+            resolveEntireWeek(editedSheet);
+        }
     }
 }

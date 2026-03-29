@@ -14,7 +14,7 @@
  *                                         __/ |                                     __/ |                                     
  *                                        |___/                                     |___/                                      
  * Built by: Adam Roy
- * Version 0.0.11
+ * Version 0.0.15
  * /
 
 /**
@@ -27,9 +27,9 @@ function getMinimumStaffRequiredForDay(selectedDayName) {
     // Read the Staffing Table (A2:B8)
     const staffingRequirementData = settingsSheet.getRange("A2:B8").getValues();
     
-    for (let rowIndex = 0; rowIndex < staffingRequirementData.length; rowIndex++) {
-        const dayInTable = staffingRequirementData[rowIndex][0];
-        const staffCount = staffingRequirementData[rowIndex][1];
+    for (let i = 0; i < staffingRequirementData.length; i++) {
+        const dayInTable = staffingRequirementData[i][0];
+        const staffCount = staffingRequirementData[i][1];
         
         if (dayInTable === selectedDayName) {
             return staffCount;
@@ -41,32 +41,37 @@ function getMinimumStaffRequiredForDay(selectedDayName) {
 /**
  * Looks up the specific Start and End times based on Shift Preference and Employment Status.
  */
-function getShiftTimingFromSettings(requestedShiftName, employmentStatus) {
+function getShiftTimingFromSettings(requestedShift, employmentStatus) {
     const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     const settingsSheet     = activeSpreadsheet.getSheetByName(SETTINGS_SHEET_NAME);
     
     // Read the Shift Definition Table (D2:G10)
-    const shiftDefinitionData = settingsSheet.getRange("D2:H10").getValues();
+    const shiftData = settingsSheet.getRange("D2:H10").getValues();
+
+    // Normalize data for comparison
+    const searchShift = requestedShift.toString().trim();
+    const searchStatus = employmentStatus.toString().trim();
     
-    for (let rowIndex = 0; rowIndex < shiftDefinitionData.length; rowIndex++) {
-        const tableShiftName = shiftDefinitionData[rowIndex][0].toString().trim();
-        const tableStatus    = shiftDefinitionData[rowIndex][1].toString().trim();
+    for (let i = 0; i < shiftData.length; i++) {
+        const tableShift  = shiftData[i][0].toString().trim();
+        const tableStatus = shiftData[i][1].toString().trim();
         
-        if (tableShiftName === requestedShiftName && tableStatus === employmentStatus) {
-            const startTime = shiftDefinitionData[rowIndex][2];
-            const endTime   = shiftDefinitionData[rowIndex][3];
-            const hours     = shiftDefinitionData[rowIndex][4];
+        if (tableShift === searchShift && tableStatus === searchStatus) {
+            const startTime = shiftData[i][2];
+            const endTime   = shiftData[i][3];
+            const hours     = shiftData[i][4];
 
             //Safety check, checks if a cell is empty if it is dont return a 12:00 AM
             if (!startTime || !endTime) return {text: "OFF", hours: 0};
             
             // Use HH:mm for 24-hour time to match spreadsheet default
-            const timeString = Utilities.formatDate(new Date(start), "GMT", TIME_FORMAT_STRING) + 
+            const timeString = Utilities.formatDate(new Date(startTime), "GMT", TIME_FORMAT_STRING) + 
                                " - " + 
-                               Utilities.formatDate(new Date(end), "GMT", TIME_FORMAT_STRING);
+                               Utilities.formatDate(new Date(endTime), "GMT", TIME_FORMAT_STRING);
             
             return {text: timeString, hours: hours};
         }
     }
+    Logger.log("WARNING: No shift match found for " + searchShift + " / " + searchStatus);
     return { text: "OFF", hours: 0 };
 }
