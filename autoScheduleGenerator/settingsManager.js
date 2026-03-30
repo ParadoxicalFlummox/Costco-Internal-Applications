@@ -14,7 +14,7 @@
  *                                         __/ |                                     __/ |                                     
  *                                        |___/                                     |___/                                      
  * Built by: Adam Roy
- * Version 0.0.15
+ * Version 0.0.16
  * /
 
 /**
@@ -44,34 +44,32 @@ function getMinimumStaffRequiredForDay(selectedDayName) {
 function getShiftTimingFromSettings(requestedShift, employmentStatus) {
     const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     const settingsSheet     = activeSpreadsheet.getSheetByName(SETTINGS_SHEET_NAME);
-    
-    // Read the Shift Definition Table (D2:G10)
     const shiftData = settingsSheet.getRange("D2:H10").getValues();
 
-    // Normalize data for comparison
-    const searchShift = requestedShift.toString().trim();
-    const searchStatus = employmentStatus.toString().trim();
+    let fallbackShift = null;
     
     for (let i = 0; i < shiftData.length; i++) {
-        const tableShift  = shiftData[i][0].toString().trim();
-        const tableStatus = shiftData[i][1].toString().trim();
-        
-        if (tableShift === searchShift && tableStatus === searchStatus) {
-            const startTime = shiftData[i][2];
-            const endTime   = shiftData[i][3];
-            const hours     = shiftData[i][4];
+        const [shiftName, status, start, end, hours] = shiftData[i];
+        if (!shiftName) continue;
 
-            //Safety check, checks if a cell is empty if it is dont return a 12:00 AM
-            if (!startTime || !endTime) return {text: "OFF", hours: 0};
-            
-            // Use HH:mm for 24-hour time to match spreadsheet default
-            const timeString = Utilities.formatDate(new Date(startTime), "GMT", TIME_FORMAT_STRING) + 
-                               " - " + 
-                               Utilities.formatDate(new Date(endTime), "GMT", TIME_FORMAT_STRING);
-            
-            return {text: timeString, hours: hours};
+        // Exact match case: if a manager chooses a specific shift
+        if (shiftName.toString().trim() === requestedShift.toString().trim() && status === employmentStatus) {
+            return formatShiftObject(start, end, hours);
+        }
+
+        // Window match case: if a manager chooses a specific shift window
+        if (shiftName.toString().trim() == requestedShift.toString().trim() && !fallbackShift) {
+            fallbackShift = formatShiftObject(start, end, hours);
         }
     }
-    Logger.log("WARNING: No shift match found for " + searchShift + " / " + searchStatus);
-    return { text: "OFF", hours: 0 };
+
+    return fallbackShift || {text: "OFF", hours: 0};
+}
+
+// K.I.S.S. helper code
+function formatShiftObject(start, end, hours) {
+    if (!start || !end) return {text: "OFF", hours: 0};
+    const timeStr = Utilities.formatDate(new Date(start), TIME_ZONE, TIME_FORMAT_STRING) + " - " +
+                    Utilities.formatDate(new Date(end), TIME_ZONE, TIME_FORMAT_STRING);
+    return {text: timeStr, hours: Number(hours) };
 }

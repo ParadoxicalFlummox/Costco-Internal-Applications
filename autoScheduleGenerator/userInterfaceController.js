@@ -14,7 +14,7 @@
  *                                                                                                                             
  *                                                                                                                             
  * Built by: Adam Roy
- * Version 0.0.15
+ * Version 0.0.16
  */
 
 
@@ -24,8 +24,9 @@
 function onOpen() {
   const userInterface = SpreadsheetApp.getUi();
   userInterface.createMenu('Schedule Admin')
-      .addItem('1. Synchronize Roster', 'synchronizeEmployeeRoster')
-      .addItem('2. Refresh Seniority Ranks', 'refreshAllSeniorityRanks')
+      .addItem('Synchronize Roster', 'synchronizeEmployeeRoster')
+      .addItem('Refresh Seniority Ranks', 'refreshAllSeniorityRanks')
+      .addItem('Synchronize Shift Mapping', 'synchronizeShiftDropdowns')
       .addSeparator()
       .addItem('GENERATE WEEKLY DRAFT', 'generateWeeklySchedule')
       .addSeparator()
@@ -65,4 +66,18 @@ function onEdit(event) {
             resolveEntireWeek(editedSheet);
         }
     }
+}
+
+function synchronizeShiftDropdowns() {
+    const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const configSheet = activeSpreadsheet.getSheetByName(CONFIGURATION_SHEET_NAME);
+    const settingsSheet = activeSpreadsheet.getSheetByName(SETTINGS_SHEET_NAME);
+
+    const shiftNames = settingsSheet.getRange("D2:D20").getValues().filter(r => r[0] !== "").map(r => r[0]);
+
+    const uniqueList = [...new Set(shiftNames)];
+    const rule = SpreadsheetApp.newDataValidation().requireValueInList(uniqueList).build();
+
+    configSheet.getRange(2, 3, configSheet.getLastRow()).setDataValidation(rule);
+    activeSpreadsheet.toast("Shift dropdowns synchronized!" , "System Update");
 }

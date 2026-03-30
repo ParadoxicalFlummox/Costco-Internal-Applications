@@ -14,7 +14,7 @@
  *                                                                                               __/ |                         
  *                                                                                              |___/                          
  * Built by: Adam Roy
- * Version 0.0.15
+ * Version 0.0.16
  * /
 
 /**
@@ -117,30 +117,33 @@ function attachStaffingSummary(currentScheduleSheet, lastEmployeeRowNumber) {
  * Final resolution logic: Assigns Shift Times to working staff and bumps juniors if over-staffed.
  */
 function resolveEntireWeek(currentScheduleSheet) {
-    const lastRow = currentScheduleSheet.getLastRow();
-    const numEmployees = Math.round((lastRow - 5) / 3);
-    const weekDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    // Calculate the number of employees on the sheet
+    const allNames = currentScheduleSheet.getRange("B6:B").getValues();
+    const employeeNames = allNames.filter(row => row[0] !== "" && !["REQUIRED", "ACTUAL", "STATUS"].includes(row[0])).map(r => r[0]);
+    const numEmployees = employeeNames.length;
+
+    if (numEmployees === 0) return;
 
     // 1. Read the entire spreadsheet: Grab C6:J[End] (Checkboxes, Shifts, and Hours)
     const gridRange = currentScheduleSheet.getRange(6, 3, numEmployees * 3, 8);
     let gridValues = gridRange.getValues();
-    const names = currentScheduleSheet.getRange("B6:B" + lastRow).getValues();
 
-    // 2. Load the data into a map
     const config = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
     const roster = config.getRange(2, 1, config.getLastRow() - 1, 8).getValues();
     const rosterMap = {};
-    roster.forEach(r => rosterMap[r[COLUMN_INDEX_NAME]] = { status: r[COLUMN_INDEX_EMPLOYMENT_STATUS], pref: r[COLUMN_INDEX_SHIFT_PREFERENCE] });
+    roster.forEach(r => rosterMap[r[0]] = { status: r[1], pref: r[2] });
+
+    for (let e = 0; e < numEmployees; e++) {gridValues[(e * 3) + 2][7] = 0; }
 
     // 3. Bulk process the entire schedule matrix
     for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
-        const minStaff = getMinimumStaffRequiredForDay(weekDays[dayIdx]);
-        const maxOff = numEmployees - minStaff;
+        const dayName = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][dayIdx];
+        const maxOff = numEmployees - getMinimumStaffRequiredForDay(dayName);
         let offCount = 0;
 
         for (let empIdx = 0; empIdx < numEmployees; empIdx++) {
             const base = empIdx * 3;
-            const empName = names[base][0];
+            const name = employeeNames[empIdx][0];
             const isVac = gridValues[base][dayIdx];
             const isRdo = gridValues[base + 1][dayIdx];
 
@@ -153,12 +156,12 @@ function resolveEntireWeek(currentScheduleSheet) {
                 gridValues[base + 2][dayIdx] = "OFF";
             } else {
                 gridValues[base + 1][dayIdx] = false; // Bumped
-                const person = rosterMap[empName] || { status: "PT", pref: "Morning" };
+                const person = rosterMap[name] || { status: "PT", pref: "Morning" };
                 const shift = getShiftTimingFromSettings(person.pref, person.status);
                 
                 gridValues[base + 2][dayIdx] = shift.text;
                 // Add hours to Column J (Index 7)
-                gridValues[base + 2][7] = (gridValues[base + 2][7] || 0) + shift.hours;
+                gridValues[base + 2][7] = (Number(gridValues[base + 2][7]) || 0) + shift.hours;
             }
         }
     }

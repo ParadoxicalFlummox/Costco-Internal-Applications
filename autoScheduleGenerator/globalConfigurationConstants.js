@@ -5,21 +5,21 @@
  *     | |     / _ \ / __|| __|/ __|/ _ \    / /\ \ | | | || __|/ _ \   \___ \  / __|| '_ \  / _ \ / _` || | | || | / _ \| '__|       
  *     | |____| (_) |\__ \| |_| (__| (_) |  / ____ \| |_| || |_| (_) |  ____) || (__ | | | ||  __/| (_| || |_| || ||  __/| |          
  *      \_____|\___/ |___/ \__|\___|\___/  /_/    \_\\__,_| \__|\___/  |_____/  \___||_| |_| \___| \__,_| \__,_||_| \___||_|          
- *       _____  _         _             _    _____                    _                 _           _____                __  _        
- *      / ____|| |       | |           | |  / ____|                  | |               | |         / ____|              / _|(_)       
- *     | |  __ | |  ___  | |__    __ _ | | | |      ___   _ __   ___ | |_  __ _  _ __  | |_  ___  | |      ___   _ __  | |_  _   __ _ 
- *     | | |_ || | / _ \ | '_ \  / _` || | | |     / _ \ | '_ \ / __|| __|/ _` || '_ \ | __|/ __| | |     / _ \ | '_ \ |  _|| | / _` |
- *     | |__| || || (_) || |_) || (_| || | | |____| (_) || | | |\__ \| |_| (_| || | | || |_ \__ \ | |____| (_) || | | || |  | || (_| |
- *      \_____||_| \___/ |_.__/  \__,_||_|  \_____|\___/ |_| |_||___/ \__|\__,_||_| |_| \__||___/  \_____|\___/ |_| |_||_|  |_| \__, |
- *                                                                                                                               __/ |
- *                                                                                                                              |___/  
+ *       _____  _         _             _    _____                __  _        
+ *      / ____|| |       | |           | |  / ____|              / _|(_)       
+ *     | |  __ | |  ___  | |__    __ _ | | | |      ___   _ __  | |_  _   __ _ 
+ *     | | |_ || | / _ \ | '_ \  / _` || | | |     / _ \ | '_ \ |  _|| | / _` |
+ *     | |__| || || (_) || |_) || (_| || | | |____| (_) || | | || |  | || (_| |
+ *      \_____||_| \___/ |_.__/  \__,_||_|  \_____|\___/ |_| |_||_|  |_| \__, |
+ *                                                                        __/ |
+ *                                                                       |___/  
  * 
- * Use these settings to adjust the script behavior without modification of the code
- * Version 0.0.11
+ * Built by: Adam Roy
+ * Version 0.0.16
  */
 
 /* --- Application Environment Settings --- */
-const TARGET_DEPARTMENT_NAME    = "Maintenance"; 
+const TARGET_DEPARTMENT_NAME    = "Maintenance";
 const TEMPLATE_SHEET_NAME       = "Grid Template";
 const CONFIGURATION_SHEET_NAME  = "CONFIG";
 const SETTINGS_SHEET_NAME       = "SETTINGS";
@@ -43,3 +43,4 @@ const MASTER_COLUMN_HIRE_DATE  = 5;
 /* --- Weekly Schedule Column Mapping --- */
 const COLUMN_INDEX_TOTAL_HOURS = 9; // Column J
 const TIME_FORMAT_STRING       = "HH:mm"; // Make this "HH:mm a" to use 12hr time
+const TIME_ZONE                = "America/New_York";
