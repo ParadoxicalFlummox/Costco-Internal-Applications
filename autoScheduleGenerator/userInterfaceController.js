@@ -14,7 +14,7 @@
  *                                                                                                                             
  *                                                                                                                             
  * Built by: Adam Roy
- * Version 0.0.16
+ * Version 0.1.3
  */
 
 
@@ -22,17 +22,14 @@
  * Creates the custom menu when the spreadsheet is opened.
  */
 function onOpen() {
-  const userInterface = SpreadsheetApp.getUi();
-  userInterface.createMenu('Schedule Admin')
-      .addItem('Synchronize Roster', 'synchronizeEmployeeRoster')
-      .addItem('Refresh Seniority Ranks', 'refreshAllSeniorityRanks')
-      .addItem('Synchronize Shift Mapping', 'synchronizeShiftDropdowns')
-      .addSeparator()
-      .addItem('GENERATE WEEKLY DRAFT', 'generateWeeklySchedule')
-      .addSeparator()
-      .addSubMenu(userInterface.createMenu('Danger Zone')
-          .addItem('Reset Department Configuration', 'resetDepartmentConfiguration'))
-      .addToUi();
+    const userInterface = SpreadsheetApp.getUi();
+    userInterface.createMenu('Schedule Admin')
+        .addItem('Synchronize Roster', 'synchronizeEmployeeRoster')
+        .addItem('Refresh Seniority Ranks', 'refreshAllSeniorityRanks')
+        .addItem('Synchronize Shift Mapping', 'synchronizeShiftDropdowns')
+        .addSeparator()
+        .addItem('GENERATE WEEKLY DRAFT', 'generateWeeklySchedule')
+        .addToUi();
 }
 
 /**
@@ -41,43 +38,34 @@ function onOpen() {
 function onEdit(event) {
     const editedRange = event.range;
     const editedSheet = editedRange.getSheet();
-    const sheetName   = editedSheet.getName();
-    const column      = editedRange.getColumn();
-    const row         = editedRange.getRow();
+    const sheetName = editedSheet.getName();
+    const column = editedRange.getColumn();
+    const row = editedRange.getRow();
 
-    // 1. IGNORE edits on the CONFIG or SETTINGS sheets
-    if (sheetName === CONFIGURATION_SHEET_NAME || sheetName === SETTINGS_SHEET_NAME) {
-        return; 
+    // 1. Recalculate seniority when employment status changes in CONFIG; ignore all other CONFIG/SETTINGS edits
+    if (sheetName === CONFIGURATION_SHEET_NAME) {
+        if (column === COLUMN_INDEX_EMPLOYMENT_STATUS + 1 && row > 1) {
+            calculateEmployeeSeniority(row);
+        }
+        return;
     }
+    if (sheetName === SETTINGS_SHEET_NAME) return;
 
     // 2. TARGET: Weekly Schedule Tabs ("Week_")
     // Only trigger if the edit is in the Checkbox Range (Cols C-I, Row 6+)
     if (sheetName.startsWith("Week_") && column >= 3 && column <= 9 && row >= 6) {
-        
+
         // K.I.S.S. Check: Is this a VAC or RDO row? 
         // (Row - 6) % 3 == 0 is VAC, % 3 == 1 is RDO.
         const relativeRow = (row - 6) % 3;
-        
+
         if (relativeRow === 0 || relativeRow === 1) {
             // OPTIONAL: Provide a UI hint that the script is "thinking"
             SpreadsheetApp.getActiveSpreadsheet().toast("Re-calculating seniority and hours...", "System Sync", 2);
-            
+
             // Trigger the Bulk Engine to fix the whole week instantly
             resolveEntireWeek(editedSheet);
         }
     }
 }
 
-function synchronizeShiftDropdowns() {
-    const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const configSheet = activeSpreadsheet.getSheetByName(CONFIGURATION_SHEET_NAME);
-    const settingsSheet = activeSpreadsheet.getSheetByName(SETTINGS_SHEET_NAME);
-
-    const shiftNames = settingsSheet.getRange("D2:D20").getValues().filter(r => r[0] !== "").map(r => r[0]);
-
-    const uniqueList = [...new Set(shiftNames)];
-    const rule = SpreadsheetApp.newDataValidation().requireValueInList(uniqueList).build();
-
-    configSheet.getRange(2, 3, configSheet.getLastRow()).setDataValidation(rule);
-    activeSpreadsheet.toast("Shift dropdowns synchronized!" , "System Update");
-}

@@ -14,7 +14,7 @@
  *                                                   __/ |                                             __/ |                   
  *                                                  |___/                                             |___/                    
  * Built by: Adam Roy
- * Version 0.0.16
+ * Version 0.2.1
  * /
 
 /**
@@ -22,7 +22,7 @@
  */
 function synchronizeEmployeeRoster() {
     const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const masterDataSheet   = activeSpreadsheet.getSheetByName("Input"); 
+    const masterDataSheet = activeSpreadsheet.getSheetByName("Input");
     const configurationSheet = activeSpreadsheet.getSheetByName(CONFIGURATION_SHEET_NAME);
 
     const masterDataValues = masterDataSheet.getDataRange().getValues();
@@ -30,13 +30,13 @@ function synchronizeEmployeeRoster() {
 
     masterDataValues.forEach((currentRow, rowIndex) => {
         if (rowIndex === 0) return; // Skip Header
-        
+
         const employeeIdFromMaster = currentRow[MASTER_COLUMN_ID].toString();
         const departmentFromMaster = currentRow[MASTER_COLUMN_DEPARTMENT];
 
         if (departmentFromMaster === TARGET_DEPARTMENT_NAME && !existingEmployeeIds.includes(employeeIdFromMaster)) {
             const nextAvailableRow = configurationSheet.getLastRow() + 1;
-            
+
             const newEmployeeData = [[
                 currentRow[MASTER_COLUMN_NAME],
                 employeeIdFromMaster,
@@ -59,9 +59,9 @@ function synchronizeEmployeeRoster() {
 function calculateEmployeeSeniority(rowNumber) {
     const configurationSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
     const rowData = configurationSheet.getRange(rowNumber, 1, 1, 4).getValues()[0];
-    
-    const hireDateValue    = new Date(rowData[2]);
-    const employmentStatus = rowData[3];
+
+    const hireDateValue = new Date(rowData[COLUMN_INDEX_HIRE_DATE]);
+    const employmentStatus = rowData[COLUMN_INDEX_EMPLOYMENT_STATUS];
 
     if (isNaN(hireDateValue.getTime())) return;
 
@@ -81,9 +81,9 @@ function applyDataValidationRules() {
     const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     const configurationSheet = activeSpreadsheet.getSheetByName(CONFIGURATION_SHEET_NAME);
     const lastRowInConfiguration = configurationSheet.getLastRow();
-    
+
     // Protect the script from running on an empty sheet
-    if (lastRowInConfiguration < 2) return; 
+    if (lastRowInConfiguration < 2) return;
 
     // 1. Define the FT/PT Dropdown (Column D / Index 3)
     const statusValidationRule = SpreadsheetApp.newDataValidation()
@@ -98,14 +98,48 @@ function applyDataValidationRules() {
         .requireValueInList(dayNamesList, true)
         .build();
     configurationSheet.getRange(2, 5, lastRowInConfiguration - 1, 2).setDataValidation(daysValidationRule);
-    
-    // 3. Define the Shift Preference Dropdown (Column H / Index 7)
-    // This matches the "Shift Name" in your SETTINGS sheet
-    const shiftNamesList = ["Morning", "Mid", "Night"];
-    const shiftValidationRule = SpreadsheetApp.newDataValidation()
-        .requireValueInList(shiftNamesList, true)
-        .build();
-    configurationSheet.getRange(2, 8, lastRowInConfiguration - 1).setDataValidation(shiftValidationRule);
+
+    // 3. Define the Shift Preference Dropdown (Column H / Index 7) — read dynamically from SETTINGS
+    const shiftNamesList = readShiftNamesFromSettings();
+    if (shiftNamesList.length > 0) {
+        const shiftValidationRule = SpreadsheetApp.newDataValidation()
+            .requireValueInList(shiftNamesList, true)
+            .build();
+        configurationSheet.getRange(2, 8, lastRowInConfiguration - 1).setDataValidation(shiftValidationRule);
+    }
 
     Logger.log("Data validation rules successfully applied to CONFIG sheet.");
+}
+
+/**
+ * Recalculates seniority ranks for every employee currently in the CONFIG sheet.
+ */
+function refreshAllSeniorityRanks() {
+    const configSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
+    const lastRow = configSheet.getLastRow();
+
+    for (let row = 2; row <= lastRow; row++) {
+        calculateEmployeeSeniority(row);
+    }
+
+    const count = lastRow - 1;
+    SpreadsheetApp.getActiveSpreadsheet().toast(`Seniority ranks recalculated for ${count} employee(s).`, "System Update");
+}
+
+/**
+ * Re-applies all CONFIG data validation rules (including shift dropdowns from SETTINGS).
+ * Call this after adding new shift types to the SETTINGS sheet.
+ */
+function synchronizeShiftDropdowns() {
+    applyDataValidationRules();
+
+    // Add a reference note to the Qualified Shifts column header so managers know what values are valid
+    const configSheet      = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIGURATION_SHEET_NAME);
+    const availableShifts  = readShiftNamesFromSettings();
+    const referenceNote    = availableShifts.length > 0
+        ? "Valid shifts: " + availableShifts.join(", ")
+        : "No shifts found in SETTINGS";
+    configSheet.getRange(1, COLUMN_INDEX_QUALIFIED_SHIFTS + 1).setNote(referenceNote);
+
+    SpreadsheetApp.getActiveSpreadsheet().toast("Shift dropdowns synchronized.", "System Update");
 }
