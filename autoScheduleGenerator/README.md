@@ -1,5 +1,5 @@
 # Auto Schedule Generator
-**Version 0.3.0**
+**Version 0.3.1**
 
 ---
 
@@ -43,11 +43,13 @@ After honoring preferences, the tool checks that everyone meets their weekly min
 
 Before running the tool for the first time you will need:
 
-1. **A master employee list** in a separate Google Sheet. This sheet must have the following columns in order:
+1. **A master employee list** in a separate Google Sheet. This sheet must have the following columns:
    - Column A: Employee Name
    - Column B: Employee ID
-   - Column C: Hire Date
-   - Column D: Department
+   - Column C: Department
+   - Column F: Hire Date
+
+   The tool reads these specific column positions. If your source sheet has a different layout, see the technical section on adapting `fetchEmployeesFromSource()`.
 
 2. **The Spreadsheet ID** of that master employee list. You can find it in the URL of the spreadsheet — it is the long string of characters between `/d/` and `/edit`.
    - Example URL: `https://docs.google.com/spreadsheets/d/`**`1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms`**`/edit`
@@ -84,19 +86,28 @@ Fill in how many employees you need working each day. The tool will not schedule
 | Sunday    | 4                  |
 
 **Shift Definitions Table (columns D–I):**
-Each row defines one shift. Full-time and part-time versions of the same shift are separate rows with the same name.
+Each row defines one shift. Full-time and part-time versions of the same shift are separate rows with the same name. The first-run template includes Early, Morning, Mid, and Closing shifts as a starting point.
 
-| Shift Name | Status | Start Time | End Time | Paid Hours | Has Lunch |
-|------------|--------|------------|----------|------------|-----------|
-| Morning    | FT     | 8:00 AM    | 4:30 PM  | 8.0        | TRUE      |
-| Morning    | PT     | 8:00 AM    | 1:00 PM  | 5.0        | FALSE     |
-| Morning+   | PT     | 8:00 AM    | 1:30 PM  | 5.0        | TRUE      |
+| Shift Name | Status | Start Time | End Time  | Paid Hours | Has Lunch |
+|------------|--------|------------|-----------|------------|-----------|
+| Early      | FT     | 4:00 AM    | 12:30 PM  | 8.0        | TRUE      |
+| Early      | PT     | 4:00 AM    | 9:00 AM   | 5.0        | FALSE     |
+| Early+     | PT     | 4:00 AM    | 9:30 AM   | 5.0        | TRUE      |
+| Morning    | FT     | 8:00 AM    | 4:30 PM   | 8.0        | TRUE      |
+| Morning    | PT     | 8:00 AM    | 1:00 PM   | 5.0        | FALSE     |
+| Morning+   | PT     | 8:00 AM    | 1:30 PM   | 5.0        | TRUE      |
+| Mid        | FT     | 11:00 AM   | 7:30 PM   | 8.0        | TRUE      |
+| Mid        | PT     | 11:00 AM   | 4:00 PM   | 5.0        | FALSE     |
+| Mid+       | PT     | 11:00 AM   | 4:30 PM   | 5.0        | TRUE      |
+| Closing    | FT     | 2:00 PM    | 10:30 PM  | 8.0        | TRUE      |
+| Closing    | PT     | 2:00 PM    | 7:00 PM   | 5.0        | FALSE     |
+| Closing+   | PT     | 2:00 PM    | 7:30 PM   | 5.0        | TRUE      |
 
 - **FT shifts** are always 8 paid hours + 30 minutes unpaid lunch = 8.5 hours on the clock.
 - **PT shifts** are 5 paid hours, with or without a 30-minute unpaid lunch.
 - Use a "+" suffix to distinguish the lunch variant of a PT shift (e.g., "Morning" vs "Morning+").
 
-The template created in Step 1 includes example shifts you can modify.
+The template created in Step 1 includes all rows above. Modify times or remove shifts to match your department's actual hours.
 
 ---
 
@@ -131,11 +142,12 @@ The **Seniority Rank** column (J) is calculated automatically — do not edit it
 
 ---
 
-#### Step 5: Generate a 3-Week Schedule Draft
+#### Step 5: Generate a Schedule Draft
 
-Once your Settings and Roster are ready:
+Once your Settings and Roster are ready, you have two generation options:
 
-> **Schedule Admin → GENERATE SCHEDULE DRAFT (3 weeks)**
+**Option A — Three weeks (recommended for regular use):**
+> **Schedule Admin → GENERATE SCHEDULE (3 weeks)**
 
 A dialog will appear asking you to confirm the Monday of the starting week. Press OK to accept the current week, or type a different date.
 
@@ -145,6 +157,11 @@ Three new sheet tabs will be created:
 - **Week_MM_DD_YY** — Week after that
 
 A confirmation message will appear listing the names of all three sheets.
+
+**Option B — Single week (useful for re-generating one specific week):**
+> **Schedule Admin → GENERATE SCHEDULE (1 week)**
+
+This generates only the current week's schedule tab. Useful when you need to quickly regenerate after a roster change without overwriting the other two weeks.
 
 ---
 
@@ -159,7 +176,7 @@ Each schedule sheet has the same structure:
 **Employee rows:** Each employee has three rows:
 - **VAC row:** Check a box to mark that day as vacation (locks the day — no shift will be assigned).
 - **RDO row:** Check a box to mark a requested day off (honored if staffing allows).
-- **SHIFT row:** Shows the assigned shift time (e.g., "08:00 - 16:30") or "OFF". Total hours appear in the last column.
+- **SHIFT row:** Shows the assigned shift time (e.g., "8:00 AM - 4:30 PM") or "OFF". Total hours appear in the last column.
 
 **Summary rows:** At the bottom of the sheet:
 - **REQUIRED:** Minimum staff needed each day (from Settings).
@@ -184,7 +201,7 @@ Each schedule sheet has the same structure:
 
 **To mark a requested day off:** Check the RDO checkbox. The schedule will recalculate and honor the request if staffing allows.
 
-**To change a shift assignment:** Directly edit the text in the SHIFT row cell (e.g., change "08:00 - 16:30" to "10:00 - 18:30").
+**To change a shift assignment:** Directly edit the text in the SHIFT row cell (e.g., change "8:00 AM - 4:30 PM" to "10:00 AM - 6:30 PM").
 
 **To add or remove employees:** Update the Roster sheet and re-generate the schedule.
 
@@ -231,6 +248,10 @@ autoScheduleGenerator/
 ├── settingsManager.js  Reads the Settings sheet (shift definitions and staffing
 │                       requirements). The only file that reads the Settings sheet.
 │                       Returns clean JavaScript objects that all other files use.
+│                       Uses Utilities.formatDate() with the spreadsheet's own
+│                       timezone when parsing time cell values to avoid offset
+│                       errors caused by mismatches between the script execution
+│                       timezone and the spreadsheet's timezone.
 │
 ├── rosterIngestion.js  Handles the "bring employees in from an external spreadsheet"
 │                       workflow. The only file that reads the Ingestion sheet and
@@ -389,10 +410,21 @@ Where 240 = 4 × 60 = 04:00 in minutes since midnight.
 
 **Coverage vs. paid hours:** The slot map uses the shift's block hours (start to end including unpaid lunch), not paid hours. A full-time employee on an 8.5-hour shift physically covers 17 slots even though they are only paid for 16 slots (8 hours).
 
-**To extend the coverage window** (e.g., for a 3:00 AM opening shift):
+**Weekend coverage windows differ from weekday windows.** The tool enforces separate closing times for Saturday and Sunday because those days have shorter operating hours:
+
+| Day            | Coverage Window         |
+|----------------|-------------------------|
+| Monday–Friday  | 4:00 AM – 11:30 PM      |
+| Saturday       | 4:00 AM – 10:00 PM      |
+| Sunday         | 4:00 AM – 9:00 PM       |
+
+Phase 3 (gap resolution) uses these windows when deciding whether a time slot needs coverage. Slots outside the day's window are never treated as gaps. These windows are defined in the `COVERAGE_WINDOW` constant in `config.js` — update them there if your department's hours change.
+
+**To extend the weekday coverage window** (e.g., for a 3:00 AM opening shift):
 1. Change `COVERAGE.COVERAGE_START_MINUTE` in `config.js` (e.g., 180 for 03:00).
 2. Recalculate `COVERAGE.SLOT_COUNT`: `(endMinute − startMinute) ÷ 30`.
-3. Midnight-crossing shifts are still not supported — the end time must be before midnight.
+3. Update `COVERAGE_WINDOW` entries to match the new start minute.
+4. Midnight-crossing shifts are still not supported — the end time must be before midnight.
 
 ---
 
@@ -436,11 +468,11 @@ The coverage slot array ends at 23:30 (slot index 38). A shift that ends at, say
 **Simultaneous editing is not recommended.**
 Google Apps Script is single-threaded per execution. Two simultaneous onEdit() triggers can interleave unpredictably, and the last one to finish wins. This is a platform limitation, not something the tool can solve. The workaround is for managers to coordinate edits — or to use the "Generate Schedule Draft" menu item to do a full re-generation after all edits are complete.
 
-**Three-week generation only, no partial re-generation from the menu.**
-The menu always generates all three weeks. Individual weeks can be re-generated by editing a VAC or RDO checkbox (which triggers `resolveEntireWeek()` automatically), or by running "Generate Schedule Draft" again (which overwrites existing week sheets while preserving VAC/RDO checkboxes).
+**VAC and RDO checkbox edits recalculate one week at a time.**
+Editing a VAC or RDO checkbox triggers an automatic `resolveEntireWeek()` on that sheet only — the other week tabs are not affected. To regenerate from scratch, use one of the Generate Schedule menu items (which preserve existing VAC/RDO checkboxes).
 
-**Source spreadsheet must have employees in columns A–D.**
-The sync function assumes a fixed column layout in the source spreadsheet. If the source sheet has a different column order, edit `fetchEmployeesFromSource()` in `rosterIngestion.js` to use the correct column indices.
+**Source spreadsheet must match the expected column layout.**
+The sync function reads: Column A = Employee Name, Column B = Employee ID, Column C = Department, Column F = Hire Date. If your source sheet uses a different column order, edit `fetchEmployeesFromSource()` in `rosterIngestion.js` to use the correct column indices.
 
 ---
 
@@ -450,8 +482,9 @@ This project follows `v0.MINOR.PATCH` versioning:
 
 | Version | Description |
 |---------|-------------|
-| v1.0.0  | Initial rewrite. External roster ingestion, 3-week generation, FT/PT color coding, department-agnostic configuration, comprehensive comments. |
+| v0.3.1  | Weekend coverage windows (Saturday 4 AM–10 PM, Sunday 4 AM–9 PM). Single-week generation menu option. 12-hour AM/PM shift time display. Expanded shift template (Early, Morning, Mid, Closing with FT/PT/PT+ variants). Timezone fix for shift time parsing (`Utilities.formatDate()` with spreadsheet timezone). Corrected source spreadsheet column mapping (Department = col C, Hire Date = col F). |
+| v0.3.0  | Initial rewrite. External roster ingestion via Ingestion sheet, 3-week generation, FT/PT color coding, seniority rank formula, 4-phase generation algorithm, department-agnostic configuration, comprehensive comments. |
 
-Previous versions (v0.x.x) are archived in the git history of the `refactor-to-improve-core-logic` branch.
+Previous versions (v0.2.x and earlier) are archived in the git history of the `refactor-to-improve-core-logic` branch.
 
 To report a bug or request a feature, file an issue in the project repository.

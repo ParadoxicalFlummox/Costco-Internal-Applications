@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — The core schedule generation algorithm.
- * VERSION 0.3.0
+ * VERSION: 0.3.1
  *
  * This file contains the 4-phase algorithm that turns a roster of employees and
  * a set of shift/staffing rules into a complete weekly schedule grid.
@@ -484,10 +484,20 @@ function runPhaseThreeGapResolution(weekGrid, employeeList, shiftTimingMap, staf
     // Build the coverage map fresh for this day before starting either cascade.
     // The coverage map is a 39-element array where each element counts how many
     // employees are present during that 30-minute window.
+    const coverageWindow = COVERAGE_WINDOW[dayName] || { startMinute: 240, endMinute: 1410 };
+    const windowStartSlot = Math.max(
+      0,
+      Math.floor((coverageWindow.startMinute - COVERAGE.COVERAGE_START_MINUTE) / COVERAGE.SLOT_DURATION_MINUTES)
+    );
+    const windowEndSlot = Math.min(
+      COVERAGE.SLOT_COUNT,
+      Math.floor((coverageWindow.endMinute - COVERAGE.COVERAGE_START_MINUTE) / COVERAGE.SLOT_DURATION_MINUTES)
+    );
+
     let dayCoverageSlots = buildDayCoverage(weekGrid, employeeList, dayIndex, shiftTimingMap, -1);
 
     // Check whether there are any gaps to fill before running cascades.
-    if (!hasCoverageGaps(dayCoverageSlots)) {
+    if (!hasCoverageGaps(dayCoverageSlots, windowStartSlot, windowEndSlot)) {
       return;
     }
 
@@ -553,13 +563,13 @@ function runPhaseThreeGapResolution(weekGrid, employeeList, shiftTimingMap, staf
       // Rebuild the coverage map to reflect this reassignment before evaluating the next employee.
       dayCoverageSlots = buildDayCoverage(weekGrid, employeeList, dayIndex, shiftTimingMap, -1);
 
-      if (!hasCoverageGaps(dayCoverageSlots)) {
+      if (!hasCoverageGaps(dayCoverageSlots, windowStartSlot, windowEndSlot)) {
         break; // All gaps filled by Cascade A — no need to continue.
       }
     }
 
     // Check again after Cascade A — Cascade B only runs if gaps remain.
-    if (!hasCoverageGaps(dayCoverageSlots)) {
+    if (!hasCoverageGaps(dayCoverageSlots, windowStartSlot, windowEndSlot)) {
       return;
     }
 
@@ -606,7 +616,7 @@ function runPhaseThreeGapResolution(weekGrid, employeeList, shiftTimingMap, staf
       // Rebuild the coverage map to reflect the addition.
       dayCoverageSlots = buildDayCoverage(weekGrid, employeeList, dayIndex, shiftTimingMap, -1);
 
-      if (!hasCoverageGaps(dayCoverageSlots)) {
+      if (!hasCoverageGaps(dayCoverageSlots, windowStartSlot, windowEndSlot)) {
         break; // All gaps filled — stop pulling in employees.
       }
     }
@@ -697,16 +707,25 @@ function buildDayCoverage(weekGrid, employeeList, dayIndex, shiftTimingMap, excl
 /**
  * Returns true if any slot in the coverage array has zero employees.
  *
+ * startSlotIndex and endSlotIndex scope only the hours of operation that actually
+ * require staffing. Slots outside the window are ignored and the engine will not
+ * try to fill coverate outside of these hours.
+ * 
  * A zero-count slot represents a 30-minute window where no employee is scheduled,
  * which is the definition of a coverage gap that Phase 3 attempts to fill.
  *
- * @param {Array<number>} coverageSlots — 39-element coverage array from buildDayCoverage().
+ * @param {Array<number>} coverageSlots — 9-element coverage array from buildDayCoverage().
+ * @param {number}        startSlotIndex — The first slot index to check
+ * @param {number}        endSlotIndex — The last slot index to check
  * @returns {boolean}
  */
-function hasCoverageGaps(coverageSlots) {
-  return coverageSlots.some(function(slotCount) {
-    return slotCount === 0;
-  });
+function hasCoverageGaps(coverageSlots, startSlotIndex, endSlotIndex) {
+  for (let slotIndex = startSlotIndex; slotIndex < endSlotIndex; slotIndex++) {
+    if (coverageSlots[slotIndex] === 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 

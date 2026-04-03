@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Reads shift definitions and staffing requirements from the Settings sheet.
- * VERSION 0.3.0
+ * VERSION: 0.3.1
  *
  * This file is the only place in the codebase that reads from the Settings sheet.
  * Every other file that needs shift or staffing data calls a function from this file
@@ -243,9 +243,14 @@ function readShiftNamesFromSettings() {
  * For example, 08:00 is stored as 0.3333... (8/24), and 16:30 is stored as 0.6875 (16.5/24).
  * Multiplying by 1440 (the number of minutes in a day) converts this to minutes since midnight.
  *
- * This function also handles the case where the cell contains a JavaScript Date object
- * (which GAS returns when the cell is formatted as a time), in which case we extract
- * the hours and minutes directly.
+ * WHY Utilities.formatDate() IS used for Date objects:
+ * When getValues() returns a Date object for a time cell, calling getHours() or getMinutes()
+ * on it returns values in the script's execution timezone — which is set in the Apps Script
+ * project properties and may differ from the spreadsheet's timezone. Even a small mismatch
+ * (e.g., a non-standard or incorrectly configured timezone) produces a consistent offset on
+ * every shift time. Utilities.formatDate() with the spreadsheet's own timezone is the
+ * GAS-idiomatic solution: it always returns the time exactly as it appears in the cell,
+ * regardless of where the script is executing.
  *
  * @param {*}      timeValue  — The raw cell value from getValues(), either a number or Date.
  * @param {string} fieldLabel — "start time" or "end time", used in warning messages.
@@ -255,9 +260,13 @@ function readShiftNamesFromSettings() {
  */
 function convertGasTimeValueToMinutes(timeValue, fieldLabel, shiftName, rowIndex) {
   if (timeValue instanceof Date) {
-    // GAS returns a Date object when the cell is formatted as a time value.
-    // The date portion is irrelevant — only hours and minutes matter here.
-    return timeValue.getHours() * 60 + timeValue.getMinutes();
+    // Use Utilities.formatDate() with the spreadsheets timezone to extract the
+    // time as it appears in the cell which avoids the script timezone and sheet timezone
+    // mismatch creating an offset when the two differ
+    const spreadsheetTimeZone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    const formattedTime       = Utilities.formatDate(timeValue, spreadsheetTimeZone, "HH:mm");
+    const timeParts           = formattedTime.split(":");
+    return parseInt(timeParts[0], 10) * 60 + parseInt(timeParts[1], 10);
   }
 
   if (typeof timeValue === "number" && timeValue >= 0 && timeValue < 1) {

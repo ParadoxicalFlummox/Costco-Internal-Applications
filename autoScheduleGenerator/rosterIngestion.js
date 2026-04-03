@@ -1,6 +1,6 @@
 /**
  * rosterIngestion.js — Syncs employees from an external master spreadsheet into the local Roster sheet.
- * VERSION 0.3.0
+ * VERSION 0.3.1
  *
  * This file handles the entire "bring employee data into the workbook" workflow:
  *   1. The manager opens the Ingestion sheet and types a Google Spreadsheet ID.

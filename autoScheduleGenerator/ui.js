@@ -1,6 +1,6 @@
 /**
  * ui.js — Google Apps Script triggers, custom menu, and generation orchestrators.
- * VERSION 0.3.0
+ * VERSION: 0.3.1
  *
  * This file is the entry point for all user-initiated actions. It contains:
  *   - onOpen():  Creates the "Schedule Admin" menu when the spreadsheet opens.
@@ -44,7 +44,8 @@ function onOpen() {
       { name: "Refresh Seniority",    functionName: "menuRefreshSeniority" },
       { name: "Sync Shift Dropdowns", functionName: "menuSyncShiftDropdowns" },
       null, // Separator line
-      { name: "GENERATE SCHEDULE DRAFT (3 weeks)", functionName: "menuGenerateScheduleDraft" },
+      { name: "GENERATE SCHEDULE (3 weeks)", functionName: "menuGenerateScheduleDraft" },
+      { name: "GENERATE SCHEDULE (1 week)",  functionName: "menuGenerateSingleWeek" },
       null, // Separator line
       { name: "Setup Sheets (First Run Only)",      functionName: "menuSetupAllSheets" },
     ]);
@@ -213,6 +214,38 @@ function menuGenerateScheduleDraft() {
 
   try {
     orchestrateMultiWeekGeneration(startingMonday);
+  } catch (error) {
+    SpreadsheetApp.getUi().alert(
+      "Generation Failed",
+      error.message + "\n\nCheck the Execution Log (Extensions → Apps Script → Executions) for details.",
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  }
+}
+
+
+/**
+ * Triggered by: Schedule Admin → Generate Single Week
+ *
+ * Asks the manager to confirm a single Monday, then generates exactly one schedule sheet
+ * for that week. Useful for regenerating a specific week after roster changes, or for
+ * generating an individual week without overwriting the other two in a 3-week set.
+ */
+function menuGenerateSingleWeek() {
+  const startingMonday = promptForStartingWeek();
+
+  if (!startingMonday) {
+    // The manager cancelled the dialog or provided an invalid date — do nothing.
+    return;
+  }
+
+  try {
+    const sheetName = orchestrateSingleWeekGeneration(startingMonday);
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      "Schedule generated: " + sheetName,
+      "Generation Complete",
+      6
+    );
   } catch (error) {
     SpreadsheetApp.getUi().alert(
       "Generation Failed",
@@ -581,23 +614,42 @@ function setupSettingsSheetTemplate(settingsSheet) {
   settingsSheet.getRange("A2:B8").setValues(staffingData);
 
   // --- Table 2: Shift definitions (columns D–I) ---
+  // Shift design rationale:
+  //   "Early"   covers 4:00 AM open through the morning rush — needed for stocking and setup.
+  //   "Morning" is the standard day shift, overlapping Early for a mid-morning coverage boost.
+  //   "Mid"     bridges the gap between morning and evening, covering the busiest midday window.
+  //   "Closing" runs through the evening into close, ending before or at the day's coverage cutoff.
+  //
+  // FT shifts: 8 paid hours + 30-minute unpaid lunch = 8.5-hour clock block.
+  // PT shifts: 5 paid hours, available with or without a 30-minute unpaid lunch ("+"-suffix variant).
+  // The coverage window for Saturday ends at 10:00 PM and Sunday at 9:00 PM, so Closing|FT
+  // on those days ends at 10:00 PM and 9:00 PM respectively — add those as weekend-specific
+  // rows if the department runs different closing times on weekends.
   const shiftHeaders = [["Shift Name", "Status (FT/PT)", "Start Time", "End Time", "Paid Hours", "Has Lunch (TRUE/FALSE)"]];
   const shiftData = [
-    // Each FT shift: 8.5-hour block (8 paid + 0.5 unpaid lunch)
-    ["Morning",  "FT", "8:00 AM",   "4:30 PM",   8.0, true],
-    ["Mid",      "FT", "10:00 AM",  "6:30 PM",   8.0, true],
-    ["Closing",  "FT", "2:30 PM",   "11:00 PM",  8.0, true],
-    // PT shifts: 5-hour paid, no lunch
-    ["Morning",  "PT", "8:00 AM",   "1:00 PM",   5.0, false],
-    ["Mid",      "PT", "10:00 AM",  "3:00 PM",   5.0, false],
-    ["Closing",  "PT", "5:00 PM",   "10:00 PM",  5.0, false],
-    // PT shifts with lunch: 5.5-hour block (5 paid + 0.5 unpaid lunch)
-    ["Morning+", "PT", "8:00 AM",   "1:30 PM",   5.0, true],
-    ["Mid+",     "PT", "10:00 AM",  "3:30 PM",   5.0, true],
+    // --- Full-Time Shifts (8 paid hrs + 30 min unpaid lunch = 8.5 hr block) ---
+    ["Early",    "FT", "4:00 AM",  "12:30 PM",  8.0, true],   // 4:00 AM – 12:30 PM  open shift; covers early-morning store setup
+    ["Morning",  "FT", "6:00 AM",  "2:30 PM",   8.0, true],   // 6:00 AM –  2:30 PM  standard day shift
+    ["Mid",      "FT", "10:00 AM", "6:30 PM",   8.0, true],   // 10:00 AM –  6:30 PM bridges morning and evening coverage
+    ["Closing",  "FT", "1:30 PM",  "10:00 PM",  8.0, true],   // 1:30 PM – 10:00 PM  evening through close (aligns with Sat 10 PM cutoff)
+
+    // --- Part-Time Shifts, No Lunch (5 paid hrs = 5 hr block) ---
+    ["Early",    "PT", "4:00 AM",  "9:00 AM",   5.0, false],  // 4:00 AM –  9:00 AM  early coverage, no lunch needed at this length
+    ["Morning",  "PT", "6:00 AM",  "11:00 AM",  5.0, false],  // 6:00 AM – 11:00 AM
+    ["Mid",      "PT", "10:00 AM", "3:00 PM",   5.0, false],  // 10:00 AM –  3:00 PM
+    ["Closing",  "PT", "5:00 PM",  "10:00 PM",  5.0, false],  // 5:00 PM – 10:00 PM  aligns with Saturday close
+
+    // --- Part-Time Shifts, With Lunch (5 paid hrs + 30 min unpaid = 5.5 hr block) ---
+    // The "+" suffix distinguishes the lunch variant. Both "Morning" and "Morning+" are
+    // valid entries in an employee's Qualified Shifts column.
+    ["Early+",   "PT", "4:00 AM",  "9:30 AM",   5.0, true],   // 4:00 AM –  9:30 AM
+    ["Morning+", "PT", "6:00 AM",  "11:30 AM",  5.0, true],   // 6:00 AM – 11:30 AM
+    ["Mid+",     "PT", "10:00 AM", "3:30 PM",   5.0, true],   // 10:00 AM –  3:30 PM
+    ["Closing+", "PT", "4:30 PM",  "10:00 PM",  5.0, true],   // 4:30 PM – 10:00 PM
   ];
 
   settingsSheet.getRange("D1:I1").setValues(shiftHeaders).setFontWeight("bold");
-  settingsSheet.getRange("D2:I9").setValues(shiftData);
+  settingsSheet.getRange("D2:I13").setValues(shiftData);
 
   // Style both header rows.
   settingsSheet.getRange("A1:B1").setBackground(COLORS.HEADER_BG).setFontColor(COLORS.HEADER_TEXT);

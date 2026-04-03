@@ -1,6 +1,6 @@
 /**
  * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION 0.3.1
+ * VERSION: 0.3.1
  *
  * This file is the only place in the codebase that writes to a Week schedule sheet.
  * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
@@ -455,7 +455,7 @@ function applyStructuralFormatting(scheduleSheet, employeeCount) {
   scheduleSheet.setColumnWidth(WEEK_SHEET.COL_EMPLOYEE_NAME,  175); // Employee name
   // Day columns: Mon–Sun
   for (let dayColumn = WEEK_SHEET.COL_MONDAY; dayColumn <= WEEK_SHEET.COL_SUNDAY; dayColumn++) {
-    scheduleSheet.autoResizeColumns(dayColumn, 100); // Auto fit the weekday cells to fit the all of the shift information
+    scheduleSheet.setColumnWidth(dayColumn, 100);
   }
   scheduleSheet.setColumnWidth(WEEK_SHEET.COL_TOTAL_HOURS, 85); // "Total Hrs"
 
@@ -498,6 +498,9 @@ function applyStructuralFormatting(scheduleSheet, employeeCount) {
   scheduleSheet
     .getRange(WEEK_SHEET.DATA_START_ROW, WEEK_SHEET.COL_MONDAY, dataAndSummaryRowCount, WEEK_SHEET.DAYS_IN_WEEK + 1)
     .setHorizontalAlignment("center");
+
+  // --- Auto fit only the day columns and total hours columns ---
+  scheduleSheet.autoResizeColumns(WEEK_SHEET.COL_MONDAY, WEEK_SHEET.DAYS_IN_WEEK + 1);
 }
 
 

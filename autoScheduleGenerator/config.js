@@ -1,6 +1,6 @@
 /**
  * config.js — Central configuration constants for the Auto Schedule Generator.
- * VERSION 0.3.0
+ * VERSION: 0.3.1
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule in the system. Nothing in any other file should hard-code a
@@ -235,6 +235,36 @@ const COVERAGE = {
   SLOT_COUNT:              39,  // Number of 30-minute windows in the coverage day (04:00–23:30)
   COVERAGE_START_MINUTE:   240, // 04:00 expressed as minutes since midnight (4 * 60 = 240)
   SLOT_DURATION_MINUTES:   30,  // Each slot represents 30 minutes of clock time
+};
+
+// ---------------------------------------------------------------------------
+// Coverage Windows (required staffing hours per day)
+// ---------------------------------------------------------------------------
+
+/**
+ * Defines the start and end of the required coverage window for each day of the week
+ * 
+ * The coverage gap detection in Phase 3 only checks for uncovered slots within these
+ * windows. Slots outside of the window are not treated as gaps, the engine will not
+ * pull in employees or reassign shifts to cover time outside these bounds.
+ * 
+ * All times are expressed as minutes since midnight:
+ *    240  = 4:00 AM
+ *    1320 = 10:00 PM
+ *    1260 = 9:00 PM
+ *    1410 = 11:30 PM
+ * 
+ * To change a day's requirements, edit the endMinute value for that day.
+ * The startMinute should generally stay at 240 to match COVERAGE_START_MINUTE
+ */
+const COVERAGE_WINDOW = {
+  Monday:    { startMinute: 240, endMinute: 1410 },
+  Tuesday:   { startMinute: 240, endMinute: 1410 },
+  Wednesday: { startMinute: 240, endMinute: 1410 },
+  Thursday:  { startMinute: 240, endMinute: 1410 },
+  Friday:    { startMinute: 240, endMinute: 1410 },
+  Saturday:  { startMinute: 240, endMinute: 1320 },
+  Sunday:    { startMinute: 240, endMinute: 1260 }
 };
 
 
