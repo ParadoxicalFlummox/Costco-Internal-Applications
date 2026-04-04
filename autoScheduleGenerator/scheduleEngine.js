@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — The core schedule generation algorithm.
- * VERSION: 0.3.2
+ * VERSION: 0.3.3
  *
  * This file contains the 4-phase algorithm that turns a roster of employees and
  * a set of shift/staffing rules into a complete weekly schedule grid.
@@ -48,8 +48,8 @@ function generateWeeklySchedule(weekStartDate) {
   // Load settings once and pass them through all phases.
   // GAS sheet reads are expensive — loading both maps here prevents repeated reads
   // during the inner loops of Phases 1–3.
-  const shiftTimingMap        = buildShiftTimingMap();
-  const staffingRequirements  = loadStaffingRequirements();
+  const shiftTimingMap = buildShiftTimingMap();
+  const staffingRequirements = loadStaffingRequirements();
 
   // --- Phase 0: Bootstrap ---
   const employeeList = loadRosterSortedBySeniority();
@@ -73,8 +73,8 @@ function generateWeeklySchedule(weekStartDate) {
 
   return {
     weekSheetName: generateWeekSheetName(weekStartDate),
-    weekGrid:      weekGrid,
-    employeeList:  employeeList,
+    weekGrid: weekGrid,
+    employeeList: employeeList,
   };
 }
 
@@ -118,11 +118,11 @@ function loadRosterSortedBySeniority() {
 
   const employeeList = [];
 
-  allRosterValues.forEach(function(row) {
-    const name        = row[ROSTER_COLUMN.NAME - 1];
-    const employeeId  = row[ROSTER_COLUMN.EMPLOYEE_ID - 1];
-    const hireDate    = row[ROSTER_COLUMN.HIRE_DATE - 1];
-    const status      = row[ROSTER_COLUMN.STATUS - 1];
+  allRosterValues.forEach(function (row) {
+    const name = row[ROSTER_COLUMN.NAME - 1];
+    const employeeId = row[ROSTER_COLUMN.EMPLOYEE_ID - 1];
+    const hireDate = row[ROSTER_COLUMN.HIRE_DATE - 1];
+    const status = row[ROSTER_COLUMN.STATUS - 1];
 
     // Skip blank rows that may appear at the bottom of a partially filled roster.
     if (!name || !employeeId) {
@@ -131,10 +131,10 @@ function loadRosterSortedBySeniority() {
 
     const dayOffPreferenceOne = row[ROSTER_COLUMN.DAY_OFF_PREF_ONE - 1];
     const dayOffPreferenceTwo = row[ROSTER_COLUMN.DAY_OFF_PREF_TWO - 1];
-    const preferredShift      = row[ROSTER_COLUMN.PREFERRED_SHIFT - 1];
-    const qualifiedShiftsRaw  = row[ROSTER_COLUMN.QUALIFIED_SHIFTS - 1];
-    const vacationDatesRaw    = row[ROSTER_COLUMN.VACATION_DATES - 1];
-    const seniorityRank       = row[ROSTER_COLUMN.SENIORITY_RANK - 1];
+    const preferredShift = row[ROSTER_COLUMN.PREFERRED_SHIFT - 1];
+    const qualifiedShiftsRaw = row[ROSTER_COLUMN.QUALIFIED_SHIFTS - 1];
+    const vacationDatesRaw = row[ROSTER_COLUMN.VACATION_DATES - 1];
+    const seniorityRank = row[ROSTER_COLUMN.SENIORITY_RANK - 1];
 
     // Parse the qualified shifts field from a comma-separated string into an array.
     // If the field is blank, default to using the preferred shift as the only qualified shift.
@@ -146,16 +146,16 @@ function loadRosterSortedBySeniority() {
     const vacationDateStrings = parseVacationDateStrings(vacationDatesRaw);
 
     employeeList.push({
-      name:                 name.toString().trim(),
-      employeeId:           employeeId.toString().trim(),
-      hireDate:             hireDate instanceof Date ? hireDate : new Date(hireDate),
-      status:               status.toString().trim(),
-      dayOffPreferenceOne:  dayOffPreferenceOne ? dayOffPreferenceOne.toString().trim() : "",
-      dayOffPreferenceTwo:  dayOffPreferenceTwo ? dayOffPreferenceTwo.toString().trim() : "",
-      preferredShift:       preferredShift ? preferredShift.toString().trim() : "",
-      qualifiedShifts:      qualifiedShiftList,
-      vacationDateStrings:  vacationDateStrings,
-      seniorityRank:        Number(seniorityRank) || 0,
+      name: name.toString().trim(),
+      employeeId: employeeId.toString().trim(),
+      hireDate: hireDate instanceof Date ? hireDate : new Date(hireDate),
+      status: status.toString().trim(),
+      dayOffPreferenceOne: dayOffPreferenceOne ? dayOffPreferenceOne.toString().trim() : "",
+      dayOffPreferenceTwo: dayOffPreferenceTwo ? dayOffPreferenceTwo.toString().trim() : "",
+      preferredShift: preferredShift ? preferredShift.toString().trim() : "",
+      qualifiedShifts: qualifiedShiftList,
+      vacationDateStrings: vacationDateStrings,
+      seniorityRank: Number(seniorityRank) || 0,
     });
   });
 
@@ -184,10 +184,10 @@ function loadRosterSortedBySeniority() {
 function initializeWeekGrid(employeeList, weekStartDate) {
   const weekGrid = [];
 
-  employeeList.forEach(function(employee, employeeIndex) {
+  employeeList.forEach(function (employee, employeeIndex) {
     weekGrid[employeeIndex] = [];
 
-    DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+    DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
       // All cells start as OFF. Phases 1–3 will convert these to SHIFT, RDO, or VAC as needed.
       weekGrid[employeeIndex][dayIndex] = createDayAssignment("OFF", null, 0, false);
     });
@@ -215,7 +215,7 @@ function initializeWeekGrid(employeeList, weekStartDate) {
  * @param {Date}   weekStartDate  — The Monday of the week being generated.
  */
 function applyVacationLocksForEmployee(weekGrid, employeeIndex, employee, weekStartDate) {
-  employee.vacationDateStrings.forEach(function(vacationDateString) {
+  employee.vacationDateStrings.forEach(function (vacationDateString) {
     const vacationDate = parseVacationDateString(vacationDateString, weekStartDate);
 
     if (!vacationDate) {
@@ -282,13 +282,13 @@ function runPhaseOnePreferenceAssignment(weekGrid, employeeList, shiftTimingMap,
  */
 function grantRequestedDaysOff(weekGrid, employeeList, staffingRequirements) {
   // Process one day at a time so that the staffing floor check is accurate for each day independently.
-  DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+  DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
     const minimumStaffRequired = staffingRequirements[dayName] || 0;
 
     // Count how many employees are available (not VAC) on this day.
     // VAC days are locked and cannot be counted as available staff.
     let availableStaffCount = 0;
-    employeeList.forEach(function(employee, employeeIndex) {
+    employeeList.forEach(function (employee, employeeIndex) {
       if (weekGrid[employeeIndex][dayIndex].type !== "VAC") {
         availableStaffCount++;
       }
@@ -296,7 +296,7 @@ function grantRequestedDaysOff(weekGrid, employeeList, staffingRequirements) {
 
     // Grant RDO requests in seniority order (index 0 is most senior).
     // Stop granting once granting another would drop us below minimumStaffRequired.
-    employeeList.forEach(function(employee, employeeIndex) {
+    employeeList.forEach(function (employee, employeeIndex) {
       const currentCell = weekGrid[employeeIndex][dayIndex];
 
       // Never modify a locked VAC cell.
@@ -340,8 +340,8 @@ function grantRequestedDaysOff(weekGrid, employeeList, staffingRequirements) {
  * @param {Object} shiftTimingMap — From buildShiftTimingMap().
  */
 function assignPreferredShifts(weekGrid, employeeList, shiftTimingMap) {
-  employeeList.forEach(function(employee, employeeIndex) {
-    DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+  employeeList.forEach(function (employee, employeeIndex) {
+    DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
       const currentCell = weekGrid[employeeIndex][dayIndex];
 
       // Only assign shifts to cells that are currently OFF.
@@ -421,7 +421,7 @@ function enforceMinimumDaysOff(weekGrid, employeeList) {
 
     // Score each working day by how many OTHER employees are also scheduled.
     // A higher score means others cover that day well → this employee can be off there.
-    const scoredDays = workingDayIndices.map(function(dayIndex) {
+    const scoredDays = workingDayIndices.map(function (dayIndex) {
       let otherWorkersCount = 0;
       for (let otherIndex = 0; otherIndex < employeeList.length; otherIndex++) {
         if (otherIndex !== employeeIndex && weekGrid[otherIndex][dayIndex].type === "SHIFT") {
@@ -433,7 +433,7 @@ function enforceMinimumDaysOff(weekGrid, employeeList) {
 
     // Sort descending: highest coverage from others first.
     // These are the best days for this employee to take off.
-    scoredDays.sort(function(a, b) { return b.coverage - a.coverage; });
+    scoredDays.sort(function (a, b) { return b.coverage - a.coverage; });
 
     // Convert the top excessWorkingDays SHIFT cells back to OFF.
     for (let i = 0; i < excessWorkingDays; i++) {
@@ -489,7 +489,7 @@ function countWorkingDays(weekGrid, employeeIndex) {
  * @param {Object} shiftTimingMap — From buildShiftTimingMap().
  */
 function runPhaseTwoHourEnforcement(weekGrid, employeeList, shiftTimingMap) {
-  employeeList.forEach(function(employee, employeeIndex) {
+  employeeList.forEach(function (employee, employeeIndex) {
     const weeklyMinimum = employee.status === "FT" ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN;
     const weeklyMaximum = employee.status === "FT" ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
 
@@ -508,7 +508,7 @@ function runPhaseTwoHourEnforcement(weekGrid, employeeList, shiftTimingMap) {
     }
 
     // Scan through the week and convert OFF days to shifts until the minimum is met.
-    DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+    DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
       // Re-check every iteration because the previous iteration may have added hours.
       if (currentWeeklyHours >= weeklyMinimum) {
         return;
@@ -573,7 +573,7 @@ function runPhaseTwoHourEnforcement(weekGrid, employeeList, shiftTimingMap) {
  * @param {Object} staffingRequirements — From loadStaffingRequirements() (used as a guard in Cascade B).
  */
 function runPhaseThreeGapResolution(weekGrid, employeeList, shiftTimingMap, staffingRequirements) {
-  DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+  DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
     // Build the coverage map fresh for this day before starting either cascade.
     // The coverage map is a 39-element array where each element counts how many
     // employees are present during that 30-minute window.
@@ -628,7 +628,7 @@ function runPhaseThreeGapResolution(weekGrid, employeeList, shiftTimingMap, staf
 
       // Only reassign if the alternative shift provides better gap coverage than the current shift.
       const currentShiftDefinition = shiftTimingMap[currentCell.shiftName + "|" + employee.status];
-      const currentShiftScore  = currentShiftDefinition
+      const currentShiftScore = currentShiftDefinition
         ? scoreCoverageForShift(currentShiftDefinition, coverageWithoutThisEmployee)
         : 0;
       const alternativeShiftScore = scoreCoverageForShift(bestAlternativeShift, coverageWithoutThisEmployee);
@@ -752,7 +752,7 @@ function buildDayCoverage(weekGrid, employeeList, dayIndex, shiftTimingMap, excl
   // Initialize all 39 slots to zero.
   const coverageSlots = new Array(COVERAGE.SLOT_COUNT).fill(0);
 
-  employeeList.forEach(function(employee, employeeIndex) {
+  employeeList.forEach(function (employee, employeeIndex) {
     // Exclude the specified employee if requested (used in Cascade A scoring).
     if (employeeIndex === excludeIndex) {
       return;
@@ -766,7 +766,7 @@ function buildDayCoverage(weekGrid, employeeList, dayIndex, shiftTimingMap, excl
       return;
     }
 
-    const shiftKey        = cell.shiftName + "|" + employee.status;
+    const shiftKey = cell.shiftName + "|" + employee.status;
     const shiftDefinition = shiftTimingMap[shiftKey];
 
     if (!shiftDefinition) {
@@ -844,11 +844,11 @@ function hasCoverageGaps(coverageSlots, startSlotIndex, endSlotIndex) {
  * @returns {Object|null} The ShiftDefinition with the highest coverage score, or null if none found.
  */
 function selectBestCoverageShift(qualifiedShiftNames, employmentStatus, coverageSlots, shiftTimingMap) {
-  let highestScore          = -1;
-  let bestShiftDefinition   = null;
+  let highestScore = 0;
+  let bestShiftDefinition = null;
 
-  qualifiedShiftNames.forEach(function(shiftName) {
-    const shiftKey        = shiftName.trim() + "|" + employmentStatus;
+  qualifiedShiftNames.forEach(function (shiftName) {
+    const shiftKey = shiftName.trim() + "|" + employmentStatus;
     const shiftDefinition = shiftTimingMap[shiftKey];
 
     if (!shiftDefinition) {
@@ -864,7 +864,7 @@ function selectBestCoverageShift(qualifiedShiftNames, employmentStatus, coverage
     const score = scoreCoverageForShift(shiftDefinition, coverageSlots);
 
     if (score > highestScore) {
-      highestScore        = score;
+      highestScore = score;
       bestShiftDefinition = shiftDefinition;
     }
   });
@@ -984,8 +984,8 @@ function refreshAllSeniorityRanks() {
     .getValues();
 
   // Build an array of new seniority ranks to write back in a single batch.
-  const newSeniorityRankValues = hireDateValues.map(function(hireDateRow, rowOffset) {
-    const hireDate         = hireDateRow[0];
+  const newSeniorityRankValues = hireDateValues.map(function (hireDateRow, rowOffset) {
+    const hireDate = hireDateRow[0];
     const employmentStatus = statusValues[rowOffset][0];
     return [calculateSeniorityRank(hireDate, employmentStatus ? employmentStatus.toString() : "PT")];
   });
@@ -1013,7 +1013,7 @@ function recalculateSeniorityRankForRow(rowNumber) {
     return;
   }
 
-  const hireDate         = rosterSheet.getRange(rowNumber, ROSTER_COLUMN.HIRE_DATE).getValue();
+  const hireDate = rosterSheet.getRange(rowNumber, ROSTER_COLUMN.HIRE_DATE).getValue();
   const employmentStatus = rosterSheet.getRange(rowNumber, ROSTER_COLUMN.STATUS).getValue();
 
   const newRank = calculateSeniorityRank(hireDate, employmentStatus ? employmentStatus.toString() : "PT");
@@ -1035,7 +1035,7 @@ function recalculateSeniorityRankForRow(rowNumber) {
 function getWeeklyHours(weekGrid, employeeIndex) {
   let totalHours = 0;
 
-  weekGrid[employeeIndex].forEach(function(cell) {
+  weekGrid[employeeIndex].forEach(function (cell) {
     if (cell.type === "SHIFT") {
       totalHours += cell.paidHours;
     }
@@ -1063,8 +1063,8 @@ function getWeeklyHours(weekGrid, employeeIndex) {
  */
 function generateWeekSheetName(weekStartDate) {
   const month = String(weekStartDate.getMonth() + 1).padStart(2, "0");
-  const day   = String(weekStartDate.getDate()).padStart(2, "0");
-  const year  = String(weekStartDate.getFullYear()).slice(-2);
+  const day = String(weekStartDate.getDate()).padStart(2, "0");
+  const year = String(weekStartDate.getFullYear()).slice(-2);
   return "Week_" + month + "_" + day + "_" + year;
 }
 
@@ -1144,8 +1144,8 @@ function parseVacationDateString(dateString, weekStartDate) {
   if (/^\d{1,2}\/\d{1,2}$/.test(trimmedString)) {
     const parts = trimmedString.split("/");
     const month = parseInt(parts[0], 10);
-    const day   = parseInt(parts[1], 10);
-    const year  = weekStartDate.getFullYear();
+    const day = parseInt(parts[1], 10);
+    const year = weekStartDate.getFullYear();
 
     const parsed = new Date(year, month - 1, day);
     if (!isNaN(parsed.getTime())) {
@@ -1178,8 +1178,8 @@ function parseVacationDateStrings(rawCellValue) {
 
   return rawCellValue.toString()
     .split(",")
-    .map(function(entry) { return entry.trim(); })
-    .filter(function(entry) { return entry !== ""; });
+    .map(function (entry) { return entry.trim(); })
+    .filter(function (entry) { return entry !== ""; });
 }
 
 
@@ -1200,8 +1200,8 @@ function parseQualifiedShiftList(rawCellValue, preferredShift) {
 
   const parsedList = rawCellValue.toString()
     .split(",")
-    .map(function(entry) { return entry.trim(); })
-    .filter(function(entry) { return entry !== ""; });
+    .map(function (entry) { return entry.trim(); })
+    .filter(function (entry) { return entry !== ""; });
 
   // Ensure the preferred shift is always in the qualified list so it can be
   // used as a fallback even if the manager forgot to include it explicitly.
@@ -1262,10 +1262,10 @@ function compareEmployeesBySeniority(employeeA, employeeB) {
  */
 function createDayAssignment(assignmentType, shiftName, paidHours, isLocked, displayText) {
   return {
-    type:      assignmentType,
+    type: assignmentType,
     shiftName: shiftName,
     paidHours: paidHours,
-    locked:    isLocked,
+    locked: isLocked,
     displayText: displayText || null,
     // display text is the human readable time range written into the employees schedule cell,
     // for example "8:00 AM - 4:30 PM", only populated for cells with a valid shift
@@ -1335,7 +1335,7 @@ function readCheckboxStateFromSheet(weekSheet, employeeCount) {
       .getValues()[0];
 
     for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
-      const isVacation        = vacationValues[dayIndex] === true;
+      const isVacation = vacationValues[dayIndex] === true;
       const isRequestedDayOff = requestedDayOffValues[dayIndex] === true;
 
       if (isVacation) {

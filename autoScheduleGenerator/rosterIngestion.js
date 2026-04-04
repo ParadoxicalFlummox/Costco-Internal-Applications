@@ -1,6 +1,6 @@
 /**
  * rosterIngestion.js — Syncs employees from an external master spreadsheet into the local Roster sheet.
- * VERSION 0.3.1
+ * VERSION 0.3.3
  *
  * This file handles the entire "bring employee data into the workbook" workflow:
  *   1. The manager opens the Ingestion sheet and types a Google Spreadsheet ID.
@@ -130,7 +130,7 @@ function readIngestionInputs() {
 
   return {
     sourceSpreadsheetId: sourceSpreadsheetId,
-    departmentName:      departmentName,
+    departmentName: departmentName,
   };
 }
 
@@ -181,11 +181,11 @@ function fetchEmployeesFromSource(sourceSpreadsheetId, departmentName) {
   // Skip row 0 (the header row) and filter by department.
   const matchingEmployees = [];
 
-  allRows.slice(1).forEach(function(row) {
-    const employeeName   = row[0];
-    const employeeId     = row[1];
-    const hireDate       = row[5];
-    const department     = row[2];
+  allRows.slice(1).forEach(function (row) {
+    const employeeName = row[0];
+    const employeeId = row[1];
+    const hireDate = row[5];
+    const department = row[2];
 
     // Skip rows where the department column is blank or does not match.
     if (!department || department.toString().trim() !== departmentName) {
@@ -203,9 +203,9 @@ function fetchEmployeesFromSource(sourceSpreadsheetId, departmentName) {
     }
 
     matchingEmployees.push({
-      name:       employeeName.toString().trim(),
+      name: employeeName.toString().trim(),
       employeeId: employeeId.toString().trim(),
-      hireDate:   hireDate instanceof Date ? hireDate : new Date(hireDate),
+      hireDate: hireDate instanceof Date ? hireDate : new Date(hireDate),
     });
   });
 
@@ -229,10 +229,10 @@ function fetchEmployeesFromSource(sourceSpreadsheetId, departmentName) {
 function deduplicateAgainstRoster(sourceEmployees) {
   const existingEmployeeIds = getExistingRosterEmployeeIds();
 
-  const employeesToAdd    = [];
-  const skippedEmployees  = [];
+  const employeesToAdd = [];
+  const skippedEmployees = [];
 
-  sourceEmployees.forEach(function(employee) {
+  sourceEmployees.forEach(function (employee) {
     if (existingEmployeeIds.has(employee.employeeId)) {
       // This employee is already on the Roster — skip them to avoid creating a duplicate row.
       skippedEmployees.push(employee);
@@ -242,7 +242,7 @@ function deduplicateAgainstRoster(sourceEmployees) {
   });
 
   return {
-    employeesToAdd:   employeesToAdd,
+    employeesToAdd: employeesToAdd,
     skippedEmployees: skippedEmployees,
   };
 }
@@ -278,7 +278,7 @@ function getExistingRosterEmployeeIds() {
 
   const existingIds = new Set();
 
-  employeeIdValues.forEach(function(row) {
+  employeeIdValues.forEach(function (row) {
     const employeeId = row[0];
     if (employeeId && employeeId.toString().trim() !== "") {
       existingIds.add(employeeId.toString().trim());
@@ -317,7 +317,7 @@ function writeNewEmployeesToRoster(newEmployees) {
   // Determine the first empty row below any existing data.
   const firstEmptyRow = Math.max(rosterSheet.getLastRow() + 1, ROSTER_DATA_START_ROW);
 
-  newEmployees.forEach(function(employee, index) {
+  newEmployees.forEach(function (employee, index) {
     const targetRow = firstEmptyRow + index;
     writeSingleEmployeeRowToRoster(rosterSheet, employee, targetRow);
   });
@@ -412,7 +412,7 @@ function populateDepartmentDropdown(sourceSpreadsheetId) {
   //   Column F (5) — Hire Date
   const uniqueDepartments = new Set();
 
-  allRows.slice(1).forEach(function(row) {
+  allRows.slice(1).forEach(function (row) {
     const department = row[2];
     if (department && department.toString().trim() !== "") {
       uniqueDepartments.add(department.toString().trim());
@@ -562,10 +562,10 @@ function syncRosterFromSource() {
 
   if (sourceEmployees.length === 0) {
     const emptyResult = {
-      employeesAdded:   0,
+      employeesAdded: 0,
       employeesSkipped: 0,
-      statusMessage:    "No employees found for department \"" + inputs.departmentName + "\". " +
-                        "Check that the department name matches exactly.",
+      statusMessage: "No employees found for department \"" + inputs.departmentName + "\". " +
+        "Check that the department name matches exactly.",
     };
     writeSyncResultToIngestionSheet(emptyResult);
     return emptyResult;
@@ -590,9 +590,9 @@ function syncRosterFromSource() {
   // Step 7: Write the result summary back to the Ingestion sheet so the manager
   // can see what happened without needing to check the Roster sheet directly.
   const syncResult = {
-    employeesAdded:   deduplicationResult.employeesToAdd.length,
+    employeesAdded: deduplicationResult.employeesToAdd.length,
     employeesSkipped: deduplicationResult.skippedEmployees.length,
-    statusMessage:    "Sync complete on " + new Date().toLocaleString(),
+    statusMessage: "Sync complete on " + new Date().toLocaleString(),
   };
 
   writeSyncResultToIngestionSheet(syncResult);

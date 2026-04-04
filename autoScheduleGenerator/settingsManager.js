@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Reads shift definitions and staffing requirements from the Settings sheet.
- * VERSION: 0.3.2
+ * VERSION: 0.3.3
  *
  * This file is the only place in the codebase that reads from the Settings sheet.
  * Every other file that needs shift or staffing data calls a function from this file
@@ -68,13 +68,13 @@ function buildShiftTimingMap() {
   const shiftTimingMap = {};
   let validRowCount = 0;
 
-  rawShiftRows.forEach(function(row, rowIndex) {
-    const shiftName  = row[SHIFT_TABLE_COLUMN.NAME];
-    const status     = row[SHIFT_TABLE_COLUMN.STATUS];
+  rawShiftRows.forEach(function (row, rowIndex) {
+    const shiftName = row[SHIFT_TABLE_COLUMN.NAME];
+    const status = row[SHIFT_TABLE_COLUMN.STATUS];
     const startValue = row[SHIFT_TABLE_COLUMN.START_TIME];
-    const endValue   = row[SHIFT_TABLE_COLUMN.END_TIME];
-    const paidHours  = row[SHIFT_TABLE_COLUMN.PAID_HOURS];
-    const hasLunch   = row[SHIFT_TABLE_COLUMN.HAS_LUNCH];
+    const endValue = row[SHIFT_TABLE_COLUMN.END_TIME];
+    const paidHours = row[SHIFT_TABLE_COLUMN.PAID_HOURS];
+    const hasLunch = row[SHIFT_TABLE_COLUMN.HAS_LUNCH];
 
     // Skip blank rows — Google Sheets always returns the full range even if only
     // a few rows contain data, so empty rows at the bottom are expected.
@@ -86,7 +86,7 @@ function buildShiftTimingMap() {
     // In Google Sheets, a time value stored as a fraction of a day (e.g., 0.333 for 08:00).
     // Multiplying by 1440 (minutes in a day) and rounding gives minutes since midnight.
     const startMinutes = convertGasTimeValueToMinutes(startValue, "start time", shiftName, rowIndex);
-    const endMinutes   = convertGasTimeValueToMinutes(endValue,   "end time",   shiftName, rowIndex);
+    const endMinutes = convertGasTimeValueToMinutes(endValue, "end time", shiftName, rowIndex);
 
     if (startMinutes === null || endMinutes === null) {
       // convertGasTimeValueToMinutes already logged the problem; skip this row.
@@ -120,14 +120,14 @@ function buildShiftTimingMap() {
     const mapKey = shiftName + "|" + status;
 
     shiftTimingMap[mapKey] = {
-      name:         shiftName,
-      status:       status,
+      name: shiftName,
+      status: status,
       startMinutes: startMinutes,
-      endMinutes:   endMinutes,
-      paidHours:    Number(paidHours),
-      blockHours:   blockHours,
-      displayText:  displayText,
-      hasLunch:     hasLunch === true,
+      endMinutes: endMinutes,
+      paidHours: Number(paidHours),
+      blockHours: blockHours,
+      displayText: displayText,
+      hasLunch: hasLunch === true,
     };
 
     validRowCount++;
@@ -168,8 +168,8 @@ function loadStaffingRequirements() {
 
   const staffingRequirements = {};
 
-  rawRequirementsRows.forEach(function(row) {
-    const dayName      = row[0];
+  rawRequirementsRows.forEach(function (row) {
+    const dayName = row[0];
     const minimumStaff = row[1];
 
     // Skip blank rows in case the table range includes empty cells at the bottom.
@@ -183,7 +183,7 @@ function loadStaffingRequirements() {
   // Warn if any of the seven days is missing from the staffing requirements.
   // A missing day means the engine will treat that day as requiring zero staff,
   // which could result in everyone getting that day off — clearly unintended.
-  DAY_NAMES_IN_ORDER.forEach(function(dayName) {
+  DAY_NAMES_IN_ORDER.forEach(function (dayName) {
     if (staffingRequirements[dayName] === undefined) {
       Logger.log(
         "WARNING: No staffing requirement found for \"" + dayName + "\" in the Settings sheet. " +
@@ -221,7 +221,7 @@ function readShiftNamesFromSettings() {
   // having separate FT and PT rows with the same name.
   const uniqueShiftNames = new Set();
 
-  rawShiftRows.forEach(function(row) {
+  rawShiftRows.forEach(function (row) {
     const shiftName = row[SHIFT_TABLE_COLUMN.NAME];
     if (shiftName && shiftName.toString().trim() !== "") {
       uniqueShiftNames.add(shiftName.toString().trim());
@@ -264,8 +264,8 @@ function convertGasTimeValueToMinutes(timeValue, fieldLabel, shiftName, rowIndex
     // time as it appears in the cell which avoids the script timezone and sheet timezone
     // mismatch creating an offset when the two differ
     const spreadsheetTimeZone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
-    const formattedTime       = Utilities.formatDate(timeValue, spreadsheetTimeZone, "HH:mm");
-    const timeParts           = formattedTime.split(":");
+    const formattedTime = Utilities.formatDate(timeValue, spreadsheetTimeZone, "HH:mm");
+    const timeParts = formattedTime.split(":");
     return parseInt(timeParts[0], 10) * 60 + parseInt(timeParts[1], 10);
   }
 
@@ -303,7 +303,7 @@ function convertGasTimeValueToMinutes(timeValue, fieldLabel, shiftName, rowIndex
  */
 function validateShiftPaidHours(shiftName, status, paidHours, blockHours) {
   const numPaidHours = Number(paidHours);
-  const isPlusShift  = shiftName.toString().endsWith("+");
+  const isPlusShift = shiftName.toString().endsWith("+");
 
   if (status === "PT" && isPlusShift) {
     // PT+ shifts are lunch-qualified and can be scheduled between PT_PLUS_MIN_HOURS and
@@ -371,9 +371,9 @@ function formatMinutesAsTimeRange(startMinutes, endMinutes) {
  * @returns {string} A formatted time string, e.g., "8:30 AM".
  */
 function formatMinutesAsTimeString(totalMinutes) {
-  const totalHours  = Math.floor(totalMinutes / 60);
-  const minutes     = totalMinutes % 60;
-  const period      = totalHours >= 12 ? "PM" : "AM";
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const period = totalHours >= 12 ? "PM" : "AM";
 
   // Convert from 24-hour to 12-hour. Hour 0 and hour 12 both display as 12.
   const twelveHourValue = totalHours % 12 === 0 ? 12 : totalHours % 12;

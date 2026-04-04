@@ -77,11 +77,14 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
 function writeWeekHeader(scheduleSheet, weekStartDate, departmentName) {
   const weekEndDate = getDateForDayIndex(weekStartDate, 6); // Sunday
 
+  // GAS's V8 Intl implementation does not produce clean output for partial date
+  // option sets like { day, year } without month — it renders "(day: 12) 2026".
+  // Build the label manually: "April 6 – 12, 2026".
   const weekLabel =
     "Week of " +
     weekStartDate.toLocaleDateString("en-US", { month: "long", day: "numeric" }) +
     " \u2013 " +
-    weekEndDate.toLocaleDateString("en-US", { day: "numeric", year: "numeric" });
+    weekEndDate.getDate() + ", " + weekEndDate.getFullYear();
 
   // Row 1: Week label — merged across all 10 columns for visual impact.
   const titleRange = scheduleSheet.getRange(

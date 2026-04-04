@@ -1,6 +1,6 @@
 /**
  * config.js — Central configuration constants for the Auto Schedule Generator.
- * VERSION: 0.3.2
+ * VERSION: 0.3.3
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule in the system. Nothing in any other file should hard-code a

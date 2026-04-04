@@ -1,6 +1,6 @@
 /**
  * ui.js — Google Apps Script triggers, custom menu, and generation orchestrators.
- * VERSION: 0.3.2
+ * VERSION: 0.3.3
  *
  * This file is the entry point for all user-initiated actions. It contains:
  *   - onOpen():  Creates the "Schedule Admin" menu when the spreadsheet opens.
