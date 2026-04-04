@@ -1,6 +1,6 @@
 /**
  * ui.js — Google Apps Script triggers, custom menu, and generation orchestrators.
- * VERSION: 0.3.1
+ * VERSION: 0.3.2
  *
  * This file is the entry point for all user-initiated actions. It contains:
  *   - onOpen():  Creates the "Schedule Admin" menu when the spreadsheet opens.
@@ -40,14 +40,15 @@
 function onOpen() {
   SpreadsheetApp.getActiveSpreadsheet()
     .addMenu("Schedule Admin", [
-      { name: "Sync Roster",          functionName: "menuSyncRoster" },
-      { name: "Refresh Seniority",    functionName: "menuRefreshSeniority" },
+      { name: "Sync Roster", functionName: "menuSyncRoster" },
+      { name: "Refresh Seniority", functionName: "menuRefreshSeniority" },
       { name: "Sync Shift Dropdowns", functionName: "menuSyncShiftDropdowns" },
+      { name: "Load Departments", functionName: "menuLoadDepartments" },
       null, // Separator line
       { name: "GENERATE SCHEDULE (3 weeks)", functionName: "menuGenerateScheduleDraft" },
-      { name: "GENERATE SCHEDULE (1 week)",  functionName: "menuGenerateSingleWeek" },
+      { name: "GENERATE SCHEDULE (1 week)", functionName: "menuGenerateSingleWeek" },
       null, // Separator line
-      { name: "Setup Sheets (First Run Only)",      functionName: "menuSetupAllSheets" },
+      { name: "Setup Sheets (First Run Only)", functionName: "menuSetupAllSheets" },
     ]);
 }
 
@@ -73,7 +74,7 @@ function onOpen() {
 function onEdit(editEvent) {
   const editedSheet = editEvent.source.getActiveSheet();
   const editedRange = editEvent.range;
-  const sheetName   = editedSheet.getName();
+  const sheetName = editedSheet.getName();
 
   // --- Route 1: Ingestion sheet — Source Spreadsheet ID changed ---
   if (sheetName === SHEET_NAMES.INGESTION) {
@@ -81,7 +82,13 @@ function onEdit(editEvent) {
     if (editedCellAddress === INGESTION_CELL.SOURCE_SPREADSHEET_ID) {
       const newSpreadsheetId = editedRange.getValue().toString().trim();
       if (newSpreadsheetId !== "") {
-        populateDepartmentDropdown(newSpreadsheetId);
+        // Cannot call populateDepartmentDropdown here - onEdit is a simple trigger
+        // and does not have the Oauth scope needed to open external spreadsheets.
+        // Prompt the manager to use the menu action instead.
+        const ingestionSheet = editEvent.source.getSheetByName(SHEET_NAMES.INGESTION);
+        if (ingestionSheet) {
+          ingestionSheet.getRange(INGESTION_CELL.DEPARTMENT).setValue("← click 'Load Departments from Source' in Schedule Admin Menu");
+        }
       }
     }
     return;
@@ -90,7 +97,7 @@ function onEdit(editEvent) {
   // --- Route 2: Roster sheet — Status column changed ---
   if (sheetName === SHEET_NAMES.ROSTER) {
     if (editedRange.getColumn() === ROSTER_COLUMN.STATUS &&
-        editedRange.getRow() >= ROSTER_DATA_START_ROW) {
+      editedRange.getRow() >= ROSTER_DATA_START_ROW) {
       recalculateSeniorityRankForRow(editedRange.getRow());
     }
     return;
@@ -99,7 +106,7 @@ function onEdit(editEvent) {
   // --- Route 3: Week schedule sheet — VAC or RDO checkbox changed ---
   // Week sheets are named "Week_MM_DD_YY" — check for the "Week_" prefix.
   if (sheetName.startsWith("Week_")) {
-    const editedRow    = editedRange.getRow();
+    const editedRow = editedRange.getRow();
     const editedColumn = editedRange.getColumn();
 
     // Only react to edits in the day columns (Monday through Sunday).
@@ -116,7 +123,7 @@ function onEdit(editEvent) {
     // within the three-row employee block.
     // Block structure: (row - DATA_START_ROW) % 3 === 0 → VAC, === 1 → RDO, === 2 → SHIFT
     const rowOffsetWithinBlock = (editedRow - WEEK_SHEET.DATA_START_ROW) % WEEK_SHEET.ROWS_PER_EMPLOYEE;
-    const isVacationRow        = rowOffsetWithinBlock === WEEK_SHEET.ROW_OFFSET_VAC;
+    const isVacationRow = rowOffsetWithinBlock === WEEK_SHEET.ROW_OFFSET_VAC;
     const isRequestedDayOffRow = rowOffsetWithinBlock === WEEK_SHEET.ROW_OFFSET_RDO;
 
     if (isVacationRow || isRequestedDayOffRow) {
@@ -192,6 +199,42 @@ function menuSyncShiftDropdowns() {
     );
   } catch (error) {
     SpreadsheetApp.getUi().alert("Sync Failed", error.message, SpreadsheetApp.getUi().ButtonSet.OK);
+  }
+}
+
+/**
+ * Triggered by: Schedule Admin → Load Departments from Source
+ *
+ * Reads the source spreadsheet ID from Ingestion B3 and populates the department
+ * dropdown in B4. Must be a menu-triggered function — onEdit() cannot open external
+ * spreadsheets because simple triggers lack the required OAuth authorization scope.
+ */
+function menuLoadDepartments() {
+  const ingestionSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.INGESTION);
+
+  if (!ingestionSheet) {
+    SpreadsheetApp.getUi().alert("Load Failed", "Ingestion sheet not found. Run Setup Sheets First.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const sourceSpreadsheetId = ingestionSheet
+    .getRange(INGESTION_CELL.SOURCE_SPREADSHEET_ID)
+    .getValue()
+    .toString()
+    .trim();
+
+  if (!sourceSpreadsheetId) {
+    SpreadsheetApp.getUi().alert("Load Failed", "Enter a source spreadsheet ID in cell B3 first.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  try {
+    populateDepartmentDropdown(sourceSpreadsheetId);
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      "Department dropdown updated from source spreadsheet.", "Load Complete", 4
+    );
+  } catch (error) {
+    SpreadsheetApp.getUi().alert("Load Failed", error.message, SpreadsheetApp.getUi().ButtonSet.OK);
   }
 }
 
@@ -463,7 +506,7 @@ function resolveEntireWeek(weekSheet) {
     }
 
     // Load settings — needed by the engine phases.
-    const shiftTimingMap       = buildShiftTimingMap();
+    const shiftTimingMap = buildShiftTimingMap();
     const staffingRequirements = loadStaffingRequirements();
 
     // Initialize a fresh grid that reflects the manager's checkbox decisions.
@@ -564,16 +607,16 @@ function setupRosterSheetHeaders(rosterSheet) {
   rosterSheet.setFrozenRows(1);
 
   // Column widths for readability.
-  rosterSheet.setColumnWidth(ROSTER_COLUMN.NAME,             160);
-  rosterSheet.setColumnWidth(ROSTER_COLUMN.EMPLOYEE_ID,      110);
-  rosterSheet.setColumnWidth(ROSTER_COLUMN.HIRE_DATE,        100);
-  rosterSheet.setColumnWidth(ROSTER_COLUMN.STATUS,            90);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.NAME, 160);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.EMPLOYEE_ID, 110);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.HIRE_DATE, 100);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.STATUS, 90);
   rosterSheet.setColumnWidth(ROSTER_COLUMN.DAY_OFF_PREF_ONE, 110);
   rosterSheet.setColumnWidth(ROSTER_COLUMN.DAY_OFF_PREF_TWO, 110);
-  rosterSheet.setColumnWidth(ROSTER_COLUMN.PREFERRED_SHIFT,  120);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.PREFERRED_SHIFT, 120);
   rosterSheet.setColumnWidth(ROSTER_COLUMN.QUALIFIED_SHIFTS, 200);
-  rosterSheet.setColumnWidth(ROSTER_COLUMN.VACATION_DATES,   200);
-  rosterSheet.setColumnWidth(ROSTER_COLUMN.SENIORITY_RANK,   120);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.VACATION_DATES, 200);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.SENIORITY_RANK, 120);
 
   // Add a note to the Seniority Rank column header explaining it is script-managed.
   rosterSheet.getRange(1, ROSTER_COLUMN.SENIORITY_RANK).setNote(
@@ -601,13 +644,13 @@ function setupSettingsSheetTemplate(settingsSheet) {
   // --- Table 1: Staffing requirements (columns A–B) ---
   const staffingHeaders = [["Day", "Min Staff Required"]];
   const staffingData = [
-    ["Monday",    6],
-    ["Tuesday",   6],
+    ["Monday", 6],
+    ["Tuesday", 6],
     ["Wednesday", 6],
-    ["Thursday",  6],
-    ["Friday",    6],
-    ["Saturday",  4],
-    ["Sunday",    4],
+    ["Thursday", 6],
+    ["Friday", 6],
+    ["Saturday", 4],
+    ["Sunday", 4],
   ];
 
   settingsSheet.getRange("A1:B1").setValues(staffingHeaders).setFontWeight("bold");
@@ -628,24 +671,24 @@ function setupSettingsSheetTemplate(settingsSheet) {
   const shiftHeaders = [["Shift Name", "Status (FT/PT)", "Start Time", "End Time", "Paid Hours", "Has Lunch (TRUE/FALSE)"]];
   const shiftData = [
     // --- Full-Time Shifts (8 paid hrs + 30 min unpaid lunch = 8.5 hr block) ---
-    ["Early",    "FT", "4:00 AM",  "12:30 PM",  8.0, true],   // 4:00 AM – 12:30 PM  open shift; covers early-morning store setup
-    ["Morning",  "FT", "6:00 AM",  "2:30 PM",   8.0, true],   // 6:00 AM –  2:30 PM  standard day shift
-    ["Mid",      "FT", "10:00 AM", "6:30 PM",   8.0, true],   // 10:00 AM –  6:30 PM bridges morning and evening coverage
-    ["Closing",  "FT", "1:30 PM",  "10:00 PM",  8.0, true],   // 1:30 PM – 10:00 PM  evening through close (aligns with Sat 10 PM cutoff)
+    ["Early", "FT", "4:00 AM", "12:30 PM", 8.0, true],   // 4:00 AM – 12:30 PM  open shift; covers early-morning store setup
+    ["Morning", "FT", "6:00 AM", "2:30 PM", 8.0, true],   // 6:00 AM –  2:30 PM  standard day shift
+    ["Mid", "FT", "10:00 AM", "6:30 PM", 8.0, true],   // 10:00 AM –  6:30 PM bridges morning and evening coverage
+    ["Closing", "FT", "1:30 PM", "10:00 PM", 8.0, true],   // 1:30 PM – 10:00 PM  evening through close (aligns with Sat 10 PM cutoff)
 
     // --- Part-Time Shifts, No Lunch (5 paid hrs = 5 hr block) ---
-    ["Early",    "PT", "4:00 AM",  "9:00 AM",   5.0, false],  // 4:00 AM –  9:00 AM  early coverage, no lunch needed at this length
-    ["Morning",  "PT", "6:00 AM",  "11:00 AM",  5.0, false],  // 6:00 AM – 11:00 AM
-    ["Mid",      "PT", "10:00 AM", "3:00 PM",   5.0, false],  // 10:00 AM –  3:00 PM
-    ["Closing",  "PT", "5:00 PM",  "10:00 PM",  5.0, false],  // 5:00 PM – 10:00 PM  aligns with Saturday close
+    ["Early", "PT", "4:00 AM", "9:00 AM", 5.0, false],  // 4:00 AM –  9:00 AM  early coverage, no lunch needed at this length
+    ["Morning", "PT", "6:00 AM", "11:00 AM", 5.0, false],  // 6:00 AM – 11:00 AM
+    ["Mid", "PT", "10:00 AM", "3:00 PM", 5.0, false],  // 10:00 AM –  3:00 PM
+    ["Closing", "PT", "5:00 PM", "10:00 PM", 5.0, false],  // 5:00 PM – 10:00 PM  aligns with Saturday close
 
     // --- Part-Time Shifts, With Lunch (5 paid hrs + 30 min unpaid = 5.5 hr block) ---
     // The "+" suffix distinguishes the lunch variant. Both "Morning" and "Morning+" are
     // valid entries in an employee's Qualified Shifts column.
-    ["Early+",   "PT", "4:00 AM",  "9:30 AM",   5.0, true],   // 4:00 AM –  9:30 AM
-    ["Morning+", "PT", "6:00 AM",  "11:30 AM",  5.0, true],   // 6:00 AM – 11:30 AM
-    ["Mid+",     "PT", "10:00 AM", "3:30 PM",   5.0, true],   // 10:00 AM –  3:30 PM
-    ["Closing+", "PT", "4:30 PM",  "10:00 PM",  5.0, true],   // 4:30 PM – 10:00 PM
+    ["Early+", "PT", "4:00 AM", "9:30 AM", 5.0, true],   // 4:00 AM –  9:30 AM
+    ["Morning+", "PT", "6:00 AM", "11:30 AM", 5.0, true],   // 6:00 AM – 11:30 AM
+    ["Mid+", "PT", "10:00 AM", "3:30 PM", 5.0, true],   // 10:00 AM –  3:30 PM
+    ["Closing+", "PT", "4:30 PM", "10:00 PM", 5.0, true],   // 4:30 PM – 10:00 PM
   ];
 
   settingsSheet.getRange("D1:I1").setValues(shiftHeaders).setFontWeight("bold");
@@ -673,8 +716,8 @@ function setupSettingsSheetTemplate(settingsSheet) {
  * @returns {Date} The Monday of the current week (time set to 00:00:00).
  */
 function getMondayOfCurrentWeek() {
-  const today      = new Date();
-  const dayOfWeek  = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const today = new Date();
+  const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 
   // Calculate how many days to subtract to reach Monday.
   // If today is Sunday (0), go back 6 days. If Monday (1), go back 0. Etc.
@@ -711,8 +754,10 @@ function getDepartmentNameForHeader() {
     .trim();
 
   if (!departmentValue ||
-      departmentValue === "" ||
-      departmentValue === "— enter spreadsheet ID first —") {
+    departmentValue === "" ||
+    departmentValue === "— enter spreadsheet ID first —" ||
+    departmentValue.startsWith("←") ||
+    departmentValue.startsWith("Error:")) {
     return "Unknown Department";
   }
 
@@ -732,14 +777,14 @@ function getDepartmentNameForHeader() {
 function parseWeekStartDateFromSheetName(sheetName) {
   // Match the pattern "Week_MM_DD_YY" with exactly this format.
   const namePattern = /^Week_(\d{2})_(\d{2})_(\d{2})$/;
-  const match       = sheetName.match(namePattern);
+  const match = sheetName.match(namePattern);
 
   if (!match) {
     return null;
   }
 
-  const month     = parseInt(match[1], 10);
-  const day       = parseInt(match[2], 10);
+  const month = parseInt(match[1], 10);
+  const day = parseInt(match[2], 10);
   const shortYear = parseInt(match[3], 10);
 
   // Convert two-digit year to four-digit year.

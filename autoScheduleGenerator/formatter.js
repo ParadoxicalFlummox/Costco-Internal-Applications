@@ -1,6 +1,6 @@
 /**
  * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION: 0.3.1
+ * VERSION: 0.3.2
  *
  * This file is the only place in the codebase that writes to a Week schedule sheet.
  * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
@@ -308,6 +308,16 @@ function writeStaffingSummary(scheduleSheet, employeeCount, staffingRequirements
       "=IF(" + actualCellAddress + ">=" + requiredCellAddress + ",\"OK\",\"UNDER\")";
     scheduleSheet.getRange(statusRow, columnNumber).setFormula(statusFormula);
   });
+
+  // Department total hours for the week (STATUS row, column J).
+  // Summing column J from the first shift row to the last employee row captures all per-employee
+  // weekly totals. VAC and RDO rows leave column J empty so they contribute 0 to the sum.
+  const totalHoursColumnLetter = columnIndexToLetter(WEEK_SHEET.COL_TOTAL_HOURS);
+  const departmentTotalFormula =
+    "=SUM(" + totalHoursColumnLetter + dataStartRow + ":" + totalHoursColumnLetter + lastShiftRow + ")";
+  scheduleSheet.getRange(statusRow, WEEK_SHEET.COL_TOTAL_HOURS)
+    .setFormula(departmentTotalFormula)
+    .setFontWeight("bold");
 }
 
 
@@ -360,12 +370,13 @@ function applyShiftColors(scheduleSheet, employeeList, weekGrid) {
 
 
 /**
- * Highlights the employee name cell in red if the employee is below their weekly hour minimum.
+ * Highlights the employee name cell to flag hours violations:
+ *   - Red  (UNDER_HOURS)  — employee is below their weekly minimum.
+ *   - Orange (OVER_HOURS_FT) — FT employee is above 40 hours (overtime risk).
  *
- * The red highlight is an informational flag — it does not mean the schedule is invalid,
- * only that the manager should review this employee's week. Common causes:
- *   - Too many vacation days to reach the minimum.
- *   - No valid shifts configured in Settings for this employee's status.
+ * Both flags are informational — they prompt the manager to review without blocking generation.
+ * Common under-hours causes: too many vacation days, no valid shifts in Settings.
+ * Common over-hours cause: gap resolution pulled in an already-full FT employee.
  *
  * The highlight is applied to the name cell (column B) on the SHIFT row, which is
  * the most visible row and ensures the highlight is not obscured by merged cells.
@@ -383,16 +394,23 @@ function applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid) {
     const weeklyHours   = getWeeklyHours(weekGrid, employeeIndex);
     const weeklyMinimum = employee.status === "FT" ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN;
 
-    // The name cell is in the VAC row but spans all 3 rows via merging.
-    // We apply the highlight to the SHIFT row's column B cell, which is visible
-    // but not merged — this avoids modifying the merged name cell's background.
-    const nameHighlightCell = scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_EMPLOYEE_NAME);
+    // Name cell highlight (column B, SHIFT row) — red when the employee is under their minimum.
+    // Applied to the SHIFT row's column B, which is the visible bottom of the merged name cell.
+    const nameHighlightCell        = scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_EMPLOYEE_NAME);
+    // Total hours cell highlight (column J, SHIFT row) — orange when an FT employee is over 40 hrs.
+    const totalHoursHighlightCell  = scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_TOTAL_HOURS);
 
-    if (weeklyHours < weeklyMinimum) {
-      nameHighlightCell.setBackground(COLORS.UNDER_HOURS);
-    } else {
-      // Clear any previous under-hours highlight in case of re-generation.
+    if (employee.status === "FT" && weeklyHours > HOUR_RULES.FT_MAX) {
+      // FT employees should never exceed 40 hours — orange on the total hours number signals overtime risk.
       nameHighlightCell.setBackground(null);
+      totalHoursHighlightCell.setBackground(COLORS.OVER_HOURS_FT);
+    } else if (weeklyHours < weeklyMinimum) {
+      nameHighlightCell.setBackground(COLORS.UNDER_HOURS);
+      totalHoursHighlightCell.setBackground(null);
+    } else {
+      // Clear any previous highlights in case of re-generation.
+      nameHighlightCell.setBackground(null);
+      totalHoursHighlightCell.setBackground(null);
     }
   });
 }

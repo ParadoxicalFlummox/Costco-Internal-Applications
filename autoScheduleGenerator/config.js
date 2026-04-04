@@ -1,6 +1,6 @@
 /**
  * config.js — Central configuration constants for the Auto Schedule Generator.
- * VERSION: 0.3.1
+ * VERSION: 0.3.2
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule in the system. Nothing in any other file should hard-code a
@@ -29,8 +29,8 @@
  */
 const SHEET_NAMES = {
   INGESTION: "Ingestion",
-  ROSTER:    "Roster",
-  SETTINGS:  "Settings",
+  ROSTER: "Roster",
+  SETTINGS: "Settings",
 };
 
 
@@ -46,16 +46,16 @@ const SHEET_NAMES = {
  * accesses that column.
  */
 const ROSTER_COLUMN = {
-  NAME:             1,  // A — Employee full name, synced from the source spreadsheet
-  EMPLOYEE_ID:      2,  // B — Unique employee identifier, used as the deduplication key during sync
-  HIRE_DATE:        3,  // C — Date the employee was hired; drives the seniority rank calculation
-  STATUS:           4,  // D — Employment status: "FT" (full-time) or "PT" (part-time)
+  NAME: 1,  // A — Employee full name, synced from the source spreadsheet
+  EMPLOYEE_ID: 2,  // B — Unique employee identifier, used as the deduplication key during sync
+  HIRE_DATE: 3,  // C — Date the employee was hired; drives the seniority rank calculation
+  STATUS: 4,  // D — Employment status: "FT" (full-time) or "PT" (part-time)
   DAY_OFF_PREF_ONE: 5,  // E — First preferred day off (e.g., "Monday")
   DAY_OFF_PREF_TWO: 6,  // F — Second preferred day off (e.g., "Tuesday")
-  PREFERRED_SHIFT:  7,  // G — The shift name the employee prefers (must match a Settings shift name)
+  PREFERRED_SHIFT: 7,  // G — The shift name the employee prefers (must match a Settings shift name)
   QUALIFIED_SHIFTS: 8,  // H — Comma-separated list of shift names this employee is trained to work
-  VACATION_DATES:   9,  // I — Comma-separated vacation dates (YYYY-MM-DD or MM/DD format)
-  SENIORITY_RANK:   10, // J — Calculated by the script; do not edit manually
+  VACATION_DATES: 9,  // I — Comma-separated vacation dates (YYYY-MM-DD or MM/DD format)
+  SENIORITY_RANK: 10, // J — Calculated by the script; do not edit manually
 };
 
 /**
@@ -79,7 +79,7 @@ const ROSTER_DATA_START_ROW = 2;
  */
 const SETTINGS_RANGE = {
   STAFFING_REQUIREMENTS_TABLE: "A2:B8",   // 7 rows, one per day of the week
-  SHIFT_DEFINITIONS_TABLE:     "D2:I50",  // Up to 49 shift rows; expand if needed
+  SHIFT_DEFINITIONS_TABLE: "D2:I50",  // Up to 49 shift rows; expand if needed
 };
 
 /**
@@ -89,12 +89,12 @@ const SETTINGS_RANGE = {
  * so these constants convert from logical name to array position.
  */
 const SHIFT_TABLE_COLUMN = {
-  NAME:       0, // D — The display name of the shift (e.g., "Morning", "Closing")
-  STATUS:     1, // E — "FT" or "PT" — this row applies only to employees of this status
+  NAME: 0, // D — The display name of the shift (e.g., "Morning", "Closing")
+  STATUS: 1, // E — "FT" or "PT" — this row applies only to employees of this status
   START_TIME: 2, // F — The shift start time as a GAS time value (decimal fraction of a day)
-  END_TIME:   3, // G — The shift end time as a GAS time value (includes unpaid lunch block for FT)
+  END_TIME: 3, // G — The shift end time as a GAS time value (includes unpaid lunch block for FT)
   PAID_HOURS: 4, // H — Hours counted toward the employee's weekly minimum/maximum
-  HAS_LUNCH:  5, // I — TRUE if this shift includes an unpaid 30-minute lunch break
+  HAS_LUNCH: 5, // I — TRUE if this shift includes an unpaid 30-minute lunch break
 };
 
 
@@ -115,30 +115,30 @@ const SHIFT_TABLE_COLUMN = {
  * by computing (rowNumber - DATA_START_ROW) % 3.
  */
 const WEEK_SHEET = {
-  HEADER_ROW:       1,  // Row containing the merged week label (e.g., "Week of April 7 – 13, 2026")
-  TIMESTAMP_ROW:    2,  // Row showing when this draft was last generated
-  DEPARTMENT_ROW:   3,  // Row showing the department name
+  HEADER_ROW: 1,  // Row containing the merged week label (e.g., "Week of April 7 – 13, 2026")
+  TIMESTAMP_ROW: 2,  // Row showing when this draft was last generated
+  DEPARTMENT_ROW: 3,  // Row showing the department name
   COLUMN_HEADER_ROW: 5, // Row containing "Label | Employee | Mon | Tue | ... | Sun | Total Hrs"
-  DATA_START_ROW:   6,  // First row of employee data blocks
+  DATA_START_ROW: 6,  // First row of employee data blocks
 
   // Column positions (1-indexed)
-  COL_ROW_LABEL:    1,  // A — "VAC", "RDO", or "SHIFT" label for each row
+  COL_ROW_LABEL: 1,  // A — "VAC", "RDO", or "SHIFT" label for each row
   COL_EMPLOYEE_NAME: 2, // B — Employee name (merged across all 3 rows of the block)
-  COL_MONDAY:       3,  // C
-  COL_TUESDAY:      4,  // D
-  COL_WEDNESDAY:    5,  // E
-  COL_THURSDAY:     6,  // F
-  COL_FRIDAY:       7,  // G
-  COL_SATURDAY:     8,  // H
-  COL_SUNDAY:       9,  // I
-  COL_TOTAL_HOURS:  10, // J — Weekly paid hours total, written by the script (not a formula)
+  COL_MONDAY: 3,  // C
+  COL_TUESDAY: 4,  // D
+  COL_WEDNESDAY: 5,  // E
+  COL_THURSDAY: 6,  // F
+  COL_FRIDAY: 7,  // G
+  COL_SATURDAY: 8,  // H
+  COL_SUNDAY: 9,  // I
+  COL_TOTAL_HOURS: 10, // J — Weekly paid hours total, written by the script (not a formula)
 
   ROWS_PER_EMPLOYEE: 3,  // VAC + RDO + SHIFT
-  ROW_OFFSET_VAC:    0,  // Offset from the employee block start row for the VAC row
-  ROW_OFFSET_RDO:    1,  // Offset from the employee block start row for the RDO row
-  ROW_OFFSET_SHIFT:  2,  // Offset from the employee block start row for the SHIFT row
+  ROW_OFFSET_VAC: 0,  // Offset from the employee block start row for the VAC row
+  ROW_OFFSET_RDO: 1,  // Offset from the employee block start row for the RDO row
+  ROW_OFFSET_SHIFT: 2,  // Offset from the employee block start row for the SHIFT row
 
-  DAYS_IN_WEEK:     7,   // Monday through Sunday
+  DAYS_IN_WEEK: 7,   // Monday through Sunday
 };
 
 /**
@@ -176,7 +176,32 @@ const HOUR_RULES = {
   FT_MIN: 40,
   FT_MAX: 40,
   PT_MIN: 24,
-  PT_MAX: 35,
+  PT_MAX: 40,
+  // PT+ (lunch-qualified) shifts may have between 5 and 8 paid hours per shift.
+  // The engine and Settings validation use these bounds when evaluating + shifts.
+  PT_PLUS_MIN_HOURS: 5,
+  PT_PLUS_MAX_HOURS: 8,
+};
+
+
+// ---------------------------------------------------------------------------
+// Schedule Rules
+// ---------------------------------------------------------------------------
+
+/**
+ * High-level scheduling constraints that apply across all phases of the engine.
+ *
+ * These are distinct from HOUR_RULES (which govern weekly paid hour targets) because
+ * they control structural properties of the schedule — how many days off each employee
+ * must receive regardless of their hour budget.
+ */
+const SCHEDULE_RULES = {
+  // Every employee must have at least this many non-working days each week.
+  // "Non-working" includes OFF, RDO, and VAC — any cell that is not a SHIFT.
+  // Phase 1 enforces this after assigning preferred shifts (choosing the best-covered
+  // days to force off), Phase 2 respects it as a cap on additional shift assignments,
+  // and Phase 3 Cascade B skips employees who are already at this floor.
+  MIN_DAYS_OFF: 2,
 };
 
 
@@ -200,8 +225,8 @@ const HOUR_RULES = {
  *     realistic days-from-hire value can close it (100M days ≈ 273,000 years).
  */
 const SENIORITY = {
-  FT_BASE:              200000000,
-  PT_BASE:              100000000,
+  FT_BASE: 200000000,
+  PT_BASE: 100000000,
   // An arbitrary future date used as the anchor for the days-from-hire calculation.
   // Subtracting the hire date from this future date produces a larger number for
   // employees hired earlier, giving them a higher seniority rank without any
@@ -232,9 +257,9 @@ const SENIORITY = {
  * Slot index calculation: Math.floor((minutesSinceMidnight - COVERAGE_START_MINUTE) / SLOT_DURATION_MINUTES)
  */
 const COVERAGE = {
-  SLOT_COUNT:              39,  // Number of 30-minute windows in the coverage day (04:00–23:30)
-  COVERAGE_START_MINUTE:   240, // 04:00 expressed as minutes since midnight (4 * 60 = 240)
-  SLOT_DURATION_MINUTES:   30,  // Each slot represents 30 minutes of clock time
+  SLOT_COUNT: 39,  // Number of 30-minute windows in the coverage day (04:00–23:30)
+  COVERAGE_START_MINUTE: 240, // 04:00 expressed as minutes since midnight (4 * 60 = 240)
+  SLOT_DURATION_MINUTES: 30,  // Each slot represents 30 minutes of clock time
 };
 
 // ---------------------------------------------------------------------------
@@ -258,13 +283,13 @@ const COVERAGE = {
  * The startMinute should generally stay at 240 to match COVERAGE_START_MINUTE
  */
 const COVERAGE_WINDOW = {
-  Monday:    { startMinute: 240, endMinute: 1410 },
-  Tuesday:   { startMinute: 240, endMinute: 1410 },
+  Monday: { startMinute: 240, endMinute: 1410 },
+  Tuesday: { startMinute: 240, endMinute: 1410 },
   Wednesday: { startMinute: 240, endMinute: 1410 },
-  Thursday:  { startMinute: 240, endMinute: 1410 },
-  Friday:    { startMinute: 240, endMinute: 1410 },
-  Saturday:  { startMinute: 240, endMinute: 1320 },
-  Sunday:    { startMinute: 240, endMinute: 1260 }
+  Thursday: { startMinute: 240, endMinute: 1410 },
+  Friday: { startMinute: 240, endMinute: 1410 },
+  Saturday: { startMinute: 240, endMinute: 1320 },
+  Sunday: { startMinute: 240, endMinute: 1260 }
 };
 
 
@@ -286,16 +311,17 @@ const COVERAGE_WINDOW = {
  * code in formatter.js reads from this object, so no other file needs to change.
  */
 const COLORS = {
-  FT_SHIFT:        "#4A90D9", // Blue — full-time shift cell background
-  PT_SHIFT:        "#57BB8A", // Green — part-time shift cell background
-  VACATION:        "#FFD966", // Yellow — vacation day cell background
-  DAY_OFF:         "#B7B7B7", // Gray — day off cell background
-  UNDER_HOURS:     "#E06666", // Red — employee name cell background when below weekly minimum
-  HEADER_BG:       "#263238", // Dark slate — column header row background
-  HEADER_TEXT:     "#FFFFFF", // White — column header row text
-  SUMMARY_OK:      "#B7E1CD", // Light green — STATUS row cell when coverage is met
-  SUMMARY_UNDER:   "#F4C7C3", // Light red — STATUS row cell when coverage is short
-  ROW_LABEL_BG:    "#F5F5F5", // Light gray — VAC/RDO/SHIFT label column background
+  FT_SHIFT: "#4A90D9", // Blue — full-time shift cell background
+  PT_SHIFT: "#57BB8A", // Green — part-time shift cell background
+  VACATION: "#FFD966", // Yellow — vacation day cell background
+  DAY_OFF: "#B7B7B7", // Gray — day off cell background
+  UNDER_HOURS: "#E06666", // Red — employee name cell background when below weekly minimum
+  OVER_HOURS_FT: "#FF9900", // Orange — FT employee name cell background when above 40 weekly hours
+  HEADER_BG: "#263238", // Dark slate — column header row background
+  HEADER_TEXT: "#FFFFFF", // White — column header row text
+  SUMMARY_OK: "#B7E1CD", // Light green — STATUS row cell when coverage is met
+  SUMMARY_UNDER: "#F4C7C3", // Light red — STATUS row cell when coverage is short
+  ROW_LABEL_BG: "#F5F5F5", // Light gray — VAC/RDO/SHIFT label column background
 };
 
 
@@ -312,8 +338,8 @@ const COLORS = {
  */
 const INGESTION_CELL = {
   SOURCE_SPREADSHEET_ID: "B3", // Where the manager types the source spreadsheet ID
-  DEPARTMENT:            "B4", // Dropdown for the selected department
-  SYNC_STATUS:           "B8", // Script writes the sync result summary here
-  EMPLOYEES_ADDED:       "B9", // Script writes the count of newly added employees
-  EMPLOYEES_SKIPPED:     "B10", // Script writes the count of skipped duplicates
+  DEPARTMENT: "B4", // Dropdown for the selected department
+  SYNC_STATUS: "B8", // Script writes the sync result summary here
+  EMPLOYEES_ADDED: "B9", // Script writes the count of newly added employees
+  EMPLOYEES_SKIPPED: "B10", // Script writes the count of skipped duplicates
 };

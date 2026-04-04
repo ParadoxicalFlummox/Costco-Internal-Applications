@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — The core schedule generation algorithm.
- * VERSION: 0.3.1
+ * VERSION: 0.3.2
  *
  * This file contains the 4-phase algorithm that turns a roster of employees and
  * a set of shift/staffing rules into a complete weekly schedule grid.
@@ -261,6 +261,7 @@ function applyVacationLocksForEmployee(weekGrid, employeeIndex, employee, weekSt
 function runPhaseOnePreferenceAssignment(weekGrid, employeeList, shiftTimingMap, staffingRequirements, weekStartDate) {
   grantRequestedDaysOff(weekGrid, employeeList, staffingRequirements);
   assignPreferredShifts(weekGrid, employeeList, shiftTimingMap);
+  enforceMinimumDaysOff(weekGrid, employeeList);
 }
 
 
@@ -375,6 +376,92 @@ function assignPreferredShifts(weekGrid, employeeList, shiftTimingMap) {
 
 
 // ---------------------------------------------------------------------------
+// Phase 1.5: Minimum Days-Off Enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensures every employee has at least SCHEDULE_RULES.MIN_DAYS_OFF non-working days per week.
+ *
+ * After assignPreferredShifts(), every non-VAC/non-RDO cell has been converted to a SHIFT.
+ * An FT employee with no VAC or RDO could end up with 7 shifts (56 hours) — far over the
+ * 40-hour maximum. This function converts excess SHIFT days back to OFF, choosing WHICH days
+ * to leave off by selecting the days where other employees provide the most coverage.
+ *
+ * SELECTION LOGIC — "best fit with everyone else's days off":
+ * For each employee's current SHIFT days, score each day by counting how many OTHER employees
+ * are also scheduled on that day. The highest-scored days (best-covered by others) are
+ * converted to OFF first — the employee's absence on those days costs the least in coverage.
+ *
+ * Processing order: most senior first. Senior employees get first pick of the lowest-coverage
+ * days to work, which naturally gives junior employees coverage on the remaining days.
+ *
+ * VAC and RDO cells are not touched — they are already non-working days and count toward
+ * the MIN_DAYS_OFF floor.
+ *
+ * @param {Array} weekGrid     — The schedule grid (mutated in place).
+ * @param {Array} employeeList — Employees in descending seniority order.
+ */
+function enforceMinimumDaysOff(weekGrid, employeeList) {
+  const maxWorkingDays = WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF;
+
+  for (let employeeIndex = 0; employeeIndex < employeeList.length; employeeIndex++) {
+    // Count all SHIFT cells for this employee.
+    const workingDayIndices = [];
+    for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
+      if (weekGrid[employeeIndex][dayIndex].type === "SHIFT") {
+        workingDayIndices.push(dayIndex);
+      }
+    }
+
+    const excessWorkingDays = workingDayIndices.length - maxWorkingDays;
+    if (excessWorkingDays <= 0) {
+      // Already within the days-off minimum — nothing to do for this employee.
+      continue;
+    }
+
+    // Score each working day by how many OTHER employees are also scheduled.
+    // A higher score means others cover that day well → this employee can be off there.
+    const scoredDays = workingDayIndices.map(function(dayIndex) {
+      let otherWorkersCount = 0;
+      for (let otherIndex = 0; otherIndex < employeeList.length; otherIndex++) {
+        if (otherIndex !== employeeIndex && weekGrid[otherIndex][dayIndex].type === "SHIFT") {
+          otherWorkersCount++;
+        }
+      }
+      return { dayIndex: dayIndex, coverage: otherWorkersCount };
+    });
+
+    // Sort descending: highest coverage from others first.
+    // These are the best days for this employee to take off.
+    scoredDays.sort(function(a, b) { return b.coverage - a.coverage; });
+
+    // Convert the top excessWorkingDays SHIFT cells back to OFF.
+    for (let i = 0; i < excessWorkingDays; i++) {
+      weekGrid[employeeIndex][scoredDays[i].dayIndex] = createDayAssignment("OFF", null, 0, false);
+    }
+  }
+}
+
+
+/**
+ * Counts the number of SHIFT cells in one employee's week.
+ *
+ * @param {Array}  weekGrid      — The current schedule grid.
+ * @param {number} employeeIndex — The index of the employee to count.
+ * @returns {number} Days the employee is scheduled to work this week.
+ */
+function countWorkingDays(weekGrid, employeeIndex) {
+  let count = 0;
+  for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
+    if (weekGrid[employeeIndex][dayIndex].type === "SHIFT") {
+      count++;
+    }
+  }
+  return count;
+}
+
+
+// ---------------------------------------------------------------------------
 // Phase 2: Minimum Hour Enforcement
 // ---------------------------------------------------------------------------
 
@@ -431,6 +518,12 @@ function runPhaseTwoHourEnforcement(weekGrid, employeeList, shiftTimingMap) {
 
       // Only convert OFF cells — VAC and RDO are intentional and must not be touched.
       if (currentCell.type !== "OFF") {
+        return;
+      }
+
+      // Respect the minimum days-off constraint — do not schedule an employee on a day
+      // that would leave them with fewer than MIN_DAYS_OFF non-working days this week.
+      if (countWorkingDays(weekGrid, employeeIndex) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) {
         return;
       }
 
@@ -580,6 +673,12 @@ function runPhaseThreeGapResolution(weekGrid, employeeList, shiftTimingMap, staf
 
       // Only pull in employees who are currently OFF (not VAC, RDO, or already SHIFT).
       if (currentCell.type !== "OFF") {
+        continue;
+      }
+
+      // Respect the minimum days-off constraint — skip employees who are already at their floor.
+      // Pulling them in would leave them with fewer than MIN_DAYS_OFF non-working days.
+      if (countWorkingDays(weekGrid, employeeIndex) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) {
         continue;
       }
 

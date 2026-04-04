@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Reads shift definitions and staffing requirements from the Settings sheet.
- * VERSION: 0.3.1
+ * VERSION: 0.3.2
  *
  * This file is the only place in the codebase that reads from the Settings sheet.
  * Every other file that needs shift or staffing data calls a function from this file
@@ -285,11 +285,16 @@ function convertGasTimeValueToMinutes(timeValue, fieldLabel, shiftName, rowIndex
 
 
 /**
- * Logs a warning if a shift's paid hours do not match the expected rule for its status.
+ * Logs a warning if a shift's paid hours fall outside the expected range for its status and type.
  *
- * Full-time shifts should have 8.0 paid hours. Part-time shifts should have 5.0 paid hours.
- * A deviation from these expectations usually means a data entry error in the Settings sheet.
- * This function makes that visible in the Execution Log without aborting generation.
+ * Rules:
+ *   FT shifts:    exactly 8.0 paid hours.
+ *   PT shifts:    exactly 5.0 paid hours.
+ *   PT+ shifts:   between PT_PLUS_MIN_HOURS (5) and PT_PLUS_MAX_HOURS (8) paid hours.
+ *                 The "+" suffix marks lunch-qualified shifts that can be extended for coverage.
+ *
+ * A deviation from the expected range usually means a data entry error in the Settings sheet.
+ * This function makes it visible in the Execution Log without aborting generation.
  *
  * @param {string}  shiftName  — The name of the shift, for the warning message.
  * @param {string}  status     — "FT" or "PT".
@@ -297,15 +302,38 @@ function convertGasTimeValueToMinutes(timeValue, fieldLabel, shiftName, rowIndex
  * @param {number}  blockHours — The computed wall-clock block hours (end - start in hours).
  */
 function validateShiftPaidHours(shiftName, status, paidHours, blockHours) {
-  const expectedPaidHours = status === "FT" ? 8.0 : 5.0;
+  const numPaidHours = Number(paidHours);
+  const isPlusShift  = shiftName.toString().endsWith("+");
 
-  if (Number(paidHours) !== expectedPaidHours) {
-    Logger.log(
-      "WARNING: Shift \"" + shiftName + "\" (" + status + ") has " + paidHours +
-      " paid hours. Expected " + expectedPaidHours + " for a " + status + " shift. " +
-      "If this is intentional, ignore this warning. Otherwise, correct the Paid Hours " +
-      "column in the Settings sheet."
-    );
+  if (status === "PT" && isPlusShift) {
+    // PT+ shifts are lunch-qualified and can be scheduled between PT_PLUS_MIN_HOURS and
+    // PT_PLUS_MAX_HOURS paid hours per shift. The block hours (including the 30-min lunch)
+    // should equal paidHours + 0.5.
+    const expectedBlockHours = numPaidHours + 0.5;
+    if (
+      numPaidHours < HOUR_RULES.PT_PLUS_MIN_HOURS ||
+      numPaidHours > HOUR_RULES.PT_PLUS_MAX_HOURS ||
+      Math.abs(blockHours - expectedBlockHours) > 0.01
+    ) {
+      Logger.log(
+        "WARNING: Shift \"" + shiftName + "\" (" + status + ") has " + paidHours +
+        " paid hours and a " + blockHours.toFixed(2) + "-hour clock block. PT+ shifts should " +
+        "have " + HOUR_RULES.PT_PLUS_MIN_HOURS + "–" + HOUR_RULES.PT_PLUS_MAX_HOURS +
+        " paid hours with the end time set to paidHours + 0:30 (unpaid lunch). " +
+        "If this is intentional, ignore this warning. Otherwise, correct the Settings sheet."
+      );
+    }
+  } else {
+    const expectedPaidHours = status === "FT" ? 8.0 : 5.0;
+
+    if (numPaidHours !== expectedPaidHours) {
+      Logger.log(
+        "WARNING: Shift \"" + shiftName + "\" (" + status + ") has " + paidHours +
+        " paid hours. Expected " + expectedPaidHours + " for a " + status + " shift. " +
+        "If this is intentional, ignore this warning. Otherwise, correct the Paid Hours " +
+        "column in the Settings sheet."
+      );
+    }
   }
 }
 
