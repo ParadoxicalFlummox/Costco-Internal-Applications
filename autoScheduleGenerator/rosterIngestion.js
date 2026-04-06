@@ -1,6 +1,6 @@
 /**
  * rosterIngestion.js — Syncs employees from an external master spreadsheet into the local Roster sheet.
- * VERSION 0.3.3
+ * VERSION 1.0.0
  *
  * This file handles the entire "bring employee data into the workbook" workflow:
  *   1. The manager opens the Ingestion sheet and types a Google Spreadsheet ID.
@@ -32,11 +32,30 @@ function setupIngestionSheet() {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   let ingestionSheet = workbook.getSheetByName(SHEET_NAMES.INGESTION);
 
+  // If the sheet already exists and the manager has entered a source spreadsheet ID,
+  // skip setup entirely. clearContents() would destroy the ID and the department
+  // selection they have already configured, which is the most painful accidental loss.
+  // An empty or placeholder value means setup has not been completed and is safe to run.
+  if (ingestionSheet) {
+    const existingId = ingestionSheet
+      .getRange(INGESTION_CELL.SOURCE_SPREADSHEET_ID)
+      .getValue()
+      .toString()
+      .trim();
+    const isConfigured = existingId !== "" &&
+      existingId !== "— enter spreadsheet ID first —" &&
+      !existingId.startsWith("←");
+    if (isConfigured) {
+      return;
+    }
+  }
+
   if (!ingestionSheet) {
     ingestionSheet = workbook.insertSheet(SHEET_NAMES.INGESTION);
   }
 
-  // Clear any existing content so setup is idempotent (safe to run more than once).
+  // Clear any existing content. At this point we know B3 is empty or a placeholder,
+  // so no real configuration is being lost.
   ingestionSheet.clearContents();
   ingestionSheet.clearFormats();
 
@@ -598,4 +617,94 @@ function syncRosterFromSource() {
   writeSyncResultToIngestionSheet(syncResult);
 
   return syncResult;
+}
+
+
+/**
+ * Removes vacation dates from the Roster that fall within the generated week.
+ *
+ * Called after a week is successfully written to the schedule sheet. Vacation dates
+ * that land on a day within [weekStartDate, weekStartDate + 6] are removed from
+ * the employee's Vacation Dates cell, since the schedule has already applied them.
+ * Dates outside that range are left untouched so they will be available when the
+ * manager generates future weeks.
+ *
+ * Two rules protect against accidental data loss:
+ *   1. Only dates we can positively parse are removed. A garbled or unrecognized date
+ *      string is left in the cell rather than silently deleted.
+ *   2. This function is only called from orchestrateSingleWeekGeneration(), not from
+ *      resolveEntireWeek(). Vacation dates are never pruned on a checkbox re-calculation.
+ *
+ * This function calls parseVacationDateString() and parseVacationDateStrings() from
+ * scheduleEngine.js. In GAS all files share the global scope, so cross-file calls
+ * like this work without any import statement.
+ *
+ * @param {Date} weekStartDate — The Monday of the week that was just generated.
+ */
+function removeProcessedVacationDates(weekStartDate) {
+  const rosterSheet = SpreadsheetApp.getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAMES.ROSTER);
+
+  if (!rosterSheet) {
+    return;
+  }
+
+  const lastRow = rosterSheet.getLastRow();
+  if (lastRow < ROSTER_DATA_START_ROW) {
+    return;
+  }
+
+  const rowCount = lastRow - ROSTER_DATA_START_ROW + 1;
+
+  // Read only the Vacation Dates column — no need to load the entire Roster.
+  const vacationRange = rosterSheet.getRange(
+    ROSTER_DATA_START_ROW, ROSTER_COLUMN.VACATION_DATES, rowCount, 1
+  );
+  const cellValues = vacationRange.getValues();
+
+  // The week runs Monday through Sunday. Build the Sunday boundary for the range check.
+  const weekEndDate = new Date(weekStartDate);
+  weekEndDate.setDate(weekStartDate.getDate() + 6);
+  weekEndDate.setHours(23, 59, 59, 999);
+
+  let anyRowChanged = false;
+
+  const updatedValues = cellValues.map(function (row) {
+    const rawCellValue = row[0];
+
+    // parseVacationDateStrings handles empty/null cells and returns [] — no special-casing needed.
+    const dateStrings = parseVacationDateStrings(rawCellValue);
+
+    if (dateStrings.length === 0) {
+      return row; // Nothing to clean in this cell.
+    }
+
+    const remainingDates = dateStrings.filter(function (dateString) {
+      // Pass weekStartDate so the parser can infer the correct year for MM/DD shorthand.
+      // For example, "4/14" becomes April 14 of weekStartDate's year.
+      const parsedDate = parseVacationDateString(dateString, weekStartDate);
+
+      // Cannot parse → keep it. Do not silently delete entries the manager intentionally entered.
+      if (!parsedDate) {
+        return true;
+      }
+
+      // Keep dates that fall outside the generated week's Monday–Sunday range.
+      return parsedDate < weekStartDate || parsedDate > weekEndDate;
+    });
+
+    if (remainingDates.length < dateStrings.length) {
+      anyRowChanged = true;
+      // Rejoin with ", " to match the format the manager would have entered.
+      return [remainingDates.join(", ")];
+    }
+
+    return row;
+  });
+
+  // Batch-write only if at least one cell actually changed — avoids a needless
+  // sheet write (and the associated quota cost) when no vacation dates were due.
+  if (anyRowChanged) {
+    vacationRange.setValues(updatedValues);
+  }
 }

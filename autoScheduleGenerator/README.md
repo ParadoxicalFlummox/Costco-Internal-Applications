@@ -1,5 +1,5 @@
 # Auto Schedule Generator
-**Version 0.3.3**
+**Version 1.0.0**
 
 ---
 

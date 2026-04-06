@@ -1,6 +1,6 @@
 /**
  * ui.js — Google Apps Script triggers, custom menu, and generation orchestrators.
- * VERSION: 0.3.3
+ * VERSION: 1.0.0
  *
  * This file is the entry point for all user-initiated actions. It contains:
  *   - onOpen():  Creates the "Schedule Admin" menu when the spreadsheet opens.
@@ -240,62 +240,25 @@ function menuLoadDepartments() {
 
 
 /**
- * Triggered by: Schedule Admin → GENERATE SCHEDULE DRAFT (3 weeks)
+ * Triggered by: Schedule Admin → GENERATE SCHEDULE (3 weeks)
  *
- * Asks the manager to confirm the starting Monday, then generates three consecutive
- * weekly schedule sheets: the starting week, the following week, and the week after.
- *
- * This is the main entry point for schedule generation.
+ * Opens the date picker dialog. Generation is kicked off by the dialog itself via
+ * google.script.run once the manager confirms a date — this function returns
+ * immediately after showing the dialog.
  */
 function menuGenerateScheduleDraft() {
-  const startingMonday = promptForStartingWeek();
-
-  if (!startingMonday) {
-    // The manager cancelled the dialog or provided an invalid date — do nothing.
-    return;
-  }
-
-  try {
-    orchestrateMultiWeekGeneration(startingMonday);
-  } catch (error) {
-    SpreadsheetApp.getUi().alert(
-      "Generation Failed",
-      error.message + "\n\nCheck the Execution Log (Extensions → Apps Script → Executions) for details.",
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-  }
+  showDatePickerDialog(3);
 }
 
 
 /**
- * Triggered by: Schedule Admin → Generate Single Week
+ * Triggered by: Schedule Admin → GENERATE SCHEDULE (1 week)
  *
- * Asks the manager to confirm a single Monday, then generates exactly one schedule sheet
- * for that week. Useful for regenerating a specific week after roster changes, or for
- * generating an individual week without overwriting the other two in a 3-week set.
+ * Opens the date picker dialog for a single week. Same async pattern as the
+ * 3-week handler — the dialog calls receiveSelectedDateAndGenerate() directly.
  */
 function menuGenerateSingleWeek() {
-  const startingMonday = promptForStartingWeek();
-
-  if (!startingMonday) {
-    // The manager cancelled the dialog or provided an invalid date — do nothing.
-    return;
-  }
-
-  try {
-    const sheetName = orchestrateSingleWeekGeneration(startingMonday);
-    SpreadsheetApp.getActiveSpreadsheet().toast(
-      "Schedule generated: " + sheetName,
-      "Generation Complete",
-      6
-    );
-  } catch (error) {
-    SpreadsheetApp.getUi().alert(
-      "Generation Failed",
-      error.message + "\n\nCheck the Execution Log (Extensions → Apps Script → Executions) for details.",
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-  }
+  showDatePickerDialog(1);
 }
 
 
@@ -321,75 +284,211 @@ function menuSetupAllSheets() {
 // ---------------------------------------------------------------------------
 
 /**
- * Shows a dialog asking the manager to confirm the Monday of the starting week.
+ * Shows a styled date picker dialog and returns immediately.
  *
- * Defaults to the current Monday so the manager can simply click OK for the most
- * common case (generating starting this week). If the manager enters a different
- * date, it is parsed and validated.
- *
- * This function handles only the UI interaction — it does not call the engine.
- *
- * @returns {Date|null} The confirmed Monday date, or null if the manager cancelled
- *   or entered an invalid date.
+ * @param {number} weekCount — 1 for single-week generation, 3 for three-week generation.
  */
-function promptForStartingWeek() {
+function showDatePickerDialog(weekCount) {
+  // Pre-calculate the current Monday on the server side so it can be embedded in
+  // the HTML as the default date value. input[type="date"] requires YYYY-MM-DD format.
   const currentMonday = getMondayOfCurrentWeek();
-  const defaultDateString = currentMonday.toLocaleDateString("en-US", {
-    month: "2-digit", day: "2-digit", year: "numeric"
-  });
-
-  const userInterface = SpreadsheetApp.getUi();
-
-  const response = userInterface.prompt(
-    "Generate Schedule Draft",
-    "Enter the Monday of the starting week (MM/DD/YYYY).\n" +
-    "Three weekly sheets will be generated: this week, next week, and the week after.\n\n" +
-    "Starting Monday:",
-    userInterface.ButtonSet.OK_CANCEL
+  const defaultDateValue = Utilities.formatDate(
+    currentMonday, Session.getScriptTimeZone(), "yyyy-MM-dd"
   );
 
-  if (response.getSelectedButton() !== userInterface.Button.OK) {
-    // Manager clicked Cancel — abort without generating.
-    return null;
-  }
+  const dialogTitle = weekCount === 3
+    ? "Generate 3-Week Schedule"
+    : "Generate Single-Week Schedule";
 
-  const enteredText = response.getResponseText().trim();
+  // The weekCount is embedded directly into the HTML so the dialog can pass it back
+  // to receiveSelectedDateAndGenerate() without any additional state management.
+  const htmlOutput = HtmlService.createHtmlOutput(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <style>
+          body {
+            font-family: "Google Sans", Arial, sans-serif;
+            font-size: 13px;
+            color: #202124;
+            margin: 0;
+            padding: 20px 24px 16px;
+          }
+          label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 8px;
+          }
+          input[type="date"] {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #dadce0;
+            border-radius: 4px;
+            font-size: 13px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.15s;
+          }
+          input[type="date"]:focus {
+            border-color: #1a73e8;
+          }
+          .hint {
+            font-size: 11px;
+            color: #5f6368;
+            margin-top: 5px;
+            margin-bottom: 16px;
+          }
+          .button-row {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 4px;
+          }
+          button {
+            padding: 8px 18px;
+            font-size: 13px;
+            font-family: inherit;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid transparent;
+          }
+          #cancelBtn {
+            background: #fff;
+            color: #1a73e8;
+            border-color: #dadce0;
+          }
+          #cancelBtn:hover { background: #f1f3f4; }
+          #okBtn {
+            background: #1a73e8;
+            color: #fff;
+          }
+          #okBtn:hover { background: #1765cc; }
+          #okBtn:disabled {
+            background: #dadce0;
+            color: #80868b;
+            cursor: default;
+          }
+          #statusMsg {
+            font-size: 12px;
+            color: #d93025;
+            min-height: 16px;
+            margin-top: 10px;
+          }
+          #statusMsg.info { color: #5f6368; }
+        </style>
+      </head>
+      <body>
+        <label for="dateInput">Starting Monday:</label>
+        <input type="date" id="dateInput" value="${defaultDateValue}">
+        <p class="hint">If you pick a non-Monday, the schedule will snap to that week's Monday.</p>
+        <div id="statusMsg"></div>
+        <div class="button-row">
+          <button type="button" id="cancelBtn" onclick="google.script.host.close()">Cancel</button>
+          <button type="button" id="okBtn" onclick="submitDate()">Generate</button>
+        </div>
+        <script>
+          function submitDate() {
+            const dateValue = document.getElementById('dateInput').value;
+            if (!dateValue) {
+              showStatus('Please select a date before generating.', false);
+              return;
+            }
+            // Disable the button and show a working state so the manager knows
+            // the request is being processed. Generation can take several seconds.
+            document.getElementById('okBtn').disabled = true;
+            document.getElementById('okBtn').textContent = 'Generating\u2026';
+            showStatus('Starting \u2014 this may take a moment.', true);
 
-  // If the manager left the field blank, use the current Monday as the default.
-  if (enteredText === "" || enteredText === defaultDateString) {
-    return currentMonday;
-  }
+            google.script.run
+              .withSuccessHandler(function() {
+                google.script.host.close();
+              })
+              .withFailureHandler(function(error) {
+                document.getElementById('okBtn').disabled = false;
+                document.getElementById('okBtn').textContent = 'Generate';
+                showStatus('Error: ' + error.message, false);
+              })
+              .receiveSelectedDateAndGenerate(dateValue, ${weekCount});
+          }
 
-  const parsedDate = new Date(enteredText);
+          function showStatus(message, isInfo) {
+            const el = document.getElementById('statusMsg');
+            el.textContent = message;
+            el.className = isInfo ? 'info' : '';
+          }
+        </script>
+      </body>
+    </html>
+  `)
+  .setWidth(340)
+  .setHeight(230);
 
-  if (isNaN(parsedDate.getTime())) {
-    userInterface.alert(
-      "Invalid Date",
-      "\"" + enteredText + "\" could not be interpreted as a date. " +
-      "Please use MM/DD/YYYY format (e.g., 04/07/2026).",
-      userInterface.ButtonSet.OK
-    );
-    return null;
-  }
+  SpreadsheetApp.getUi().showModalDialog(htmlOutput, dialogTitle);
+}
 
-  // Validate that the entered date is a Monday. If not, find the Monday of that week.
-  const dayOfWeek = parsedDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 
+/**
+ * Called by the date picker dialog via google.script.run when the manager clicks Generate.
+ *
+ * Parses the date string returned by input[type="date"] (always "YYYY-MM-DD"),
+ * snaps it to the Monday of that week if it is not already a Monday, then
+ * calls the appropriate generation orchestrator.
+ *
+ * WHY MANUAL DATE PARSING:
+ * new Date("2026-04-07") is parsed as UTC midnight, which when converted to the
+ * script's local timezone may roll back to the previous day. Parsing the parts
+ * manually and passing them to new Date(year, month, day) uses local time,
+ * which matches what the manager expects to see.
+ *
+ * @param {string} dateString — A date string in "YYYY-MM-DD" format from the date picker.
+ * @param {number} weekCount — 1 for single-week generation, 3 for three-week generation.
+ */
+function receiveSelectedDateAndGenerate(dateString, weekCount) {
+  // Split manually to avoid the UTC-vs-local ambiguity described above.
+  const parts = dateString.split("-");
+  const year  = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1; // JS Date months are 0-indexed
+  const day   = parseInt(parts[2], 10);
+
+  const selectedDate = new Date(year, month, day);
+  selectedDate.setHours(0, 0, 0, 0);
+
+  // Snap to Monday if the manager picked a different day of the week.
+  // 0 = Sunday needs to go back 6; anything else goes back (dayOfWeek - 1).
+  const dayOfWeek = selectedDate.getDay();
   if (dayOfWeek !== 1) {
-    // Adjust to the Monday of the entered date's week.
     const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    parsedDate.setDate(parsedDate.getDate() - daysToSubtract);
+    selectedDate.setDate(selectedDate.getDate() - daysToSubtract);
+  }
 
-    userInterface.alert(
-      "Date Adjusted",
-      "The date you entered is not a Monday. The schedule will start on " +
-      parsedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) +
-      " instead.",
-      userInterface.ButtonSet.OK
+  // Run the preflight before touching any sheets.
+  // Throws on blocking errors (empty roster, missing shifts) — the date picker's
+  // withFailureHandler catches these and shows them in red without closing the dialog.
+  // Returns an array of non-blocking warnings (bad shift names, unreadable vacation dates).
+  const preflightWarnings = runPreGenerationPreflight(selectedDate);
+
+  // Surface warnings before generation starts so the manager can choose to fix them.
+  // The dialog stays open showing "Generating…" in the background while this alert is visible;
+  // when the manager dismisses it, generation resumes and the dialog closes on completion.
+  if (preflightWarnings.length > 0) {
+    SpreadsheetApp.getUi().alert(
+      "Warnings (" + preflightWarnings.length + ") — Generation will proceed",
+      "The schedule will be generated, but the following issues may cause affected " +
+      "employees to be scheduled incorrectly. Fix them and re-generate to resolve:\n\n• " +
+      preflightWarnings.join("\n\n• "),
+      SpreadsheetApp.getUi().ButtonSet.OK
     );
   }
 
-  return parsedDate;
+  if (weekCount === 3) {
+    orchestrateMultiWeekGeneration(selectedDate);
+  } else {
+    const sheetName = orchestrateSingleWeekGeneration(selectedDate);
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      "Schedule generated: " + sheetName, "Generation Complete", 6
+    );
+  }
 }
 
 
@@ -463,6 +562,12 @@ function orchestrateSingleWeekGeneration(weekStartDate) {
     weekStartDate,
     departmentName
   );
+
+  // Remove vacation dates from the Roster that fall within this week now that the
+  // schedule has been generated and those dates have been applied. Dates in future
+  // weeks are left untouched so they will be processed when those weeks are generated.
+  // This runs after writeAndFormatSchedule so a failed write does not lose any dates.
+  removeProcessedVacationDates(weekStartDate);
 
   return generationResult.weekSheetName;
 }
@@ -584,6 +689,18 @@ function setupAllSheets() {
  * @param {Sheet} rosterSheet — The Roster sheet object.
  */
 function setupRosterSheetHeaders(rosterSheet) {
+  // If the "Name" header already exists, the Roster has been set up before.
+  // Skip to avoid resetting column widths the manager may have adjusted and to
+  // prevent the header row from being re-written over any data that has crept into row 1.
+  const existingFirstHeader = rosterSheet
+    .getRange(1, ROSTER_COLUMN.NAME)
+    .getValue()
+    .toString()
+    .trim();
+  if (existingFirstHeader === "Name") {
+    return;
+  }
+
   const headerValues = [[
     "Name",
     "Employee ID",

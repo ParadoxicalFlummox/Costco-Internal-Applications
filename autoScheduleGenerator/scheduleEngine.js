@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — The core schedule generation algorithm.
- * VERSION: 0.3.3
+ * VERSION: 1.0.0
  *
  * This file contains the 4-phase algorithm that turns a roster of employees and
  * a set of shift/staffing rules into a complete weekly schedule grid.
@@ -1210,6 +1210,149 @@ function parseQualifiedShiftList(rawCellValue, preferredShift) {
   }
 
   return parsedList;
+}
+
+
+// ---------------------------------------------------------------------------
+// Pre-Generation Preflight Validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates the Roster and Settings data before the schedule engine runs.
+ *
+ * Two categories of problems are handled differently:
+ *
+ *   BLOCKING — data is missing or so broken that the engine cannot run at all.
+ *   These are thrown as Errors, which the date picker dialog surfaces to the manager
+ *   via its withFailureHandler so the Generate button is re-enabled and the message
+ *   is shown in red.
+ *
+ *   WARNINGS — data issues that will not crash the engine but will produce an
+ *   incomplete or wrong schedule for specific employees. These are returned as an
+ *   array of strings so the caller (ui.js) can show them and then proceed.
+ *
+ * This function is called once before any week generation starts, not once per week,
+ * so warnings about the same employee are not repeated across a 3-week run.
+ *
+ * @param   {Date}     weekStartDate — The Monday of the first week being generated.
+ *                                     Needed so vacation date year inference works
+ *                                     correctly for MM/DD shorthand entries.
+ * @returns {string[]} An array of warning strings (may be empty). Caller is
+ *                     responsible for displaying them.
+ * @throws  {Error}    If any blocking condition prevents generation from running.
+ */
+function runPreGenerationPreflight(weekStartDate) {
+  const warnings = [];
+
+  // --- Blocking check 1: Roster sheet exists and has at least one employee row ---
+  // Without employees there is nothing for the engine to schedule.
+  const rosterSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.ROSTER);
+
+  if (!rosterSheet) {
+    throw new Error(
+      "Roster sheet not found.\n\n" +
+      "Run Schedule Admin → Setup Sheets (First Run Only) to create it, " +
+      "then use Sync Roster to add your department's employees."
+    );
+  }
+
+  if (rosterSheet.getLastRow() < ROSTER_DATA_START_ROW) {
+    throw new Error(
+      "No employees found on the Roster sheet.\n\n" +
+      "Use Schedule Admin → Sync Roster to import your department's employees before generating."
+    );
+  }
+
+  // --- Blocking check 2: Settings sheet has at least one valid, parseable shift ---
+  // buildShiftTimingMap() throws if the Settings sheet is missing entirely or has no
+  // rows in the table — those errors propagate as-is. We additionally check for an
+  // empty map, which happens if every shift row had bad time values (all skipped).
+  const shiftTimingMap = buildShiftTimingMap();
+
+  if (Object.keys(shiftTimingMap).length === 0) {
+    throw new Error(
+      "No valid shifts found in the Settings sheet.\n\n" +
+      "Check that the Shift Definitions table (columns D–I) has properly formatted " +
+      "time values. Each time cell must be formatted as a time, not plain text."
+    );
+  }
+
+  // --- Warning checks: per-employee data quality ---
+  // These do not stop generation but will cause specific employees to be skipped or
+  // scheduled incorrectly. All problems are collected and returned together so the
+  // manager sees the full list rather than discovering issues one at a time.
+  const employeeList = loadRosterSortedBySeniority();
+
+  employeeList.forEach(function (employee) {
+
+    // Status must be exactly "FT" or "PT". The engine uses this as an exact key for
+    // shift lookup and hour rules. A lowercase "ft" or blank cell will cause the
+    // employee to be assigned no shifts and flagged with the wrong color.
+    if (employee.status !== "FT" && employee.status !== "PT") {
+      warnings.push(
+        employee.name + " — Status (column D) is \"" + (employee.status || "blank") +
+        "\". Must be exactly FT or PT. This employee will be skipped during generation."
+      );
+      // Cannot meaningfully check shift names without a valid status — skip to next employee.
+      return;
+    }
+
+    // The preferred shift must exist in Settings for this employee's status.
+    // A mismatch (usually a spelling or capitalization difference) means the employee
+    // will never receive their preferred shift and may be assigned a random gap-filler.
+    if (employee.preferredShift) {
+      const preferredLookupKey = employee.preferredShift + "|" + employee.status;
+      if (!shiftTimingMap[preferredLookupKey]) {
+        warnings.push(
+          employee.name + " — Preferred shift \"" + employee.preferredShift +
+          "\" (column G) not found in Settings for " + employee.status + " employees. " +
+          "Check spelling and capitalization — shift names are case-sensitive."
+        );
+      }
+    } else {
+      // A blank preferred shift is not fatal but means the engine has no preference
+      // signal for this employee during Phase 1 assignment.
+      warnings.push(
+        employee.name + " — Preferred shift (column G) is blank. " +
+        "This employee will receive whichever shift best fills a coverage gap rather " +
+        "than a shift they prefer."
+      );
+    }
+
+    // Each qualified shift must also exist in Settings for this employee's status.
+    // parseQualifiedShiftList() always adds the preferred shift to the qualified list,
+    // so we skip it here to avoid duplicating a warning already raised above.
+    employee.qualifiedShifts.forEach(function (shiftName) {
+      if (shiftName === employee.preferredShift) {
+        return; // Already checked above — no duplicate warning.
+      }
+      const qualifiedLookupKey = shiftName + "|" + employee.status;
+      if (!shiftTimingMap[qualifiedLookupKey]) {
+        warnings.push(
+          employee.name + " — Qualified shift \"" + shiftName +
+          "\" (column H) not found in Settings for " + employee.status + " employees. " +
+          "Check spelling and capitalization."
+        );
+      }
+    });
+
+    // Vacation dates that cannot be parsed are silently skipped during generation
+    // AND will never be cleaned up by removeProcessedVacationDates(), leaving stale
+    // entries in the cell indefinitely. Surfacing them here prompts the manager to fix
+    // the format before the date clutters the cell forever.
+    employee.vacationDateStrings.forEach(function (dateString) {
+      const parsed = parseVacationDateString(dateString, weekStartDate);
+      if (!parsed) {
+        warnings.push(
+          employee.name + " — Vacation date \"" + dateString +
+          "\" (column I) could not be read. " +
+          "Use YYYY-MM-DD (e.g., 2026-04-14) or MM/DD shorthand (e.g., 4/14)."
+        );
+      }
+    });
+  });
+
+  return warnings;
 }
 
 
