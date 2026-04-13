@@ -1,5 +1,5 @@
 /*
-VERSION: 0.2.1
+VERSION: 0.2.2
 LICENSE: MIT (Generic Logic Engine)
 PURPOSE: A time-windowed digest notification system.
          Reads call log entries from a Google Sheets workbook, filters them
@@ -106,6 +106,21 @@ function sendAbsenceDigest() {
 
     // Step 4: Group by department and send one digest email per department
     sendDepartmentDigests_(absenceRecords, timeWindow, timeZone);
+
+    // Step 5: Stamp each sent row with "Auto sent HH:MM" in column M.
+    // This marks the rows as notified so they are skipped on future trigger
+    // runs and so managers can see at a glance that the system caught the entry
+    // even when no one manually checked the SEND checkbox.
+    const autoSentLabel = `Auto sent ${Utilities.formatDate(new Date(), timeZone, 'h:mm a')}`;
+    absenceRecords.forEach(record => {
+      try {
+        currentSheet
+          .getRange(record.rowNumber, CALL_LOG_NOTIFY_COLUMN_NUMBER)
+          .setValue(autoSentLabel);
+      } catch (stampError) {
+        console.warn(`digestEngine: Could not stamp row ${record.rowNumber} — ${stampError.message}`);
+      }
+    });
 
   } catch (error) {
     console.error('sendAbsenceDigest: Unexpected error —', error);

@@ -1,6 +1,6 @@
 /**
  * notifier.js — Recipient resolution, email body construction, and digest sending.
- * VERSION: 0.2.1
+ * VERSION: 0.2.2
  *
  * This file is the final stage of the notification pipeline. It receives a filtered
  * list of AbsenceRecord objects from dataIngestion.js and is responsible for:
@@ -61,8 +61,9 @@ function sendDepartmentDigests_(absenceRecords, window, timeZone) {
     const subject = buildEmailSubject_(department, sortedRecords);
     const body    = buildEmailBody_(department, sortedRecords, window, timeZone);
 
-    // Send the digest. Comment out the line below to run in dry-run mode.
-    GmailApp.sendEmail(recipients.join(','), subject, body);
+    // DRY-RUN MODE: email sending is disabled. Re-enable by swapping the two lines below.
+    // GmailApp.sendEmail(recipients.join(','), subject, body);
+    console.log(`notifier: [DRY RUN] Sending email — To: ${recipients.join(', ')} | Subject: ${subject}\n${body}`);
 
     console.log(`notifier: Sent digest for "${department}" to ${recipients.join(', ')} — ${sortedRecords.length} record(s).`);
   });
@@ -181,9 +182,9 @@ function resolveRecipientsForDepartment_(department) {
  * @returns {string} The complete subject line.
  */
 function buildEmailSubject_(department, records) {
-  const sheetTitle   = calculateActiveSheetName_(); // defined in config.js
-  const displayName  = department || 'Unknown Department';
-  const recordCount  = records.length;
+  const sheetTitle  = getActiveCallLogSheetName_(); // defined in sheetUtils.js
+  const displayName = department || 'Unknown Department';
+  const recordCount = records.length;
   return `Call Log Update - ${sheetTitle} - ${displayName} (${recordCount})`;
 }
 
@@ -208,9 +209,15 @@ function buildEmailSubject_(department, records) {
 function buildEmailBody_(department, records, window, timeZone) {
   const formatDateTime = (date) => Utilities.formatDate(date, timeZone, 'MMM d, yyyy h:mm a');
 
+  // For manually sent single-row notifications, start === end; show a single
+  // "Sent at" time rather than an identical "X – X" range that looks like an error.
+  const windowLine = (window.start.getTime() === window.end.getTime())
+    ? `Sent at:     ${formatDateTime(window.end)}`
+    : `Window:      ${formatDateTime(window.start)} – ${formatDateTime(window.end)}`;
+
   const header = [
     `Department:  ${department || 'Unknown'}`,
-    `Window:      ${formatDateTime(window.start)} – ${formatDateTime(window.end)}`,
+    windowLine,
     `Absences:    ${records.length}`,
     '--------',
   ];

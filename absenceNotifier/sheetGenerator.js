@@ -1,6 +1,6 @@
 /**
  * sheetGenerator.js — Generates new call log sheets and the Absence Config setup sheet.
- * VERSION: 0.2.1
+ * VERSION: 0.2.3
  *
  * This file owns all sheet creation logic for the absence notifier workbook:
  *
@@ -127,6 +127,7 @@ function writeCallLogHeaderRows_(sheet) {
     'ARRIVAL TIME',
     'MANAGER APP',
     'COMMENT',
+    'SEND',
   ];
   sheet.getRange(2, 1, 1, columnHeaders.length).setValues([columnHeaders]);
 }
@@ -144,13 +145,13 @@ function writeCallLogHeaderRows_(sheet) {
  */
 function applyCallLogFormatting_(sheet) {
   // Row 1: fiscal header styling
-  sheet.getRange('A1:L1')
+  sheet.getRange('A1:M1')
     .setBackground('#F5F5F5')
     .setFontWeight('bold')
     .setFontSize(11);
 
   // Row 2: column header styling — dark background, white text
-  sheet.getRange('A2:L2')
+  sheet.getRange('A2:M2')
     .setBackground('#263238')
     .setFontColor('#FFFFFF')
     .setFontWeight('bold')
@@ -173,6 +174,7 @@ function applyCallLogFormatting_(sheet) {
     10: 100, // J — ARRIVAL TIME
     11: 110, // K — MANAGER APP
     12: 240, // L — COMMENT   (wide; comments can be lengthy)
+    13: 110, // M — SEND      (shows checkbox, then "Sent HH:MM AM" or "Auto sent HH:MM")
   };
   Object.entries(columnWidths).forEach(([columnNumber, widthPixels]) => {
     sheet.setColumnWidth(Number(columnNumber), widthPixels);
@@ -180,40 +182,100 @@ function applyCallLogFormatting_(sheet) {
 }
 
 /**
- * Inserts checkbox data validation into the Call-Out, FMLA, and No-Show
- * columns for all anticipated data rows (row 3 through row 202, accommodating
- * up to 200 absence entries per week — well above any realistic volume).
+ * Inserts a single "log entry" checkbox into column A of the first data row.
  *
- * Pre-inserting checkboxes means managers just click a cell to record an
- * absence type rather than typing, which eliminates the typo risk that existed
- * with the previous "T" / "S" text entry system.
- *
- * Columns with checkboxes (1-indexed):
- *   E (5) — Call-Out
- *   F (6) — FMLA
- *   G (7) — No-Show
+ * Rather than pre-populating 200 rows, the sheet starts with one ready row.
+ * When the manager checks the box in column A, autofill.js stamps today's date
+ * into that cell, adds the Call-Out/FMLA/No-Show checkboxes to the same row,
+ * and appends a new trigger checkbox on the row below — so the sheet grows
+ * one row at a time as entries are logged.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet — The newly created call log sheet.
  */
 function insertAbsenceCheckboxes_(sheet) {
+  insertEntryTriggerCheckbox_(sheet, CALL_LOG_DATA_START_ROW);
+}
+
+/**
+ * Inserts a single checkbox into column A of the given row number.
+ *
+ * This is the "log entry" trigger cell. Checking it signals autofill.js to
+ * stamp today's date into that cell, add absence-type checkboxes to the row,
+ * and create the next trigger row.
+ *
+ * This function is also called by autofill.js when creating the next row after
+ * a manager activates an entry, so it lives here as a shared utility.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet     — The call log sheet.
+ * @param {number}                             rowNumber — 1-based row to insert the checkbox into.
+ */
+function insertEntryTriggerCheckbox_(sheet, rowNumber) {
   const checkboxValidation = SpreadsheetApp.newDataValidation()
     .requireCheckbox()
     .build();
 
-  const dataRowCount     = 200; // number of entry rows to pre-populate
-  const firstDataRow     = CALL_LOG_DATA_START_ROW; // 3, from config.js
-  const checkboxColumns  = [
+  sheet.getRange(rowNumber, 1) // Column A
+    .setDataValidation(checkboxValidation)
+    .setValue(false);
+}
+
+/**
+ * Inserts Call-Out, FMLA, and No-Show checkboxes into the absence-type columns
+ * of a single entry row.
+ *
+ * Called by autofill.js when a manager activates a row (checks column A).
+ * At that point the row transitions from "pending trigger" to "active entry"
+ * and needs its absence-type checkboxes ready for the manager to fill in.
+ *
+ * Columns written (1-indexed):
+ *   E (5) — Call-Out
+ *   F (6) — FMLA
+ *   G (7) — No-Show
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet     — The call log sheet.
+ * @param {number}                             rowNumber — 1-based row to add checkboxes to.
+ */
+function insertAbsenceTypeCheckboxes_(sheet, rowNumber) {
+  const checkboxValidation = SpreadsheetApp.newDataValidation()
+    .requireCheckbox()
+    .build();
+
+  const absenceColumns = [
     CALL_LOG_COLUMNS.IS_CALLOUT + 1, // E (0-indexed 4 → 1-indexed 5)
     CALL_LOG_COLUMNS.IS_FMLA    + 1, // F (0-indexed 5 → 1-indexed 6)
     CALL_LOG_COLUMNS.IS_NOSHOW  + 1, // G (0-indexed 6 → 1-indexed 7)
   ];
 
-  checkboxColumns.forEach(columnNumber => {
-    sheet
-      .getRange(firstDataRow, columnNumber, dataRowCount, 1)
+  absenceColumns.forEach(columnNumber => {
+    sheet.getRange(rowNumber, columnNumber)
       .setDataValidation(checkboxValidation)
-      .setValue(false); // default to unchecked
+      .setValue(false);
   });
+}
+
+/**
+ * Inserts the SEND checkbox into column M of a newly activated entry row.
+ *
+ * The SEND checkbox is the manager's explicit signal to send the notification
+ * for this row immediately. When checked, autofill.js fires the email and
+ * replaces the checkbox with a "Sent HH:MM AM" timestamp so the row is
+ * permanently marked and will not be re-sent by the time-driven trigger.
+ *
+ * This is called by activateEntryRow_() in autofill.js alongside
+ * insertAbsenceTypeCheckboxes_() so all per-row UI controls appear at the
+ * same moment the manager opens the row.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet     — The call log sheet.
+ * @param {number}                             rowNumber — 1-based row to insert the checkbox into.
+ */
+function insertNotifyCheckbox_(sheet, rowNumber) {
+  const checkboxValidation = SpreadsheetApp.newDataValidation()
+    .requireCheckbox()
+    .build();
+
+  sheet.getRange(rowNumber, CALL_LOG_NOTIFY_COLUMN_NUMBER) // Column M
+    .setDataValidation(checkboxValidation)
+    .setValue(false);
 }
 
 
@@ -290,12 +352,11 @@ function writeConfigSheetLayout_(configSheet) {
     .setFontWeight('bold')
     .setFontSize(13);
 
-  // Label for the FY start date input
+  // --- Row 2: Fiscal year start date ---
   configSheet.getRange('A2')
     .setValue('Fiscal Year Start Date:')
     .setFontWeight('bold');
 
-  // Input cell — leave blank but add a note so the manager knows what to enter
   configSheet.getRange(FISCAL_YEAR_START_CELL) // "B2"
     .setValue('')
     .setNote(
@@ -305,18 +366,37 @@ function writeConfigSheetLayout_(configSheet) {
       'Leave blank to use the "Week Ending MM/DD/YY" format instead.'
     );
 
-  // Instructions row
-  configSheet.getRange('A4')
+  // --- Row 3: Master employee data spreadsheet ID ---
+  configSheet.getRange('A3')
+    .setValue('Employee Data Spreadsheet ID:')
+    .setFontWeight('bold');
+
+  configSheet.getRange(EMPLOYEE_DATA_SPREADSHEET_ID_CELL) // "B3"
+    .setValue('')
+    .setNote(
+      'Paste the Google Spreadsheet ID of your master employee data source ' +
+      '(the same spreadsheet used by the AutoScheduler for roster ingestion).\n\n' +
+      'Find it in the spreadsheet URL:\n' +
+      'docs.google.com/spreadsheets/d/ *** PASTE THIS PART *** /edit\n\n' +
+      'Once set:\n' +
+      '  \u2022 Typing an employee name in column B will autofill their ID and department.\n' +
+      '  \u2022 The name becomes a clickable link that opens the master spreadsheet,\n' +
+      '    so payroll clerks can navigate directly to the employee\'s record.\n\n' +
+      'Leave blank to use the local "Employee Roster" sheet for lookups instead.'
+    );
+
+  // --- Row 5: Instructions block ---
+  configSheet.getRange('A5')
     .setValue(
-      'Enter the start date of P1 W1 above (e.g. "9/1/2025"). ' +
-      'This is used to calculate the fiscal period and week number for each call log sheet title. ' +
-      'Update this value at the start of each new fiscal year.'
+      'Row 2 — Enter the P1 W1 start date for the fiscal year. ' +
+      'Row 3 — Paste the spreadsheet ID of the master employee data source. ' +
+      'Both fields are optional but improve the experience significantly.'
     )
     .setFontStyle('italic')
     .setFontColor('#666666')
     .setWrap(true);
 
-  configSheet.setColumnWidth(1, 200); // A — label column
-  configSheet.setColumnWidth(2, 150); // B — input column
-  configSheet.setColumnWidth(3, 400); // C — room for the instructions text to overflow
+  configSheet.setColumnWidth(1, 230); // A — label column
+  configSheet.setColumnWidth(2, 200); // B — input column
+  configSheet.setColumnWidth(3, 400); // C — overflow for notes/instructions
 }

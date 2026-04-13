@@ -1,6 +1,6 @@
 /**
  * dataIngestion.js — Reads the call log sheet and produces a filtered list of absence records.
- * VERSION: 0.2.1
+ * VERSION: 0.2.2
  *
  * This file is responsible for turning raw spreadsheet data into structured JavaScript
  * objects that the rest of the notifier can work with. It owns three sequential steps:
@@ -168,6 +168,12 @@ function mapRowsToAbsenceRecords_(rawRows, dataStartRow) {
       // calledAt is populated during filtering once time parsing succeeds.
       // It is undefined at this stage.
       calledAt: undefined,
+
+      // The raw value of the NOTIFY cell (column M). A boolean false means the
+      // send checkbox has not been checked yet. A non-empty string ("Sent 9:15 AM"
+      // or "Auto sent 9:15 AM") means the row was already notified and should be
+      // skipped by the time-driven trigger to prevent duplicate emails.
+      notifyStatus: row[columns.NOTIFY],
     };
   });
 }
@@ -206,6 +212,15 @@ function filterRecordsToWindow_(records, window, timeZone) {
   return records.filter(record => {
     // Condition 1: Must be an absence row
     if (!record.isAbsence) return false;
+
+    // Condition 2: Skip rows already sent manually via the SEND checkbox.
+    // When a manager checks column M, autofill.js replaces the checkbox with
+    // a string like "Sent 9:15 AM". The time-driven trigger must not re-send
+    // those rows. A non-empty string in the NOTIFY cell is the sentinel value.
+    if (typeof record.notifyStatus === 'string' && record.notifyStatus.trim() !== '') {
+      console.log(`dataIngestion: Row ${record.rowNumber} skipped — already sent (${record.notifyStatus}).`);
+      return false;
+    }
 
     // Conditions 2 & 3: Time must be parseable and within the window
     const callTimeMilliseconds = parseTimeToMilliseconds_(record.timeRaw, window);
