@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Reads shift definitions and staffing requirements from the Settings sheet.
- * VERSION: 1.2.0
+ * VERSION: 1.2.1
  *
  * This file is the only place in the codebase that reads from the Settings sheet.
  * Every other file that needs shift or staffing data calls a function from this file
@@ -173,9 +173,9 @@ function loadStaffingRequirements(settingsSheet) {
   const staffingRequirements = {};
 
   rawRequirementsRows.forEach(function (row) {
-    const dayName     = row[0];
+    const dayName = row[0];
     const targetValue = row[1];
-    const modeRaw     = (row[2] || "").toString().trim();
+    const modeRaw = (row[2] || "").toString().trim();
 
     // Skip blank rows in case the table range includes empty cells at the bottom.
     if (!dayName || targetValue === "" || targetValue === null) {
@@ -187,7 +187,7 @@ function loadStaffingRequirements(settingsSheet) {
 
     staffingRequirements[dayName.toString().trim()] = {
       value: Number(targetValue),
-      mode:  mode,
+      mode: mode,
     };
   });
 
@@ -274,21 +274,21 @@ function readDepartmentList_() {
   const departments = [];
 
   rows.forEach(function (row) {
-    const name          = (row[0] || '').toString().trim();
-    const settingsTab   = (row[1] || '').toString().trim();
-    const activeFlag    = row[2];
-    const accentColor   = (row[3] || '').toString().trim() || COLORS.HEADER_BG;
+    const name = (row[0] || '').toString().trim();
+    const settingsTab = (row[1] || '').toString().trim();
+    const activeFlag = row[2];
+    const accentColor = (row[3] || '').toString().trim() || COLORS.HEADER_BG;
 
     if (!name || !settingsTab) return; // blank row
 
-    const isActive = (activeFlag === true || activeFlag === 'TRUE' || activeFlag === 'true');
+    const isActive = (activeFlag === true || String(activeFlag).toUpperCase() === 'TRUE');
 
     departments.push({
-      name:            normalizeDeptName_(name), // canonical key used for all internal matching
-      displayName:     name,                     // original text — used for headers and sheet names
+      name: normalizeDeptName_(name), // canonical key used for all internal matching
+      displayName: name,                     // original text — used for headers and sheet names
       settingsTabName: settingsTab,
-      active:          isActive,
-      accentColor:     accentColor,
+      active: isActive,
+      accentColor: accentColor,
     });
   });
 
@@ -315,8 +315,8 @@ function loadSettingsForDepartment_(departmentEntry) {
   }
 
   return {
-    shiftTimingMap:        buildShiftTimingMap(sheet),
-    staffingRequirements:  loadStaffingRequirements(sheet),
+    shiftTimingMap: buildShiftTimingMap(sheet),
+    staffingRequirements: loadStaffingRequirements(sheet),
   };
 }
 
@@ -348,11 +348,11 @@ function loadAllDepartmentSettings() {
     try {
       const settings = loadSettingsForDepartment_(dept);
       settingsMap.set(dept.name, {
-        shiftTimingMap:       settings.shiftTimingMap,
+        shiftTimingMap: settings.shiftTimingMap,
         staffingRequirements: settings.staffingRequirements,
-        accentColor:          dept.accentColor,
-        settingsTabName:      dept.settingsTabName,
-        displayName:          dept.displayName, // original name for headers/sheet names
+        accentColor: dept.accentColor,
+        settingsTabName: dept.settingsTabName,
+        displayName: dept.displayName, // original name for headers/sheet names
       });
       console.log('settingsManager: Loaded settings for "' + dept.name + '" (' + dept.settingsTabName + ').');
     } catch (error) {

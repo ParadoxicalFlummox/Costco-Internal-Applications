@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — The core schedule generation algorithm.
- * VERSION: 1.2.0
+ * VERSION: 1.2.1
  *
  * This file contains the 4-phase algorithm that turns a roster of employees and
  * a set of shift/staffing rules into a complete weekly schedule grid.
@@ -1142,12 +1142,12 @@ function generateAllDepartmentSchedules(weekStartDate) {
       );
 
       results.set(deptName, {
-        weekSheetName:        generateDeptWeekSheetName(weekStartDate, deptName),
-        weekGrid:             result.weekGrid,
-        employeeList:         result.employeeList,
+        weekSheetName: generateDeptWeekSheetName(weekStartDate, deptName),
+        weekGrid: result.weekGrid,
+        employeeList: result.employeeList,
         staffingRequirements: deptSettings.staffingRequirements,
-        accentColor:          deptSettings.accentColor,
-        displayName:          deptSettings.displayName || deptName, // original name for headers
+        accentColor: deptSettings.accentColor,
+        displayName: deptSettings.displayName || deptName, // original name for headers
       });
 
       console.log('scheduleEngine: Generated schedule for "' + deptName + '" (' + deptEmployees.length + ' employees).');
@@ -1210,7 +1210,7 @@ function generateScheduleForDepartment_(employees, shiftTimingMap, staffingRequi
   runPhaseFourRoleAssignment_(weekGrid, employees, departmentName);
 
   return {
-    weekGrid:     weekGrid,
+    weekGrid: weekGrid,
     employeeList: employees,
   };
 }
@@ -1254,13 +1254,13 @@ function runPhaseFourRoleAssignment_(weekGrid, employeeList, departmentName) {
 
     DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
       // Count trigger role and required role on this day.
-      let triggerCount  = 0;
+      let triggerCount = 0;
       let requiredCount = 0;
 
       employeeList.forEach(function (_employee, employeeIndex) {
         const cell = weekGrid[employeeIndex][dayIndex];
         if (cell.type !== "SHIFT") return;
-        if (cell.role === triggerRole)       triggerCount++;
+        if (cell.role === triggerRole) triggerCount++;
         if (cell.role === rule.requiresRole) requiredCount++;
       });
 
@@ -1491,17 +1491,21 @@ function runPreGenerationPreflight(weekStartDate) {
     );
   }
 
-  // --- Blocking check 2: Settings sheet has at least one valid, parseable shift ---
-  // buildShiftTimingMap() throws if the Settings sheet is missing entirely or has no
-  // rows in the table — those errors propagate as-is. We additionally check for an
-  // empty map, which happens if every shift row had bad time values (all skipped).
-  const shiftTimingMap = buildShiftTimingMap();
+  // --- Blocking check 2: At least one department Settings tab is present and loadable ---
+  // loadAllDepartmentSettings() returns null if the Departments tab has no valid rows
+  // (both name AND settings tab name must be filled in for a row to count).
+  // It throws only if rows exist but every Settings tab fails to load.
+  // We capture the map here so per-employee shift validation below uses each employee's
+  // own department's shifts rather than a non-existent base "Settings" tab.
+  const allDeptSettings = loadAllDepartmentSettings();
 
-  if (Object.keys(shiftTimingMap).length === 0) {
+  if (!allDeptSettings) {
     throw new Error(
-      "No valid shifts found in the Settings sheet.\n\n" +
-      "Check that the Shift Definitions table (columns D–I) has properly formatted " +
-      "time values. Each time cell must be formatted as a time, not plain text."
+      "No departments were found.\n\n" +
+      "Check the Departments tab: each row must have a Department Name in col A AND " +
+      "the Settings tab name in col B (e.g., Settings_Maintenance). Col C must be TRUE.\n\n" +
+      "Use Schedule Admin \u2192 Setup Department Settings Tab to create a Settings tab, " +
+      "then fill in the Departments tab row manually."
     );
   }
 
@@ -1516,13 +1520,13 @@ function runPreGenerationPreflight(weekStartDate) {
   // Departments tab names are normalized by readDepartmentList_(), so comparisons below are
   // already case- and space-insensitive. A mismatch here means something is genuinely wrong
   // (e.g., a completely different name), not just a capitalization difference.
-  const activeDepartments = readDepartmentList_().filter(function(dept) { return dept.active; });
-  const knownDeptNames    = new Set(activeDepartments.map(function(dept) { return dept.name; }));
+  const activeDepartments = readDepartmentList_().filter(function (dept) { return dept.active; });
+  const knownDeptNames = new Set(activeDepartments.map(function (dept) { return dept.name; }));
 
   // 2B: Employees with no Department value — silently excluded from generation.
   const blankDeptEmployees = employeeList
-    .filter(function(employee) { return !employee.department; })
-    .map(function(employee) { return employee.name; });
+    .filter(function (employee) { return !employee.department; })
+    .map(function (employee) { return employee.name; });
 
   if (blankDeptEmployees.length > 0) {
     warnings.push(
@@ -1538,28 +1542,32 @@ function runPreGenerationPreflight(weekStartDate) {
   // mismatch here is a genuine name error that will silently drop these employees.
   const unknownDepts = [...new Set(
     employeeList
-      .map(function(employee) { return employee.department; })
-      .filter(function(deptName) { return deptName && !knownDeptNames.has(deptName); })
+      .map(function (employee) { return employee.department; })
+      .filter(function (deptName) { return deptName && !knownDeptNames.has(deptName); })
   )];
 
   if (unknownDepts.length > 0) {
+    const knownList = activeDepartments.length > 0
+      ? activeDepartments.map(function (d) { return "\"" + d.displayName + "\""; }).join(", ")
+      : "(none — Departments tab may be empty or missing col B)";
     throw new Error(
-      "Department mismatch: these values in Roster column K do not match any active entry in the Departments tab:\n\n" +
-      unknownDepts.join(", ") + "\n\n" +
-      "Check spelling — capitalization and spaces are handled automatically, but the name must otherwise match."
+      "Department mismatch — Roster column K has values that don't match any active entry in the Departments tab.\n\n" +
+      "Unmatched: " + unknownDepts.join(", ") + "\n" +
+      "Known active departments: " + knownList + "\n\n" +
+      "Check that the Departments tab row has the department name in col A, the Settings tab name (e.g. Settings_Maintenance) in col B, and TRUE in col C."
     );
   }
 
   // 2C: Active departments that have no matching employees — produces confusing empty sheets.
   const employeesByDept = new Map();
-  employeeList.forEach(function(employee) {
+  employeeList.forEach(function (employee) {
     if (!employee.department) return;
     const bucket = employeesByDept.get(employee.department) || [];
     bucket.push(employee);
     employeesByDept.set(employee.department, bucket);
   });
 
-  activeDepartments.forEach(function(dept) {
+  activeDepartments.forEach(function (dept) {
     if ((employeesByDept.get(dept.name) || []).length === 0) {
       warnings.push(
         "Department \"" + dept.displayName + "\" is active in the Departments tab but has 0 employees " +
@@ -1582,12 +1590,21 @@ function runPreGenerationPreflight(weekStartDate) {
       return;
     }
 
-    // The preferred shift must exist in Settings for this employee's status.
+    // Look up this employee's department-specific shift timing map.
+    // If the dept's Settings tab couldn't be loaded (already console-logged by
+    // loadAllDepartmentSettings), skip shift validation for this employee.
+    const empDeptSettings = allDeptSettings.get(employee.department);
+    if (!empDeptSettings) {
+      return;
+    }
+    const empShiftTimingMap = empDeptSettings.shiftTimingMap;
+
+    // The preferred shift must exist in this department's Settings tab.
     // A mismatch (usually a spelling or capitalization difference) means the employee
     // will never receive their preferred shift and may be assigned a random gap-filler.
     if (employee.preferredShift) {
       const preferredLookupKey = employee.preferredShift + "|" + employee.status;
-      if (!shiftTimingMap[preferredLookupKey]) {
+      if (!empShiftTimingMap[preferredLookupKey]) {
         warnings.push(
           employee.name + " — Preferred shift \"" + employee.preferredShift +
           "\" (column G) not found in Settings for " + employee.status + " employees. " +
@@ -1604,7 +1621,7 @@ function runPreGenerationPreflight(weekStartDate) {
       );
     }
 
-    // Each qualified shift must also exist in Settings for this employee's status.
+    // Each qualified shift must also exist in this department's Settings tab.
     // parseQualifiedShiftList() always adds the preferred shift to the qualified list,
     // so we skip it here to avoid duplicating a warning already raised above.
     employee.qualifiedShifts.forEach(function (shiftName) {
@@ -1612,7 +1629,7 @@ function runPreGenerationPreflight(weekStartDate) {
         return; // Already checked above — no duplicate warning.
       }
       const qualifiedLookupKey = shiftName + "|" + employee.status;
-      if (!shiftTimingMap[qualifiedLookupKey]) {
+      if (!empShiftTimingMap[qualifiedLookupKey]) {
         warnings.push(
           employee.name + " — Qualified shift \"" + shiftName +
           "\" (column H) not found in Settings for " + employee.status + " employees. " +
@@ -1758,7 +1775,7 @@ function readCheckboxStateFromSheet(weekSheet, employeeCount) {
     const bothCheckboxRows = weekSheet
       .getRange(vacationRow, WEEK_SHEET.COL_MONDAY, 2, WEEK_SHEET.DAYS_IN_WEEK)
       .getValues();
-    const vacationValues       = bothCheckboxRows[0];
+    const vacationValues = bothCheckboxRows[0];
     const requestedDayOffValues = bothCheckboxRows[1];
 
     for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
