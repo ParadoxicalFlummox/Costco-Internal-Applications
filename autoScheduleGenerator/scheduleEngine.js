@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — The core schedule generation algorithm.
- * VERSION: 1.0.0
+ * VERSION: 1.2.0
  *
  * This file contains the 4-phase algorithm that turns a roster of employees and
  * a set of shift/staffing rules into a complete weekly schedule grid.
@@ -112,8 +112,9 @@ function loadRosterSortedBySeniority() {
   const dataRowCount = lastRow - ROSTER_DATA_START_ROW + 1;
 
   // Read the entire roster in a single call to minimize sheet read time.
+  // Read through PRIMARY_ROLE (col M = 13) to include the new department/role columns.
   const allRosterValues = rosterSheet
-    .getRange(ROSTER_DATA_START_ROW, 1, dataRowCount, ROSTER_COLUMN.SENIORITY_RANK)
+    .getRange(ROSTER_DATA_START_ROW, 1, dataRowCount, ROSTER_COLUMN.PRIMARY_ROLE)
     .getValues();
 
   const employeeList = [];
@@ -135,6 +136,9 @@ function loadRosterSortedBySeniority() {
     const qualifiedShiftsRaw = row[ROSTER_COLUMN.QUALIFIED_SHIFTS - 1];
     const vacationDatesRaw = row[ROSTER_COLUMN.VACATION_DATES - 1];
     const seniorityRank = row[ROSTER_COLUMN.SENIORITY_RANK - 1];
+    const department = row[ROSTER_COLUMN.DEPARTMENT - 1];
+    const qualifiedDepartmentsRaw = row[ROSTER_COLUMN.QUALIFIED_DEPARTMENTS - 1];
+    const primaryRole = row[ROSTER_COLUMN.PRIMARY_ROLE - 1];
 
     // Parse the qualified shifts field from a comma-separated string into an array.
     // If the field is blank, default to using the preferred shift as the only qualified shift.
@@ -144,6 +148,11 @@ function loadRosterSortedBySeniority() {
     // They are parsed against the week's date range at grid initialization time,
     // not here, to keep this function focused on reading and transforming data.
     const vacationDateStrings = parseVacationDateStrings(vacationDatesRaw);
+
+    // Parse qualified departments from comma-separated string into array (may be empty).
+    const qualifiedDepartmentList = qualifiedDepartmentsRaw
+      ? qualifiedDepartmentsRaw.toString().split(',').map(s => s.trim()).filter(Boolean)
+      : [];
 
     employeeList.push({
       name: name.toString().trim(),
@@ -156,6 +165,9 @@ function loadRosterSortedBySeniority() {
       qualifiedShifts: qualifiedShiftList,
       vacationDateStrings: vacationDateStrings,
       seniorityRank: Number(seniorityRank) || 0,
+      department: department ? normalizeDeptName_(department.toString()) : "",
+      qualifiedDepartments: qualifiedDepartmentList,
+      primaryRole: primaryRole ? primaryRole.toString().trim() : "",
     });
   });
 
@@ -283,7 +295,10 @@ function runPhaseOnePreferenceAssignment(weekGrid, employeeList, shiftTimingMap,
 function grantRequestedDaysOff(weekGrid, employeeList, staffingRequirements) {
   // Process one day at a time so that the staffing floor check is accurate for each day independently.
   DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
-    const minimumStaffRequired = staffingRequirements[dayName] || 0;
+    // In both Count and Hours mode the .value field is used as the RDO-granting
+    // floor (employee count). In Hours mode this is a reasonable proxy since shift
+    // hours are not yet known when RDOs are being granted.
+    const minimumStaffRequired = (staffingRequirements[dayName] && staffingRequirements[dayName].value) || 0;
 
     // Count how many employees are available (not VAC) on this day.
     // VAC days are locked and cannot be counted as available staff.
@@ -1068,6 +1083,219 @@ function generateWeekSheetName(weekStartDate) {
   return "Week_" + month + "_" + day + "_" + year;
 }
 
+/**
+ * Generates the output sheet name for a single department's schedule.
+ * Format: "Week_MM_DD_YY_DeptName"  e.g. "Week_04_07_26_Morning"
+ *
+ * @param {Date}   weekStartDate  — Monday of the week being generated.
+ * @param {string} departmentName — The department name to append.
+ * @returns {string}
+ */
+function generateDeptWeekSheetName(weekStartDate, departmentName) {
+  return generateWeekSheetName(weekStartDate) + "_" + departmentName;
+}
+
+
+// ---------------------------------------------------------------------------
+// Multi-Department Entry Point
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a complete weekly schedule for every active department listed in
+ * the Departments tab and returns a Map of results keyed by department name.
+ *
+ * Falls back to single-department mode (using the existing Settings tab) if the
+ * Departments tab does not exist — existing deployments are unaffected.
+ *
+ * @param {Date} weekStartDate — The Monday of the week to generate.
+ * @returns {Map<string, { weekSheetName, weekGrid, employeeList, accentColor }> | null}
+ *   Returns null if multi-dept mode is unavailable (caller uses single-dept path).
+ */
+function generateAllDepartmentSchedules(weekStartDate) {
+  const allDeptSettings = loadAllDepartmentSettings(); // settingsManager.js
+
+  if (!allDeptSettings) {
+    return null; // No Departments tab — caller falls back to generateWeeklySchedule()
+  }
+
+  // Load the full roster once and split by department.
+  const fullRoster = loadRosterSortedBySeniority();
+  const rosterByDept = groupRosterByDepartment_(fullRoster);
+
+  const results = new Map();
+
+  allDeptSettings.forEach(function (deptSettings, deptName) {
+    const deptEmployees = rosterByDept.get(deptName) || [];
+
+    if (deptEmployees.length === 0) {
+      console.log('scheduleEngine: No employees found for department "' + deptName + '" — skipping.');
+      return;
+    }
+
+    try {
+      const result = generateScheduleForDepartment_(
+        deptEmployees,
+        deptSettings.shiftTimingMap,
+        deptSettings.staffingRequirements,
+        weekStartDate,
+        deptName
+      );
+
+      results.set(deptName, {
+        weekSheetName:        generateDeptWeekSheetName(weekStartDate, deptName),
+        weekGrid:             result.weekGrid,
+        employeeList:         result.employeeList,
+        staffingRequirements: deptSettings.staffingRequirements,
+        accentColor:          deptSettings.accentColor,
+        displayName:          deptSettings.displayName || deptName, // original name for headers
+      });
+
+      console.log('scheduleEngine: Generated schedule for "' + deptName + '" (' + deptEmployees.length + ' employees).');
+    } catch (error) {
+      console.error('scheduleEngine: Failed to generate schedule for "' + deptName + '" — ' + error.message);
+    }
+  });
+
+  return results;
+}
+
+
+/**
+ * Groups the full roster into a Map keyed by department name.
+ *
+ * Employees with a blank Department field are placed under the key "" so they
+ * are not silently dropped — the caller can decide what to do with them.
+ *
+ * @param {Array<EmployeeRecord>} roster — Full roster from loadRosterSortedBySeniority().
+ * @returns {Map<string, Array<EmployeeRecord>>}
+ */
+function groupRosterByDepartment_(roster) {
+  const byDept = new Map();
+
+  roster.forEach(function (employee) {
+    const deptKey = employee.department || "";
+    if (!byDept.has(deptKey)) {
+      byDept.set(deptKey, []);
+    }
+    byDept.get(deptKey).push(employee);
+  });
+
+  return byDept;
+}
+
+
+/**
+ * Runs the full 4-phase schedule algorithm for a single department's employee slice.
+ *
+ * This is the same logic as generateWeeklySchedule() but operates on a pre-filtered
+ * employee list and pre-loaded settings rather than reading from the sheet.
+ *
+ * @param {Array}  employees            — Employees for this department (seniority-sorted).
+ * @param {Object} shiftTimingMap       — From buildShiftTimingMap() for this dept's Settings tab.
+ * @param {Object} staffingRequirements — From loadStaffingRequirements() for this dept's Settings tab.
+ * @param {Date}   weekStartDate        — The Monday of the week to generate.
+ * @param {string} departmentName       — Used for logging only.
+ * @returns {{ weekGrid: Array, employeeList: Array }}
+ */
+function generateScheduleForDepartment_(employees, shiftTimingMap, staffingRequirements, weekStartDate, departmentName) {
+  if (employees.length === 0) {
+    throw new Error('No employees for department "' + departmentName + '".');
+  }
+
+  const weekGrid = initializeWeekGrid(employees, weekStartDate);
+
+  runPhaseOnePreferenceAssignment(weekGrid, employees, shiftTimingMap, staffingRequirements, weekStartDate);
+  runPhaseTwoHourEnforcement(weekGrid, employees, shiftTimingMap);
+  runPhaseThreeGapResolution(weekGrid, employees, shiftTimingMap, staffingRequirements);
+  runPhaseFourRoleAssignment_(weekGrid, employees, departmentName);
+
+  return {
+    weekGrid:     weekGrid,
+    employeeList: employees,
+  };
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 4: Role Assignment
+// ---------------------------------------------------------------------------
+
+/**
+ * Assigns each employee's primaryRole to every SHIFT cell in their grid row.
+ *
+ * After Phases 1–3 have finalized which days each employee works, Phase 4 stamps
+ * the role value onto each working day. Non-working cells (OFF, RDO, VAC) get null.
+ *
+ * For departments that have a Cashier:Assist ratio rule configured in ROLE_RULES,
+ * a second pass scans each day and, if the assist count falls short of the cashier
+ * count, reassigns the most-junior unassigned-role employee to "Assist".
+ *
+ * @param {Array}  weekGrid      — The finalized grid from Phases 1–3.
+ * @param {Array}  employeeList  — Employees in seniority order.
+ * @param {string} departmentName — Used to look up ROLE_RULES applicability.
+ */
+function runPhaseFourRoleAssignment_(weekGrid, employeeList, departmentName) {
+  // Pass 1: Stamp each employee's primary role onto their SHIFT cells.
+  employeeList.forEach(function (employee, employeeIndex) {
+    DAY_NAMES_IN_ORDER.forEach(function (_dayName, dayIndex) {
+      const cell = weekGrid[employeeIndex][dayIndex];
+      if (cell.type === "SHIFT") {
+        cell.role = employee.primaryRole || null;
+      } else {
+        cell.role = null;
+      }
+    });
+  });
+
+  // Pass 2: Enforce role ratio rules (e.g., 1 Assist per Cashier per day).
+  // Iterate each configured rule and apply it for each day of the week.
+  Object.keys(ROLE_RULES).forEach(function (triggerRole) {
+    const rule = ROLE_RULES[triggerRole];
+
+    DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
+      // Count trigger role and required role on this day.
+      let triggerCount  = 0;
+      let requiredCount = 0;
+
+      employeeList.forEach(function (_employee, employeeIndex) {
+        const cell = weekGrid[employeeIndex][dayIndex];
+        if (cell.type !== "SHIFT") return;
+        if (cell.role === triggerRole)       triggerCount++;
+        if (cell.role === rule.requiresRole) requiredCount++;
+      });
+
+      const deficit = (triggerCount * rule.ratio) - requiredCount;
+      if (deficit <= 0) return; // Already satisfied.
+
+      // Find the most-junior working employees whose role is not the trigger role
+      // or the required role (i.e., "flexible" for reassignment).
+      // Most-junior = highest index in seniority-sorted list.
+      let filled = 0;
+      for (let i = employeeList.length - 1; i >= 0 && filled < deficit; i--) {
+        const cell = weekGrid[i][dayIndex];
+        if (cell.type !== "SHIFT") continue;
+        if (cell.role === triggerRole || cell.role === rule.requiresRole) continue;
+
+        cell.role = rule.requiresRole;
+        filled++;
+        console.log(
+          'scheduleEngine: Phase 4 reassigned ' + employeeList[i].name +
+          ' to "' + rule.requiresRole + '" on ' + dayName +
+          ' (dept: ' + departmentName + ', ' + triggerRole + ' count: ' + triggerCount + ').'
+        );
+      }
+
+      if (filled < deficit) {
+        console.log(
+          'scheduleEngine: WARNING — could not fully satisfy ' + triggerRole + ':' +
+          rule.requiresRole + ' ratio on ' + dayName + ' for "' + departmentName +
+          '". Needed ' + deficit + ' more "' + rule.requiresRole + '" but only found ' + filled + '.'
+        );
+      }
+    });
+  });
+}
+
 
 /**
  * Returns the date (as a Date object) for a given day of the week relative to the week start.
@@ -1283,6 +1511,63 @@ function runPreGenerationPreflight(weekStartDate) {
   // manager sees the full list rather than discovering issues one at a time.
   const employeeList = loadRosterSortedBySeniority();
 
+  // --- Department health checks (2A, 2B, 2C) ---
+  // Department names on the Roster are normalized by loadRosterSortedBySeniority(), and the
+  // Departments tab names are normalized by readDepartmentList_(), so comparisons below are
+  // already case- and space-insensitive. A mismatch here means something is genuinely wrong
+  // (e.g., a completely different name), not just a capitalization difference.
+  const activeDepartments = readDepartmentList_().filter(function(dept) { return dept.active; });
+  const knownDeptNames    = new Set(activeDepartments.map(function(dept) { return dept.name; }));
+
+  // 2B: Employees with no Department value — silently excluded from generation.
+  const blankDeptEmployees = employeeList
+    .filter(function(employee) { return !employee.department; })
+    .map(function(employee) { return employee.name; });
+
+  if (blankDeptEmployees.length > 0) {
+    warnings.push(
+      blankDeptEmployees.length + " employee(s) have no Department assigned (Roster col K) and will be skipped: " +
+      blankDeptEmployees.slice(0, 5).join(", ") +
+      (blankDeptEmployees.length > 5 ? " ..." : "") + ". " +
+      "Fill in their Department column to include them in generation."
+    );
+  }
+
+  // 2A: Employees whose Department value (after normalization) still doesn't match any active
+  // entry in the Departments tab. Normalization already handles case/space differences, so a
+  // mismatch here is a genuine name error that will silently drop these employees.
+  const unknownDepts = [...new Set(
+    employeeList
+      .map(function(employee) { return employee.department; })
+      .filter(function(deptName) { return deptName && !knownDeptNames.has(deptName); })
+  )];
+
+  if (unknownDepts.length > 0) {
+    throw new Error(
+      "Department mismatch: these values in Roster column K do not match any active entry in the Departments tab:\n\n" +
+      unknownDepts.join(", ") + "\n\n" +
+      "Check spelling — capitalization and spaces are handled automatically, but the name must otherwise match."
+    );
+  }
+
+  // 2C: Active departments that have no matching employees — produces confusing empty sheets.
+  const employeesByDept = new Map();
+  employeeList.forEach(function(employee) {
+    if (!employee.department) return;
+    const bucket = employeesByDept.get(employee.department) || [];
+    bucket.push(employee);
+    employeesByDept.set(employee.department, bucket);
+  });
+
+  activeDepartments.forEach(function(dept) {
+    if ((employeesByDept.get(dept.name) || []).length === 0) {
+      warnings.push(
+        "Department \"" + dept.displayName + "\" is active in the Departments tab but has 0 employees " +
+        "assigned in the Roster (col K). Generation will produce an empty sheet for this department."
+      );
+    }
+  });
+
   employeeList.forEach(function (employee) {
 
     // Status must be exactly "FT" or "PT". The engine uses this as an exact key for
@@ -1466,16 +1751,15 @@ function readCheckboxStateFromSheet(weekSheet, employeeCount) {
 
     const baseRow = WEEK_SHEET.DATA_START_ROW + (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
     const vacationRow = baseRow + WEEK_SHEET.ROW_OFFSET_VAC;
-    const requestedDayOffRow = baseRow + WEEK_SHEET.ROW_OFFSET_RDO;
+    // RDO row is always vacationRow + 1 (contiguous blocks), so we read both in one range below.
 
-    // Read all 7 day columns for VAC and RDO rows in two batch reads.
-    const vacationValues = weekSheet
-      .getRange(vacationRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
-      .getValues()[0];
-
-    const requestedDayOffValues = weekSheet
-      .getRange(requestedDayOffRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
-      .getValues()[0];
+    // Read both VAC and RDO rows in a single 2-row getValues() call.
+    // VAC row is first (offset 0), RDO row is immediately below it (offset 1).
+    const bothCheckboxRows = weekSheet
+      .getRange(vacationRow, WEEK_SHEET.COL_MONDAY, 2, WEEK_SHEET.DAYS_IN_WEEK)
+      .getValues();
+    const vacationValues       = bothCheckboxRows[0];
+    const requestedDayOffValues = bothCheckboxRows[1];
 
     for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
       const isVacation = vacationValues[dayIndex] === true;

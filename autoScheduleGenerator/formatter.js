@@ -1,6 +1,6 @@
 /**
  * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION: 1.0.0
+ * VERSION: 1.2.0
  *
  * This file is the only place in the codebase that writes to a Week schedule sheet.
  * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
@@ -47,10 +47,16 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
   writeWeekHeader(scheduleSheet, weekStartDate, departmentName);
   writeColumnHeaders(scheduleSheet);
   writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid);
-  writeStaffingSummary(scheduleSheet, employeeList.length, staffingRequirements);
+  writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements);
+
+  // Flush all pending content writes before starting formatting.
+  // This ensures GAS does not hold too many deferred operations in memory,
+  // which reduces mid-run timeout risk on large rosters or multi-department runs.
+  SpreadsheetApp.flush();
 
   // Apply visual formatting after all content is written.
   applyShiftColors(scheduleSheet, employeeList, weekGrid);
+  applyRoleRowColors(scheduleSheet, employeeList, weekGrid);
   applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid);
   applyStatusRowConditionalFormat(scheduleSheet, employeeList.length);
   applyStructuralFormatting(scheduleSheet, employeeList.length);
@@ -139,20 +145,21 @@ function writeColumnHeaders(scheduleSheet) {
 
 
 /**
- * Writes all employee data blocks (VAC row, RDO row, SHIFT row) to the schedule sheet.
+ * Writes all employee data blocks (VAC row, RDO row, SHIFT row, ROLE row) to the schedule sheet.
  *
- * Each employee occupies three consecutive rows:
+ * Each employee occupies four consecutive rows:
  *   Row 1 of block (VAC):   "VAC" label | employee name | checkboxes for Mon–Sun
  *   Row 2 of block (RDO):   "RDO" label | (name merged from VAC row) | checkboxes for Mon–Sun
  *   Row 3 of block (SHIFT): "SHIFT" label | (name merged) | shift text for Mon–Sun | total hours
+ *   Row 4 of block (ROLE):  "ROLE" label | (name merged) | role name for working days, "—" otherwise
  *
- * The employee name cell is merged across all three rows in the block and vertically centered.
- * This makes it visually clear which three rows belong to one employee.
+ * The employee name cell is merged across all four rows in the block and vertically centered.
+ * This makes it visually clear which rows belong to one employee.
  *
  * RE-GENERATION NOTE: On re-generation (when a manager edits a checkbox), this function
- * writes only the SHIFT row values. The VAC and RDO checkboxes are not touched because
- * they represent the manager's explicit decisions. The checkboxes are only cleared and
- * re-inserted on the first generation of a new week sheet.
+ * writes only the SHIFT and ROLE row values. The VAC and RDO checkboxes are not touched
+ * because they represent the manager's explicit decisions. The checkboxes are only cleared
+ * and re-inserted on the first generation of a new week sheet.
  *
  * @param {Sheet} scheduleSheet — The schedule sheet to write to.
  * @param {Array} employeeList  — Employees in seniority order.
@@ -171,78 +178,73 @@ function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid) {
     const vacationRow        = baseRow + WEEK_SHEET.ROW_OFFSET_VAC;
     const requestedDayOffRow = baseRow + WEEK_SHEET.ROW_OFFSET_RDO;
     const shiftRow           = baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT;
+    const roleRow            = baseRow + WEEK_SHEET.ROW_OFFSET_ROLE;
 
     if (isFirstTimeGeneration) {
-      // --- First-time generation: write all three rows from scratch ---
+      // --- First-time generation: write all four rows from scratch ---
 
-      // Row label column (A): "VAC", "RDO", "SHIFT"
-      scheduleSheet.getRange(vacationRow,        WEEK_SHEET.COL_ROW_LABEL).setValue("VAC");
-      scheduleSheet.getRange(requestedDayOffRow, WEEK_SHEET.COL_ROW_LABEL).setValue("RDO");
-      scheduleSheet.getRange(shiftRow,           WEEK_SHEET.COL_ROW_LABEL).setValue("SHIFT");
+      // Row label column (A): "VAC", "RDO", "SHIFT", "ROLE" — one batch write for all four labels.
+      scheduleSheet
+        .getRange(vacationRow, WEEK_SHEET.COL_ROW_LABEL, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1)
+        .setValues([["VAC"], ["RDO"], ["SHIFT"], ["ROLE"]]);
 
-      // Employee name cell (B): merged across all 3 rows, vertically centered.
+      // Employee name cell (B): merged across all 4 rows, vertically centered.
+      // WEEK_SHEET.ROWS_PER_EMPLOYEE is 4, so this merges the correct block height.
       const nameMergeRange = scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_EMPLOYEE_NAME, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1);
       nameMergeRange.merge();
       nameMergeRange.setValue(employee.name);
       nameMergeRange.setVerticalAlignment("middle");
       nameMergeRange.setFontWeight("bold");
 
-      // VAC row (C–I): insert checkboxes, pre-checked for vacation days.
-      for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
-        const columnNumber = WEEK_SHEET.COL_MONDAY + dayIndex;
-        const vacationCell = scheduleSheet.getRange(vacationRow, columnNumber);
-        vacationCell.insertCheckboxes();
-        // Pre-check the checkbox if this is a vacation day in the generated grid.
-        if (weekGrid[employeeIndex][dayIndex].type === "VAC") {
-          vacationCell.setValue(true);
-        }
-      }
+      // VAC row (C–I): insert all checkboxes in one call, then set all values in one batch.
+      // insertCheckboxes() on a range applies to every cell in that range at once.
+      const vacDayRange = scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK);
+      vacDayRange.insertCheckboxes();
+      vacDayRange.setValues([weekGrid[employeeIndex].map(function(cell) {
+        return cell.type === "VAC";
+      })]);
 
-      // RDO row (C–I): insert checkboxes, pre-checked for RDO days.
-      for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
-        const columnNumber = WEEK_SHEET.COL_MONDAY + dayIndex;
-        const requestedDayOffCell = scheduleSheet.getRange(requestedDayOffRow, columnNumber);
-        requestedDayOffCell.insertCheckboxes();
-        if (weekGrid[employeeIndex][dayIndex].type === "RDO") {
-          requestedDayOffCell.setValue(true);
-        }
-      }
+      // RDO row (C–I): same pattern — one insertCheckboxes call + one setValues call.
+      const rdoDayRange = scheduleSheet.getRange(requestedDayOffRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK);
+      rdoDayRange.insertCheckboxes();
+      rdoDayRange.setValues([weekGrid[employeeIndex].map(function(cell) {
+        return cell.type === "RDO";
+      })]);
     }
 
     // --- SHIFT row (C–I and J): always written (first time or re-generation) ---
-    // Clear the existing SHIFT row content before writing new values.
+    // Build the 7-day values array in one pass, then write the whole row in one API call.
+    let totalPaidHoursThisWeek = 0;
+    const shiftRowValues = [weekGrid[employeeIndex].map(function(cell) {
+      if (cell.type === "SHIFT") {
+        totalPaidHoursThisWeek += cell.paidHours;
+        return cell.displayText || cell.shiftName || "SHIFT";
+      } else if (cell.type === "VAC") {
+        return "VAC";
+      } else if (cell.type === "RDO") {
+        return "RDO";
+      } else {
+        return "OFF";
+      }
+    })];
+
     scheduleSheet
       .getRange(shiftRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
-      .clearContent();
-
-    let totalPaidHoursThisWeek = 0;
-
-    for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
-      const columnNumber = WEEK_SHEET.COL_MONDAY + dayIndex;
-      const cell         = weekGrid[employeeIndex][dayIndex];
-      const shiftCell    = scheduleSheet.getRange(shiftRow, columnNumber);
-
-      if (cell.type === "SHIFT") {
-        // Look up the display text (e.g., "08:00 - 16:30") from the shift timing map.
-        // The shift timing map is not available in this function, so we regenerate
-        // the display text from the cell's data. The formatter receives the grid
-        // which stores shiftName — the full timing map lookup happens here via
-        // a helper that reconstructs the display string.
-        // NOTE: display text is stored on the shiftDefinition; we pass it through
-        // by storing it on the grid cell at assignment time via writeShiftDisplayText().
-        shiftCell.setValue(cell.displayText || cell.shiftName || "SHIFT");
-        totalPaidHoursThisWeek += cell.paidHours;
-      } else if (cell.type === "VAC") {
-        shiftCell.setValue("VAC");
-      } else if (cell.type === "RDO") {
-        shiftCell.setValue("RDO");
-      } else {
-        shiftCell.setValue("OFF");
-      }
-    }
+      .setValues(shiftRowValues);
 
     // Total hours cell (J): shows the employee's weekly paid hours total on the SHIFT row.
     scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_TOTAL_HOURS).setValue(totalPaidHoursThisWeek);
+
+    // --- ROLE row (C–I): always written (roles change when shifts change) ---
+    // Build the 7-day role values in one pass, write the whole row in one API call.
+    const roleRowValues = [weekGrid[employeeIndex].map(function(cell) {
+      // Show the employee's role on working days; em dash on all off/non-working days.
+      return (cell.type === "SHIFT" && cell.role) ? cell.role : "\u2014";
+    })];
+
+    scheduleSheet
+      .getRange(roleRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
+      .setValues(roleRowValues);
   });
 }
 
@@ -250,61 +252,74 @@ function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid) {
 /**
  * Writes the staffing summary block (REQUIRED / ACTUAL / STATUS rows) below the employee blocks.
  *
- * The summary gives managers an at-a-glance view of whether each day meets minimum staffing.
+ * Supports two modes per day, driven by the staffing requirements Settings column C:
  *
- * REQUIRED row: the minimum staff count from the Settings sheet for each day.
- * ACTUAL row:   a COUNTIF formula that counts shift cells on each day column.
- *               The formula uses "*:*" as its pattern — this matches any string containing
- *               a colon (e.g., "08:00 - 16:30") and therefore counts only shift assignments
- *               while correctly ignoring "OFF", "VAC", "RDO", and blank cells.
- * STATUS row:   "OK" if actual >= required, "UNDER" otherwise. Conditional formatting
- *               in applyStatusRowConditionalFormat() colors these green or red.
+ *   COUNT mode (default):
+ *     REQUIRED — minimum employee count for that day.
+ *     ACTUAL   — live COUNTIF formula counting shift cells (cells containing ":").
+ *
+ *   HOURS mode:
+ *     REQUIRED — minimum total paid hours for that day (e.g., 40).
+ *     ACTUAL   — computed sum of paidHours for all working employees on that day,
+ *                written as a static value (recalculated on every re-generation).
+ *
+ * STATUS row: "OK" if actual >= required, "UNDER" otherwise. Both modes use the
+ * same formula-driven STATUS row — the cell references work regardless of whether
+ * the ACTUAL value is a formula result or a static number.
  *
  * @param {Sheet}  scheduleSheet        — The schedule sheet to write to.
- * @param {number} employeeCount        — Total number of employee blocks written.
- * @param {Object} staffingRequirements — Minimum staff per day of week.
+ * @param {Array}  employeeList         — Employees in seniority order.
+ * @param {Array}  weekGrid             — The generated schedule grid.
+ * @param {Object} staffingRequirements — { dayName → { value, mode } } from loadStaffingRequirements().
  */
-function writeStaffingSummary(scheduleSheet, employeeCount, staffingRequirements) {
-  // The summary block starts two rows below the last employee block.
+function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements) {
+  const employeeCount     = employeeList.length;
   const lastEmployeeRow   = WEEK_SHEET.DATA_START_ROW + (employeeCount * WEEK_SHEET.ROWS_PER_EMPLOYEE) - 1;
   const summaryStartRow   = lastEmployeeRow + 2;
   const requiredRow       = summaryStartRow;
   const actualRow         = summaryStartRow + 1;
   const statusRow         = summaryStartRow + 2;
 
-  // The first data row and the last employee SHIFT row — used in COUNTIF range.
-  const dataStartRow      = WEEK_SHEET.DATA_START_ROW + WEEK_SHEET.ROW_OFFSET_SHIFT;
-  const lastShiftRow      = lastEmployeeRow;
+  // First SHIFT row and last SHIFT row — used for the Count-mode COUNTIF range.
+  const dataStartRow = WEEK_SHEET.DATA_START_ROW + WEEK_SHEET.ROW_OFFSET_SHIFT;
+  const lastShiftRow = lastEmployeeRow;
 
   // Row labels (column A).
-  scheduleSheet.getRange(requiredRow, WEEK_SHEET.COL_ROW_LABEL).setValue("REQUIRED");
-  scheduleSheet.getRange(actualRow,   WEEK_SHEET.COL_ROW_LABEL).setValue("ACTUAL");
-  scheduleSheet.getRange(statusRow,   WEEK_SHEET.COL_ROW_LABEL).setValue("STATUS");
+  scheduleSheet.getRange(requiredRow, WEEK_SHEET.COL_ROW_LABEL).setValue("REQUIRED").setFontWeight("bold");
+  scheduleSheet.getRange(actualRow,   WEEK_SHEET.COL_ROW_LABEL).setValue("ACTUAL").setFontWeight("bold");
+  scheduleSheet.getRange(statusRow,   WEEK_SHEET.COL_ROW_LABEL).setValue("STATUS").setFontWeight("bold");
 
-  scheduleSheet.getRange(requiredRow, WEEK_SHEET.COL_ROW_LABEL).setFontWeight("bold");
-  scheduleSheet.getRange(actualRow,   WEEK_SHEET.COL_ROW_LABEL).setFontWeight("bold");
-  scheduleSheet.getRange(statusRow,   WEEK_SHEET.COL_ROW_LABEL).setFontWeight("bold");
-
-  // Write values for each of the 7 day columns.
   DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
-    const columnNumber          = WEEK_SHEET.COL_MONDAY + dayIndex;
-    const columnLetter          = columnIndexToLetter(columnNumber);
-    const minimumStaffRequired  = staffingRequirements[dayName] || 0;
+    const columnNumber    = WEEK_SHEET.COL_MONDAY + dayIndex;
+    const columnLetter    = columnIndexToLetter(columnNumber);
+    const dayRequirement  = staffingRequirements[dayName] || { value: 0, mode: STAFFING_MODE.COUNT };
+    const isHoursMode     = dayRequirement.mode === STAFFING_MODE.HOURS;
 
-    // REQUIRED: static value from staffing requirements.
-    scheduleSheet.getRange(requiredRow, columnNumber).setValue(minimumStaffRequired);
+    // REQUIRED: target value — interpreted as head count or hours depending on mode.
+    scheduleSheet.getRange(requiredRow, columnNumber).setValue(dayRequirement.value);
 
-    // ACTUAL: formula counting cells in this day's column that contain a time range
-    // string (identified by the presence of a colon character in the cell value).
-    // The range spans only SHIFT rows — every 3rd row starting at dataStartRow.
-    // Using COUNTIF on the full column range is simpler and still correct because
-    // only SHIFT row cells ever contain a colon-format string; labels, blanks, and
-    // checkbox values are all excluded by the "*:*" pattern.
-    const countIfFormula =
-      "=COUNTIF(" + columnLetter + dataStartRow + ":" + columnLetter + lastShiftRow + ",\"*:*\")";
-    scheduleSheet.getRange(actualRow, columnNumber).setFormula(countIfFormula);
+    if (isHoursMode) {
+      // ACTUAL (Hours mode): sum paid hours for all employees working this day.
+      // Written as a static number because paidHours live in the grid, not cells.
+      // This value is refreshed on every generation/re-generation run.
+      let totalHoursThisDay = 0;
+      employeeList.forEach(function(_employee, employeeIndex) {
+        const cell = weekGrid[employeeIndex][dayIndex];
+        if (cell.type === "SHIFT") {
+          totalHoursThisDay += cell.paidHours || 0;
+        }
+      });
+      scheduleSheet.getRange(actualRow, columnNumber).setValue(totalHoursThisDay);
+    } else {
+      // ACTUAL (Count mode): live formula counting cells that contain a time-range
+      // string (identified by the colon in "8:45 AM - 9:30 AM").
+      // Role names, OFF/VAC/RDO text, and checkboxes are all excluded by "*:*".
+      const countIfFormula =
+        "=COUNTIF(" + columnLetter + dataStartRow + ":" + columnLetter + lastShiftRow + ",\"*:*\")";
+      scheduleSheet.getRange(actualRow, columnNumber).setFormula(countIfFormula);
+    }
 
-    // STATUS: formula comparing actual to required.
+    // STATUS: formula comparing actual to required — works for both modes.
     const actualCellAddress   = columnLetter + actualRow;
     const requiredCellAddress = columnLetter + requiredRow;
     const statusFormula =
@@ -312,9 +327,7 @@ function writeStaffingSummary(scheduleSheet, employeeCount, staffingRequirements
     scheduleSheet.getRange(statusRow, columnNumber).setFormula(statusFormula);
   });
 
-  // Department total hours for the week (STATUS row, column J).
-  // Summing column J from the first shift row to the last employee row captures all per-employee
-  // weekly totals. VAC and RDO rows leave column J empty so they contribute 0 to the sum.
+  // Department total hours (STATUS row, column J) — always a sum of weekly per-employee totals.
   const totalHoursColumnLetter = columnIndexToLetter(WEEK_SHEET.COL_TOTAL_HOURS);
   const departmentTotalFormula =
     "=SUM(" + totalHoursColumnLetter + dataStartRow + ":" + totalHoursColumnLetter + lastShiftRow + ")";
@@ -345,29 +358,64 @@ function writeStaffingSummary(scheduleSheet, employeeCount, staffingRequirements
  * @param {Array} weekGrid      — The generated schedule grid.
  */
 function applyShiftColors(scheduleSheet, employeeList, weekGrid) {
+  // Build a 7-value color row per employee, then write all 7 backgrounds in one API call.
+  // This reduces 7 setBackground() calls per employee down to 1 setBackgrounds() call.
   employeeList.forEach(function(employee, employeeIndex) {
     const shiftRow = WEEK_SHEET.DATA_START_ROW +
       (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE) +
       WEEK_SHEET.ROW_OFFSET_SHIFT;
 
-    for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
-      const columnNumber = WEEK_SHEET.COL_MONDAY + dayIndex;
-      const cell         = weekGrid[employeeIndex][dayIndex];
-      const shiftCell    = scheduleSheet.getRange(shiftRow, columnNumber);
-
+    const rowColors = [weekGrid[employeeIndex].map(function(cell) {
       if (cell.type === "SHIFT") {
-        // Use the employee's status to choose the correct color.
-        // Blue for FT, green for PT, making it easy to see the mix at a glance.
-        shiftCell.setBackground(
-          employee.status === "FT" ? COLORS.FT_SHIFT : COLORS.PT_SHIFT
-        );
+        // Blue for FT, green for PT — easy to see the mix at a glance.
+        return employee.status === "FT" ? COLORS.FT_SHIFT : COLORS.PT_SHIFT;
       } else if (cell.type === "VAC") {
-        shiftCell.setBackground(COLORS.VACATION);
+        return COLORS.VACATION;
       } else {
         // RDO and OFF cells both use the day-off color.
-        shiftCell.setBackground(COLORS.DAY_OFF);
+        return COLORS.DAY_OFF;
       }
-    }
+    })];
+
+    scheduleSheet
+      .getRange(shiftRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
+      .setBackgrounds(rowColors);
+  });
+}
+
+
+/**
+ * Applies per-role background colors to ROLE row cells.
+ *
+ * Each role name (Cashier, SCO, PreScan, etc.) maps to a distinct pastel background
+ * defined in the ROLE_COLORS lookup in config.js. This color coding lets supervisors
+ * scan across a day column at a glance to see the role mix without reading every cell.
+ *
+ * Cells for non-working days (OFF, RDO, VAC) receive the generic ROLE_ROW_BG color
+ * (lavender) so the row has a consistent base background even when empty.
+ *
+ * @param {Sheet} scheduleSheet — The schedule sheet.
+ * @param {Array} employeeList  — Employees in seniority order.
+ * @param {Array} weekGrid      — The generated schedule grid.
+ */
+function applyRoleRowColors(scheduleSheet, employeeList, weekGrid) {
+  // Build a 7-value color row per employee, then write all 7 backgrounds in one API call.
+  employeeList.forEach(function(_employee, employeeIndex) {
+    const roleRow = WEEK_SHEET.DATA_START_ROW +
+      (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE) +
+      WEEK_SHEET.ROW_OFFSET_ROLE;
+
+    const rowColors = [weekGrid[employeeIndex].map(function(cell) {
+      if (cell.type === "SHIFT" && cell.role && ROLE_COLORS[cell.role]) {
+        return ROLE_COLORS[cell.role];
+      }
+      // Non-working days and roles not in the lookup both get the generic row color.
+      return COLORS.ROLE_ROW_BG;
+    })];
+
+    scheduleSheet
+      .getRange(roleRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
+      .setBackgrounds(rowColors);
   });
 }
 
@@ -496,6 +544,22 @@ function applyStructuralFormatting(scheduleSheet, employeeCount) {
       .setBackground(COLORS.ROW_LABEL_BG)
       .setHorizontalAlignment("center")
       .setFontStyle("italic");
+
+    // Override the ROLE label cell with lavender so it matches the ROLE data cells.
+    for (let employeeIndex = 0; employeeIndex < employeeCount; employeeIndex++) {
+      const roleRow = WEEK_SHEET.DATA_START_ROW +
+        (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE) +
+        WEEK_SHEET.ROW_OFFSET_ROLE;
+      scheduleSheet
+        .getRange(roleRow, WEEK_SHEET.COL_ROW_LABEL)
+        .setBackground(COLORS.ROLE_ROW_BG);
+
+      // Apply italic + center to the ROLE data cells (Mon–Sun).
+      scheduleSheet
+        .getRange(roleRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
+        .setFontStyle("italic")
+        .setHorizontalAlignment("center");
+    }
   }
 
   // --- Borders between employee blocks ---
@@ -522,6 +586,41 @@ function applyStructuralFormatting(scheduleSheet, employeeCount) {
 
   // --- Auto fit only the day columns and total hours columns ---
   scheduleSheet.autoResizeColumns(WEEK_SHEET.COL_MONDAY, WEEK_SHEET.DAYS_IN_WEEK + 1);
+}
+
+
+// ---------------------------------------------------------------------------
+// Multi-Department Writer
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates and formats one schedule sheet per department from a multi-department run.
+ *
+ * This is the multi-department counterpart to the single-department writeAndFormatSchedule()
+ * call. It loops the Map returned by generateAllDepartmentSchedules() and delegates each
+ * department's data to writeAndFormatSchedule(), which handles all content writing and
+ * visual formatting for that sheet.
+ *
+ * Sheet names follow the pattern: Week_MM_DD_YY_DeptName
+ * (e.g., "Week_04_07_26_Morning", "Week_04_07_26_Drivers")
+ *
+ * @param {Map}  allDeptResults — Map<deptName → { weekGrid, employeeList, staffingRequirements }>
+ *                                Returned by generateAllDepartmentSchedules().
+ * @param {Date} weekStartDate  — The Monday of the week being written.
+ */
+function writeAllDepartmentSchedules_(allDeptResults, weekStartDate) {
+  allDeptResults.forEach(function(deptResult, deptKey) {
+    const sheetName     = generateDeptWeekSheetName(weekStartDate, deptKey);
+    const scheduleSheet = getOrCreateWeekSheet(sheetName);
+    writeAndFormatSchedule(
+      scheduleSheet,
+      deptResult.employeeList,
+      deptResult.weekGrid,
+      deptResult.staffingRequirements,
+      weekStartDate,
+      deptResult.displayName || deptKey  // show original name in the header, not the normalized key
+    );
+  });
 }
 
 

@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Reads shift definitions and staffing requirements from the Settings sheet.
- * VERSION: 1.0.0
+ * VERSION: 1.2.0
  *
  * This file is the only place in the codebase that reads from the Settings sheet.
  * Every other file that needs shift or staffing data calls a function from this file
@@ -46,8 +46,10 @@
  *     hasLunch:     {boolean} — true if this shift includes an unpaid 30-minute lunch break
  *   }
  */
-function buildShiftTimingMap() {
-  const settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.SETTINGS);
+function buildShiftTimingMap(settingsSheet) {
+  if (!settingsSheet) {
+    settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.SETTINGS);
+  }
 
   if (!settingsSheet) {
     throw new Error(
@@ -155,8 +157,10 @@ function buildShiftTimingMap() {
  * @returns {Object} A map of day name → minimum staff count, e.g.:
  *   { "Monday": 6, "Tuesday": 6, "Wednesday": 5, ..., "Sunday": 4 }
  */
-function loadStaffingRequirements() {
-  const settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.SETTINGS);
+function loadStaffingRequirements(settingsSheet) {
+  if (!settingsSheet) {
+    settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.SETTINGS);
+  }
 
   if (!settingsSheet) {
     throw new Error("Settings sheet not found. Run \"Setup Sheets\" from the Schedule Admin menu.");
@@ -169,15 +173,22 @@ function loadStaffingRequirements() {
   const staffingRequirements = {};
 
   rawRequirementsRows.forEach(function (row) {
-    const dayName = row[0];
-    const minimumStaff = row[1];
+    const dayName     = row[0];
+    const targetValue = row[1];
+    const modeRaw     = (row[2] || "").toString().trim();
 
     // Skip blank rows in case the table range includes empty cells at the bottom.
-    if (!dayName || minimumStaff === "" || minimumStaff === null) {
+    if (!dayName || targetValue === "" || targetValue === null) {
       return;
     }
 
-    staffingRequirements[dayName.toString().trim()] = Number(minimumStaff);
+    // Normalise mode: accept "Hours"/"hours" → HOURS, anything else → COUNT (default).
+    const mode = modeRaw.toLowerCase() === "hours" ? STAFFING_MODE.HOURS : STAFFING_MODE.COUNT;
+
+    staffingRequirements[dayName.toString().trim()] = {
+      value: Number(targetValue),
+      mode:  mode,
+    };
   });
 
   // Warn if any of the seven days is missing from the staffing requirements.
@@ -189,9 +200,7 @@ function loadStaffingRequirements() {
         "WARNING: No staffing requirement found for \"" + dayName + "\" in the Settings sheet. " +
         "The engine will treat this day as requiring 0 staff. Add a row for this day."
       );
-      // Default to 0 rather than leaving it undefined, which would cause a NaN
-      // comparison later when the engine checks (staffingRequirements[day] > 0).
-      staffingRequirements[dayName] = 0;
+      staffingRequirements[dayName] = { value: 0, mode: STAFFING_MODE.COUNT };
     }
   });
 
@@ -208,8 +217,10 @@ function loadStaffingRequirements() {
  *
  * @returns {Array<string>} Unique shift names, in the order they first appear in Settings.
  */
-function readShiftNamesFromSettings() {
-  const settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.SETTINGS);
+function readShiftNamesFromSettings(settingsSheet) {
+  if (!settingsSheet) {
+    settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.SETTINGS);
+  }
 
   if (!settingsSheet) {
     return [];
@@ -229,6 +240,135 @@ function readShiftNamesFromSettings() {
   });
 
   return Array.from(uniqueShiftNames);
+}
+
+
+// ---------------------------------------------------------------------------
+// Multi-Department Settings Loaders
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the Departments tab and returns an array of active department entries.
+ *
+ * The Departments tab layout (one row per department, row 1 = headers):
+ *   A — Department name (must match the Department column on the Roster sheet)
+ *   B — Settings tab name (e.g., "Settings_Morning")
+ *   C — Active flag (TRUE to include in generation, FALSE to skip)
+ *   D — Header accent color (hex, e.g., "#4A90D9") — optional, falls back to COLORS.HEADER_BG
+ *
+ * @returns {Array<{ name, settingsTabName, active, accentColor }>}
+ *   Empty array if the Departments tab does not exist (single-dept mode).
+ */
+function readDepartmentList_() {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const deptsSheet = workbook.getSheetByName(SHEET_NAMES.DEPARTMENTS);
+
+  if (!deptsSheet) {
+    return []; // Departments tab missing — caller falls back to single-dept mode
+  }
+
+  const lastRow = deptsSheet.getLastRow();
+  if (lastRow < 2) return []; // header-only or empty
+
+  const rows = deptsSheet.getRange(2, 1, lastRow - 1, 4).getValues();
+  const departments = [];
+
+  rows.forEach(function (row) {
+    const name          = (row[0] || '').toString().trim();
+    const settingsTab   = (row[1] || '').toString().trim();
+    const activeFlag    = row[2];
+    const accentColor   = (row[3] || '').toString().trim() || COLORS.HEADER_BG;
+
+    if (!name || !settingsTab) return; // blank row
+
+    const isActive = (activeFlag === true || activeFlag === 'TRUE' || activeFlag === 'true');
+
+    departments.push({
+      name:            normalizeDeptName_(name), // canonical key used for all internal matching
+      displayName:     name,                     // original text — used for headers and sheet names
+      settingsTabName: settingsTab,
+      active:          isActive,
+      accentColor:     accentColor,
+    });
+  });
+
+  return departments;
+}
+
+
+/**
+ * Loads shift timing map and staffing requirements for a single department entry.
+ *
+ * @param {{ name, settingsTabName }} departmentEntry — One entry from readDepartmentList_()
+ * @returns {{ shiftTimingMap, staffingRequirements }}
+ * @throws {Error} if the Settings tab for this department cannot be found
+ */
+function loadSettingsForDepartment_(departmentEntry) {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = workbook.getSheetByName(departmentEntry.settingsTabName);
+
+  if (!sheet) {
+    throw new Error(
+      "Settings tab \"" + departmentEntry.settingsTabName + "\" not found for department \"" +
+      departmentEntry.name + "\". Create this tab or run \"Setup Department Settings\" from the menu."
+    );
+  }
+
+  return {
+    shiftTimingMap:        buildShiftTimingMap(sheet),
+    staffingRequirements:  loadStaffingRequirements(sheet),
+  };
+}
+
+
+/**
+ * Loads settings for all active departments listed in the Departments tab.
+ *
+ * Returns a Map so callers can look up settings by department name in O(1).
+ * If the Departments tab does not exist, returns null — the caller must fall
+ * back to single-department mode using the existing Settings tab.
+ *
+ * @returns {Map<string, { shiftTimingMap, staffingRequirements, accentColor }> | null}
+ */
+function loadAllDepartmentSettings() {
+  const departments = readDepartmentList_();
+
+  if (departments.length === 0) {
+    return null; // No Departments tab or empty — single-dept fallback
+  }
+
+  const settingsMap = new Map();
+
+  departments.forEach(function (dept) {
+    if (!dept.active) {
+      console.log('settingsManager: Skipping inactive department "' + dept.name + '".');
+      return;
+    }
+
+    try {
+      const settings = loadSettingsForDepartment_(dept);
+      settingsMap.set(dept.name, {
+        shiftTimingMap:       settings.shiftTimingMap,
+        staffingRequirements: settings.staffingRequirements,
+        accentColor:          dept.accentColor,
+        settingsTabName:      dept.settingsTabName,
+        displayName:          dept.displayName, // original name for headers/sheet names
+      });
+      console.log('settingsManager: Loaded settings for "' + dept.name + '" (' + dept.settingsTabName + ').');
+    } catch (error) {
+      // Log and skip rather than aborting the entire multi-dept run over one bad Settings tab.
+      console.error('settingsManager: Failed to load settings for "' + dept.name + '" — ' + error.message);
+    }
+  });
+
+  if (settingsMap.size === 0) {
+    throw new Error(
+      "No valid department settings could be loaded. Check that at least one department " +
+      "in the Departments tab is Active and has a valid Settings tab."
+    );
+  }
+
+  return settingsMap;
 }
 
 

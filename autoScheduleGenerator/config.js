@@ -1,6 +1,6 @@
 /**
  * config.js — Central configuration constants for the Auto Schedule Generator.
- * VERSION: 1.0.0
+ * VERSION: 1.2.0
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule in the system. Nothing in any other file should hard-code a
@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 
 /**
- * The canonical names for every sheet tab in the workbook.
+ * The names for every sheet tab in the workbook.
  *
  * Using a central map instead of string literals scattered across files means
  * a sheet rename requires changing exactly one value here rather than hunting
@@ -31,7 +31,16 @@ const SHEET_NAMES = {
   INGESTION: "Ingestion",
   ROSTER: "Roster",
   SETTINGS: "Settings",
+  DEPARTMENTS: "Departments",
 };
+
+/**
+ * Prefix used when naming per-department Settings tabs.
+ * e.g. "Settings_Morning", "Settings_Drivers"
+ * The Departments tab (column B) stores the full tab name; this prefix is
+ * used by the setup helper when creating new Settings tabs from a template.
+ */
+const SETTINGS_SHEET_PREFIX = "Settings_";
 
 
 // ---------------------------------------------------------------------------
@@ -56,6 +65,9 @@ const ROSTER_COLUMN = {
   QUALIFIED_SHIFTS: 8,  // H — Comma-separated list of shift names this employee is trained to work
   VACATION_DATES: 9,  // I — Comma-separated vacation dates (YYYY-MM-DD or MM/DD format)
   SENIORITY_RANK: 10, // J — Calculated by the script; do not edit manually
+  DEPARTMENT: 11,           // K — Primary department name; must match column A of the Departments tab
+  QUALIFIED_DEPARTMENTS: 12, // L — Comma-separated list of other departments this employee can float to
+  PRIMARY_ROLE: 13,          // M — Role displayed on working days (e.g., "Cashier", "SCO", "PreScan")
 };
 
 /**
@@ -78,8 +90,21 @@ const ROSTER_DATA_START_ROW = 2;
  * If you need to add more shift rows, increase the end row of SHIFT_DEFINITIONS_TABLE.
  */
 const SETTINGS_RANGE = {
-  STAFFING_REQUIREMENTS_TABLE: "A2:B8",   // 7 rows, one per day of the week
+  STAFFING_REQUIREMENTS_TABLE: "A2:C8",   // 7 rows, one per day; col C = staffing mode
   SHIFT_DEFINITIONS_TABLE: "D2:I50",  // Up to 49 shift rows; expand if needed
+};
+
+/**
+ * Valid values for the staffing mode column (column C) of the staffing requirements table.
+ *
+ * COUNT — minimum number of employees who must be scheduled on that day (default).
+ * HOURS — minimum total paid hours across all scheduled employees on that day.
+ *
+ * If column C is blank the engine defaults to COUNT for backward compatibility.
+ */
+const STAFFING_MODE = {
+  COUNT: "Count",
+  HOURS: "Hours",
 };
 
 /**
@@ -133,10 +158,11 @@ const WEEK_SHEET = {
   COL_SUNDAY: 9,  // I
   COL_TOTAL_HOURS: 10, // J — Weekly paid hours total, written by the script (not a formula)
 
-  ROWS_PER_EMPLOYEE: 3,  // VAC + RDO + SHIFT
-  ROW_OFFSET_VAC: 0,  // Offset from the employee block start row for the VAC row
-  ROW_OFFSET_RDO: 1,  // Offset from the employee block start row for the RDO row
-  ROW_OFFSET_SHIFT: 2,  // Offset from the employee block start row for the SHIFT row
+  ROWS_PER_EMPLOYEE: 4,  // VAC + RDO + SHIFT + ROLE
+  ROW_OFFSET_VAC: 0,   // Offset from the employee block start row for the VAC row
+  ROW_OFFSET_RDO: 1,   // Offset from the employee block start row for the RDO row
+  ROW_OFFSET_SHIFT: 2, // Offset from the employee block start row for the SHIFT row
+  ROW_OFFSET_ROLE: 3,  // Offset from the employee block start row for the ROLE row
 
   DAYS_IN_WEEK: 7,   // Monday through Sunday
 };
@@ -257,9 +283,10 @@ const SENIORITY = {
  * Slot index calculation: Math.floor((minutesSinceMidnight - COVERAGE_START_MINUTE) / SLOT_DURATION_MINUTES)
  */
 const COVERAGE = {
-  SLOT_COUNT: 39,  // Number of 30-minute windows in the coverage day (04:00–23:30)
+  SLOT_COUNT: 78,  // Number of 15-minute windows in the coverage day (04:00–23:45)
   COVERAGE_START_MINUTE: 240, // 04:00 expressed as minutes since midnight (4 * 60 = 240)
-  SLOT_DURATION_MINUTES: 30,  // Each slot represents 30 minutes of clock time
+  SLOT_DURATION_MINUTES: 15,  // Each slot represents 15 minutes of clock time; finer resolution
+  // allows stagger detection and prevents break clustering
 };
 
 // ---------------------------------------------------------------------------
@@ -321,7 +348,64 @@ const COLORS = {
   HEADER_TEXT: "#FFFFFF", // White — column header row text
   SUMMARY_OK: "#B7E1CD", // Light green — STATUS row cell when coverage is met
   SUMMARY_UNDER: "#F4C7C3", // Light red — STATUS row cell when coverage is short
-  ROW_LABEL_BG: "#F5F5F5", // Light gray — VAC/RDO/SHIFT label column background
+  ROW_LABEL_BG: "#F5F5F5", // Light gray — VAC/RDO/SHIFT/ROLE label column background
+  ROLE_ROW_BG: "#D9D2E9",  // Lavender — ROLE row cell background (distinguishes role from shift time)
+  ALT_EMPLOYEE_BG: "#F8F8FF", // Near-white — alternating employee name band for horizontal readability
+};
+
+
+// ---------------------------------------------------------------------------
+// Role Colors
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-role background colors for the ROLE row in generated schedule sheets.
+ *
+ * Each role name maps to a hex color. Supervisors can scan the ROLE row to see
+ * at a glance who is doing what each day without reading every cell.
+ * Any role not listed here falls back to COLORS.ROLE_ROW_BG (lavender).
+ *
+ * These are distinct enough for color vision but also pair well with the
+ * dark italic text used in the ROLE row.
+ */
+const ROLE_COLORS = {
+  "Cashier": "#CFE2F3", // Light blue
+  "SCO": "#D9EAD3", // Light green
+  "PreScan": "#FFF2CC", // Light yellow
+  "Carts": "#FCE5CD", // Light orange
+  "Assist": "#EAD1DC", // Light pink
+  "Go Backs": "#D0E0E3", // Light teal
+  "Floater": "#E6B8A2", // Warm tan
+  "Con": "#B4A7D6", // Soft purple
+  "Liquor": "#A2C4C9", // Dusty blue
+  "Free": "#FFFFFF", // White — unassigned/flexible
+  "Door": "#C9DAF8", // Pale periwinkle
+  "Walks": "#D9EAD3", // Same green as SCO (both are floor-presence roles)
+  "Exit Door": "#B6D7A8", // Deeper green
+};
+
+
+// ---------------------------------------------------------------------------
+// Role Rules (per-department coverage constraints)
+// ---------------------------------------------------------------------------
+
+/**
+ * Optional role coverage constraints applied during Phase 4 role assignment.
+ *
+ * Each key is a role name. The value defines how many supporting employees of
+ * a specified role are required for each employee holding the key role.
+ *
+ * Example: "Cashier" requires 1 "Assist" per cashier per day. After primary
+ * roles are assigned, Phase 4 scans each day: if cashier count > assist count,
+ * the most-junior unassigned-role employee is reassigned to "Assist" until
+ * the ratio is satisfied.
+ *
+ * Leave this object empty ({}) to disable ratio enforcement globally.
+ * Per-department enforcement is controlled by the Departments tab (column E):
+ * set the department's "Role Rules" cell to the role name to apply, or leave blank.
+ */
+const ROLE_RULES = {
+  "Cashier": { requiresRole: "Assist", ratio: 1 },
 };
 
 
@@ -336,6 +420,37 @@ const COLORS = {
  * only this object needs to be updated rather than searching through rosterIngestion.js
  * for hard-coded cell addresses.
  */
+// ---------------------------------------------------------------------------
+// Department Name Normalization
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts a department name to a canonical lowercase snake_case key for internal lookups.
+ *
+ * This means managers can type "Full Time Cashier", "full time cashier", or
+ * "Full_Time_Cashier" in either the Departments tab or the Roster — all three
+ * resolve to the same key "full_time_cashier" and match each other correctly.
+ *
+ * The original (un-normalized) display name is preserved separately where needed
+ * for headers and sheet names that humans read. This function is only used at
+ * data-read boundaries (loadRosterSortedBySeniority, readDepartmentList_) so
+ * normalization happens once and the rest of the codebase never sees raw strings.
+ *
+ * @param {string} name — Raw department name from a cell or sheet name.
+ * @returns {string} Normalized key (e.g., "Full Time Cashier" → "full_time_cashier").
+ */
+function normalizeDeptName_(name) {
+  return name
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-\/\\]+/g, '_')   // spaces, hyphens, slashes → underscore
+    .replace(/[^a-z0-9_]/g, '')     // strip any remaining special characters
+    .replace(/_+/g, '_')            // collapse consecutive underscores
+    .replace(/^_|_$/g, '');         // strip leading/trailing underscores
+}
+
+
 const INGESTION_CELL = {
   SOURCE_SPREADSHEET_ID: "B3", // Where the manager types the source spreadsheet ID
   DEPARTMENT: "B4", // Dropdown for the selected department

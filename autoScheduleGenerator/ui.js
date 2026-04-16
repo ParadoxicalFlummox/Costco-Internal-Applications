@@ -1,6 +1,6 @@
 /**
  * ui.js — Google Apps Script triggers, custom menu, and generation orchestrators.
- * VERSION: 1.0.0
+ * VERSION: 1.2.0
  *
  * This file is the entry point for all user-initiated actions. It contains:
  *   - onOpen():  Creates the "Schedule Admin" menu when the spreadsheet opens.
@@ -45,9 +45,10 @@ function onOpen() {
       { name: "Sync Shift Dropdowns", functionName: "menuSyncShiftDropdowns" },
       { name: "Load Departments", functionName: "menuLoadDepartments" },
       null, // Separator line
-      { name: "GENERATE SCHEDULE (3 weeks)", functionName: "menuGenerateScheduleDraft" },
-      { name: "GENERATE SCHEDULE (1 week)", functionName: "menuGenerateSingleWeek" },
+      { name: "GENERATE (1 week)", functionName: "menuGenerate1Week" },
+      { name: "GENERATE (3 weeks)", functionName: "menuGenerate3Weeks" },
       null, // Separator line
+      { name: "Setup Department Settings Tab", functionName: "menuSetupDeptSettings" },
       { name: "Setup Sheets (First Run Only)", functionName: "menuSetupAllSheets" },
     ]);
 }
@@ -239,27 +240,6 @@ function menuLoadDepartments() {
 }
 
 
-/**
- * Triggered by: Schedule Admin → GENERATE SCHEDULE (3 weeks)
- *
- * Opens the date picker dialog. Generation is kicked off by the dialog itself via
- * google.script.run once the manager confirms a date — this function returns
- * immediately after showing the dialog.
- */
-function menuGenerateScheduleDraft() {
-  showDatePickerDialog(3);
-}
-
-
-/**
- * Triggered by: Schedule Admin → GENERATE SCHEDULE (1 week)
- *
- * Opens the date picker dialog for a single week. Same async pattern as the
- * 3-week handler — the dialog calls receiveSelectedDateAndGenerate() directly.
- */
-function menuGenerateSingleWeek() {
-  showDatePickerDialog(1);
-}
 
 
 /**
@@ -279,109 +259,142 @@ function menuSetupAllSheets() {
 }
 
 
+/**
+ * Triggered by: Schedule Admin → GENERATE (1 week)
+ */
+function menuGenerate1Week() {
+  menuGenerateAllDeptsForWeekCount_(1);
+}
+
+
+/**
+ * Triggered by: Schedule Admin → GENERATE (3 weeks)
+ */
+function menuGenerate3Weeks() {
+  menuGenerateAllDeptsForWeekCount_(3);
+}
+
+
+/**
+ * Shared implementation for both generation menu items.
+ *
+ * Guards that the Departments tab exists before opening the date picker.
+ * If the tab is missing, prompts the manager to run Setup Sheets first —
+ * Setup Sheets now auto-creates the Departments tab with a template.
+ *
+ * @param {number} weekCount — 1 or 3.
+ */
+function menuGenerateAllDeptsForWeekCount_(weekCount) {
+  const departmentsSheet = SpreadsheetApp.getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAMES.DEPARTMENTS);
+
+  if (!departmentsSheet) {
+    SpreadsheetApp.getUi().alert(
+      "Departments Tab Missing",
+      "No \"" + SHEET_NAMES.DEPARTMENTS + "\" tab was found.\n\n" +
+      "Run Schedule Admin \u2192 Setup Sheets (First Run Only) to create it, " +
+      "then add your departments and use Setup Department Settings Tab to create per-department Settings tabs.",
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return;
+  }
+
+  showAllDeptsDatePickerDialog(weekCount);
+}
+
+
+/**
+ * Triggered by: Schedule Admin → Setup Department Settings Tab
+ *
+ * Prompts the manager for a department name and creates a Settings_{dept} tab
+ * pre-populated with the standard shift template. Safe to run multiple times —
+ * if the tab already exists, the manager is notified rather than overwriting it.
+ */
+function menuSetupDeptSettings() {
+  const userInterface = SpreadsheetApp.getUi();
+  const response = userInterface.prompt(
+    "Setup Department Settings Tab",
+    "Enter the department name (e.g., Morning, Drivers/Merch, Full Time Cashier):",
+    userInterface.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== userInterface.Button.OK) {
+    return;
+  }
+
+  const departmentName = response.getResponseText().trim();
+  if (!departmentName) {
+    userInterface.alert("Setup Cancelled", "Department name cannot be blank.", userInterface.ButtonSet.OK);
+    return;
+  }
+
+  const tabName = SETTINGS_SHEET_PREFIX + departmentName;
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (workbook.getSheetByName(tabName)) {
+    userInterface.alert(
+      "Tab Already Exists",
+      "\"" + tabName + "\" already exists. No changes were made.\n\n" +
+      "Edit that tab directly to update shift definitions or staffing requirements.",
+      userInterface.ButtonSet.OK
+    );
+    return;
+  }
+
+  const newSettingsSheet = workbook.insertSheet(tabName);
+  setupSettingsSheetTemplate(newSettingsSheet);
+
+  workbook.toast(
+    "\"" + tabName + "\" created with a default shift template.\n" +
+    "Edit the shift definitions and staffing requirements to match this department.\n\n" +
+    "Then add \"" + departmentName + "\" to the Departments tab (col A) with \"" + tabName + "\" in col B and TRUE in col C.",
+    "Setup Complete",
+    10
+  );
+}
+
+
 // ---------------------------------------------------------------------------
 // Generation Orchestrators
 // ---------------------------------------------------------------------------
 
 /**
- * Shows a styled date picker dialog and returns immediately.
+ * Shows a date picker dialog for schedule generation.
  *
- * @param {number} weekCount — 1 for single-week generation, 3 for three-week generation.
+ * @param {number} weekCount — 1 for single week, 3 for three consecutive weeks.
  */
-function showDatePickerDialog(weekCount) {
-  // Pre-calculate the current Monday on the server side so it can be embedded in
-  // the HTML as the default date value. input[type="date"] requires YYYY-MM-DD format.
+function showAllDeptsDatePickerDialog(weekCount) {
   const currentMonday = getMondayOfCurrentWeek();
   const defaultDateValue = Utilities.formatDate(
     currentMonday, Session.getScriptTimeZone(), "yyyy-MM-dd"
   );
 
-  const dialogTitle = weekCount === 3
-    ? "Generate 3-Week Schedule"
-    : "Generate Single-Week Schedule";
-
-  // The weekCount is embedded directly into the HTML so the dialog can pass it back
-  // to receiveSelectedDateAndGenerate() without any additional state management.
   const htmlOutput = HtmlService.createHtmlOutput(`
     <!DOCTYPE html>
     <html>
       <head>
         <base target="_top">
         <style>
-          body {
-            font-family: "Google Sans", Arial, sans-serif;
-            font-size: 13px;
-            color: #202124;
-            margin: 0;
-            padding: 20px 24px 16px;
-          }
-          label {
-            display: block;
-            font-weight: 500;
-            margin-bottom: 8px;
-          }
-          input[type="date"] {
-            width: 100%;
-            padding: 8px 10px;
-            border: 1px solid #dadce0;
-            border-radius: 4px;
-            font-size: 13px;
-            box-sizing: border-box;
-            outline: none;
-            transition: border-color 0.15s;
-          }
-          input[type="date"]:focus {
-            border-color: #1a73e8;
-          }
-          .hint {
-            font-size: 11px;
-            color: #5f6368;
-            margin-top: 5px;
-            margin-bottom: 16px;
-          }
-          .button-row {
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-            margin-top: 4px;
-          }
-          button {
-            padding: 8px 18px;
-            font-size: 13px;
-            font-family: inherit;
-            border-radius: 4px;
-            cursor: pointer;
-            border: 1px solid transparent;
-          }
-          #cancelBtn {
-            background: #fff;
-            color: #1a73e8;
-            border-color: #dadce0;
-          }
+          body { font-family: "Google Sans", Arial, sans-serif; font-size: 13px; color: #202124; margin: 0; padding: 20px 24px 16px; }
+          label { display: block; font-weight: 500; margin-bottom: 8px; }
+          input[type="date"] { width: 100%; padding: 8px 10px; border: 1px solid #dadce0; border-radius: 4px; font-size: 13px; box-sizing: border-box; outline: none; transition: border-color 0.15s; }
+          input[type="date"]:focus { border-color: #1a73e8; }
+          .hint { font-size: 11px; color: #5f6368; margin-top: 5px; margin-bottom: 16px; }
+          .button-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+          button { padding: 8px 18px; font-size: 13px; font-family: inherit; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+          #cancelBtn { background: #fff; color: #1a73e8; border-color: #dadce0; }
           #cancelBtn:hover { background: #f1f3f4; }
-          #okBtn {
-            background: #1a73e8;
-            color: #fff;
-          }
+          #okBtn { background: #1a73e8; color: #fff; }
           #okBtn:hover { background: #1765cc; }
-          #okBtn:disabled {
-            background: #dadce0;
-            color: #80868b;
-            cursor: default;
-          }
-          #statusMsg {
-            font-size: 12px;
-            color: #d93025;
-            min-height: 16px;
-            margin-top: 10px;
-          }
+          #okBtn:disabled { background: #dadce0; color: #80868b; cursor: default; }
+          #statusMsg { font-size: 12px; color: #d93025; min-height: 16px; margin-top: 10px; }
           #statusMsg.info { color: #5f6368; }
         </style>
       </head>
       <body>
         <label for="dateInput">Starting Monday:</label>
         <input type="date" id="dateInput" value="${defaultDateValue}">
-        <p class="hint">If you pick a non-Monday, the schedule will snap to that week's Monday.</p>
+        <p class="hint">Generates one schedule tab per active department${weekCount === 3 ? " for 3 consecutive weeks" : ""}. If you pick a non-Monday, the schedule will snap to that week's Monday.</p>
         <div id="statusMsg"></div>
         <div class="button-row">
           <button type="button" id="cancelBtn" onclick="google.script.host.close()">Cancel</button>
@@ -390,186 +403,107 @@ function showDatePickerDialog(weekCount) {
         <script>
           function submitDate() {
             const dateValue = document.getElementById('dateInput').value;
-            if (!dateValue) {
-              showStatus('Please select a date before generating.', false);
-              return;
-            }
-            // Disable the button and show a working state so the manager knows
-            // the request is being processed. Generation can take several seconds.
+            if (!dateValue) { showStatus('Please select a date before generating.', false); return; }
             document.getElementById('okBtn').disabled = true;
             document.getElementById('okBtn').textContent = 'Generating\u2026';
             showStatus('Starting \u2014 this may take a moment.', true);
-
             google.script.run
-              .withSuccessHandler(function() {
-                google.script.host.close();
-              })
+              .withSuccessHandler(function() { google.script.host.close(); })
               .withFailureHandler(function(error) {
                 document.getElementById('okBtn').disabled = false;
                 document.getElementById('okBtn').textContent = 'Generate';
                 showStatus('Error: ' + error.message, false);
               })
-              .receiveSelectedDateAndGenerate(dateValue, ${weekCount});
+              .receiveAllDeptsDateAndGenerate(dateValue, ${weekCount});
           }
-
           function showStatus(message, isInfo) {
-            const el = document.getElementById('statusMsg');
-            el.textContent = message;
-            el.className = isInfo ? 'info' : '';
+            const element = document.getElementById('statusMsg');
+            element.textContent = message;
+            element.className = isInfo ? 'info' : '';
           }
         </script>
       </body>
     </html>
   `)
-  .setWidth(340)
-  .setHeight(230);
+  .setWidth(360)
+  .setHeight(240);
 
+  const dialogTitle = weekCount === 3 ? "Generate (3 Weeks)" : "Generate (1 Week)";
   SpreadsheetApp.getUi().showModalDialog(htmlOutput, dialogTitle);
 }
 
 
 /**
- * Called by the date picker dialog via google.script.run when the manager clicks Generate.
+ * Called by the date picker dialog via google.script.run.
  *
- * Parses the date string returned by input[type="date"] (always "YYYY-MM-DD"),
- * snaps it to the Monday of that week if it is not already a Monday, then
- * calls the appropriate generation orchestrator.
- *
- * WHY MANUAL DATE PARSING:
- * new Date("2026-04-07") is parsed as UTC midnight, which when converted to the
- * script's local timezone may roll back to the previous day. Parsing the parts
- * manually and passing them to new Date(year, month, day) uses local time,
- * which matches what the manager expects to see.
+ * Parses and snaps the date to Monday, then generates all active departments for
+ * each requested week. Produces weekCount × deptCount schedule sheets in one run.
  *
  * @param {string} dateString — A date string in "YYYY-MM-DD" format from the date picker.
- * @param {number} weekCount — 1 for single-week generation, 3 for three-week generation.
+ * @param {number} weekCount  — 1 for a single week, 3 for three consecutive weeks.
  */
-function receiveSelectedDateAndGenerate(dateString, weekCount) {
-  // Split manually to avoid the UTC-vs-local ambiguity described above.
+function receiveAllDeptsDateAndGenerate(dateString, weekCount) {
   const parts = dateString.split("-");
   const year  = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10) - 1; // JS Date months are 0-indexed
+  const month = parseInt(parts[1], 10) - 1;
   const day   = parseInt(parts[2], 10);
 
-  const selectedDate = new Date(year, month, day);
-  selectedDate.setHours(0, 0, 0, 0);
+  const firstMonday = new Date(year, month, day);
+  firstMonday.setHours(0, 0, 0, 0);
 
-  // Snap to Monday if the manager picked a different day of the week.
-  // 0 = Sunday needs to go back 6; anything else goes back (dayOfWeek - 1).
-  const dayOfWeek = selectedDate.getDay();
+  // Snap to Monday.
+  const dayOfWeek = firstMonday.getDay();
   if (dayOfWeek !== 1) {
     const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    selectedDate.setDate(selectedDate.getDate() - daysToSubtract);
+    firstMonday.setDate(firstMonday.getDate() - daysToSubtract);
   }
 
-  // Run the preflight before touching any sheets.
-  // Throws on blocking errors (empty roster, missing shifts) — the date picker's
-  // withFailureHandler catches these and shows them in red without closing the dialog.
-  // Returns an array of non-blocking warnings (bad shift names, unreadable vacation dates).
-  const preflightWarnings = runPreGenerationPreflight(selectedDate);
-
-  // Surface warnings before generation starts so the manager can choose to fix them.
-  // The dialog stays open showing "Generating…" in the background while this alert is visible;
-  // when the manager dismisses it, generation resumes and the dialog closes on completion.
+  // Run preflight once before any week is generated.
+  // Blocking errors throw and are caught by the dialog's withFailureHandler.
+  // Warnings are shown in a confirm dialog — manager can proceed or cancel.
+  const preflightWarnings = runPreGenerationPreflight(firstMonday);
   if (preflightWarnings.length > 0) {
-    SpreadsheetApp.getUi().alert(
-      "Warnings (" + preflightWarnings.length + ") — Generation will proceed",
-      "The schedule will be generated, but the following issues may cause affected " +
-      "employees to be scheduled incorrectly. Fix them and re-generate to resolve:\n\n• " +
-      preflightWarnings.join("\n\n• "),
-      SpreadsheetApp.getUi().ButtonSet.OK
+    const warningText =
+      "The following issues were found. Generation will still run, but these employees " +
+      "may be scheduled incorrectly or skipped entirely.\n\n" +
+      preflightWarnings.map(function(w, i) { return (i + 1) + ". " + w; }).join("\n\n") +
+      "\n\nClick OK to proceed anyway, or Cancel to fix these issues first.";
+    const response = SpreadsheetApp.getUi().alert(
+      "Pre-flight Warnings (" + preflightWarnings.length + ")",
+      warningText,
+      SpreadsheetApp.getUi().ButtonSet.OK_CANCEL
     );
+    if (response !== SpreadsheetApp.getUi().Button.OK) {
+      return; // Manager chose to fix issues before generating.
+    }
   }
 
-  if (weekCount === 3) {
-    orchestrateMultiWeekGeneration(selectedDate);
-  } else {
-    const sheetName = orchestrateSingleWeekGeneration(selectedDate);
-    SpreadsheetApp.getActiveSpreadsheet().toast(
-      "Schedule generated: " + sheetName, "Generation Complete", 6
-    );
-  }
-}
+  let totalSheetsGenerated = 0;
 
+  for (let weekOffset = 0; weekOffset < weekCount; weekOffset++) {
+    const weekStartDate = new Date(firstMonday);
+    weekStartDate.setDate(firstMonday.getDate() + (weekOffset * 7));
 
-/**
- * Generates and formats three consecutive weekly schedule sheets starting from the given Monday.
- *
- * Each week is generated completely independently — the grid for week 2 is built fresh
- * from the Roster sheet, not derived from week 1's output. This means:
- *   - Vacation dates are checked against each week's date range independently.
- *   - RDO preferences are re-evaluated each week from scratch.
- *   - Hour rules are enforced per-week, not across weeks.
- *   - Managers can re-generate a single week without affecting the others.
- *
- * @param {Date} startingMondayDate — The Monday of the first week to generate.
- */
-function orchestrateMultiWeekGeneration(startingMondayDate) {
-  const generatedSheetNames = [];
+    const allDeptResults = generateAllDepartmentSchedules(weekStartDate);
 
-  // Generate three consecutive weeks by incrementing the start date by 7 days each time.
-  for (let weekOffset = 0; weekOffset < 3; weekOffset++) {
-    const weekStartDate = new Date(startingMondayDate);
-    weekStartDate.setDate(startingMondayDate.getDate() + (weekOffset * 7));
+    if (!allDeptResults || allDeptResults.size === 0) {
+      throw new Error(
+        "No departments were generated for week starting " + weekStartDate.toDateString() + ". " +
+        "Check that the Departments tab has at least one active row (column C = TRUE) " +
+        "and that each department's employees have a matching Department value on the Roster."
+      );
+    }
 
-    const sheetName = orchestrateSingleWeekGeneration(weekStartDate);
-    generatedSheetNames.push(sheetName);
+    writeAllDepartmentSchedules_(allDeptResults, weekStartDate);
+    totalSheetsGenerated += allDeptResults.size;
   }
 
-  // Show a completion toast listing all three generated sheet names.
   SpreadsheetApp.getActiveSpreadsheet().toast(
-    "Three schedule drafts generated:\n" + generatedSheetNames.join("\n"),
+    totalSheetsGenerated + " schedule sheet" + (totalSheetsGenerated === 1 ? "" : "s") + " generated" +
+    (weekCount > 1 ? " across " + weekCount + " weeks" : "") + ".",
     "Generation Complete",
-    10
+    8
   );
-}
-
-
-/**
- * Generates and formats a single weekly schedule sheet for the given Monday.
- *
- * This function coordinates the engine and formatter:
- *   1. Calls generateWeeklySchedule() to run the 4-phase algorithm.
- *   2. Gets or creates the target sheet.
- *   3. Calls writeAndFormatSchedule() to write the grid to the sheet.
- *
- * It contains no scheduling or formatting logic — those live in scheduleEngine.js
- * and formatter.js respectively.
- *
- * @param {Date} weekStartDate — The Monday of the week to generate.
- * @returns {string} The name of the generated sheet (e.g., "Week_04_07_26").
- */
-function orchestrateSingleWeekGeneration(weekStartDate) {
-  // Read the department name from the Ingestion sheet to display in the schedule header.
-  const departmentName = getDepartmentNameForHeader();
-
-  // Run the 4-phase generation algorithm. This produces a pure JavaScript data
-  // structure (the WeekGrid) without touching any sheet.
-  const generationResult = generateWeeklySchedule(weekStartDate);
-
-  // Get the target sheet (create it if it does not exist, reuse if it does).
-  const scheduleSheet = getOrCreateWeekSheet(generationResult.weekSheetName);
-
-  // Load staffing requirements for writing the summary footer and for passing to the formatter.
-  const staffingRequirements = loadStaffingRequirements();
-
-  // Write the grid to the sheet and apply all visual formatting.
-  writeAndFormatSchedule(
-    scheduleSheet,
-    generationResult.employeeList,
-    generationResult.weekGrid,
-    staffingRequirements,
-    weekStartDate,
-    departmentName
-  );
-
-  // Remove vacation dates from the Roster that fall within this week now that the
-  // schedule has been generated and those dates have been applied. Dates in future
-  // weeks are left untouched so they will be processed when those weeks are generated.
-  // This runs after writeAndFormatSchedule so a failed write does not lose any dates.
-  removeProcessedVacationDates(weekStartDate);
-
-  return generationResult.weekSheetName;
 }
 
 
@@ -610,9 +544,17 @@ function resolveEntireWeek(weekSheet) {
       return;
     }
 
-    // Load settings — needed by the engine phases.
-    const shiftTimingMap = buildShiftTimingMap();
-    const staffingRequirements = loadStaffingRequirements();
+    // Determine which department this sheet belongs to by parsing the dept name from
+    // the sheet name suffix (format: "Week_MM_DD_YY_DeptName"). Then look up that
+    // department's Settings tab so the correct shifts and staffing requirements are used.
+    // Falls back to the base Settings tab if the sheet name has no dept suffix or if
+    // the department is not found in the Departments tab.
+    const sheetName = weekSheet.getName();
+    const deptNameFromSheet = parseDeptNameFromWeekSheetName_(sheetName);
+    const deptSettings = loadSettingsForResolve_(deptNameFromSheet);
+
+    const shiftTimingMap      = deptSettings.shiftTimingMap;
+    const staffingRequirements = deptSettings.staffingRequirements;
 
     // Initialize a fresh grid that reflects the manager's checkbox decisions.
     // The checkbox grid already has VAC cells locked (locked = true), so they
@@ -627,8 +569,8 @@ function resolveEntireWeek(weekSheet) {
     runPhaseTwoHourEnforcement(freshGrid, employeeList, shiftTimingMap);
     runPhaseThreeGapResolution(freshGrid, employeeList, shiftTimingMap, staffingRequirements);
 
-    // Re-write only the SHIFT rows and formatting.
-    const departmentName = getDepartmentNameForHeader();
+    // Department name for the header comes from the sheet name suffix (already parsed above).
+    const departmentName = deptNameFromSheet || getDepartmentNameForHeader();
 
     writeAndFormatSchedule(
       weekSheet,
@@ -674,12 +616,12 @@ function setupAllSheets() {
   }
   setupRosterSheetHeaders(rosterSheet);
 
-  // --- Settings sheet ---
-  let settingsSheet = workbook.getSheetByName(SHEET_NAMES.SETTINGS);
-  if (!settingsSheet) {
-    settingsSheet = workbook.insertSheet(SHEET_NAMES.SETTINGS);
+  // --- Departments tab ---
+  // Created automatically so managers never have to build it manually.
+  // If it already exists, leave it untouched (manager may have customised it).
+  if (!workbook.getSheetByName(SHEET_NAMES.DEPARTMENTS)) {
+    setupDepartmentsSheetTemplate_(workbook.insertSheet(SHEET_NAMES.DEPARTMENTS));
   }
-  setupSettingsSheetTemplate(settingsSheet);
 }
 
 
@@ -711,7 +653,10 @@ function setupRosterSheetHeaders(rosterSheet) {
     "Preferred Shift",
     "Qualified Shifts",
     "Vacation Dates",
-    "Seniority Rank"
+    "Seniority Rank",
+    "Department",
+    "Qualified Departments",
+    "Primary Role",
   ]];
 
   const headerRange = rosterSheet.getRange(1, 1, 1, headerValues[0].length);
@@ -734,12 +679,35 @@ function setupRosterSheetHeaders(rosterSheet) {
   rosterSheet.setColumnWidth(ROSTER_COLUMN.QUALIFIED_SHIFTS, 200);
   rosterSheet.setColumnWidth(ROSTER_COLUMN.VACATION_DATES, 200);
   rosterSheet.setColumnWidth(ROSTER_COLUMN.SENIORITY_RANK, 120);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.DEPARTMENT, 140);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.QUALIFIED_DEPARTMENTS, 200);
+  rosterSheet.setColumnWidth(ROSTER_COLUMN.PRIMARY_ROLE, 120);
 
   // Add a note to the Seniority Rank column header explaining it is script-managed.
   rosterSheet.getRange(1, ROSTER_COLUMN.SENIORITY_RANK).setNote(
     "This column is calculated and managed by the script.\n" +
     "Do not edit values here manually — they will be overwritten on the next Refresh Seniority run.\n\n" +
     "Higher number = more senior. Full-time employees always outrank part-time employees hired on the same date."
+  );
+
+  rosterSheet.getRange(1, ROSTER_COLUMN.DEPARTMENT).setNote(
+    "The department this employee belongs to.\n" +
+    "Must match a department name in column A of the Departments tab.\n" +
+    "Capitalization and spaces are normalized automatically, so 'Full Time Cashier',\n" +
+    "'full time cashier', and 'full_time_cashier' all resolve to the same department.\n" +
+    "Example: Morning, Drivers/Merch, Full Time Cashier"
+  );
+
+  rosterSheet.getRange(1, ROSTER_COLUMN.QUALIFIED_DEPARTMENTS).setNote(
+    "Comma-separated list of other departments this employee can float to when needed.\n" +
+    "Leave blank if the employee works in their primary department only.\n" +
+    "Example: Front End Assistants, Floater/Con"
+  );
+
+  rosterSheet.getRange(1, ROSTER_COLUMN.PRIMARY_ROLE).setNote(
+    "The role this employee is assigned on days they work.\n" +
+    "Shown in the ROLE row of the generated schedule.\n" +
+    "Example: Cashier, SCO, PreScan, Carts, Assist, Go Backs, Liquor"
   );
 }
 
@@ -752,26 +720,81 @@ function setupRosterSheetHeaders(rosterSheet) {
  *
  * @param {Sheet} settingsSheet — The Settings sheet object.
  */
+/**
+ * Writes the Departments tab template with headers and an example row.
+ *
+ * Column layout:
+ *   A — Department Name (must match employee Roster column K)
+ *   B — Settings Tab Name (e.g., "Settings_Morning")
+ *   C — Active (TRUE/FALSE)
+ *   D — Header Accent Color (hex, optional)
+ *
+ * @param {Sheet} deptsSheet — The freshly-created Departments sheet.
+ */
+function setupDepartmentsSheetTemplate_(deptsSheet) {
+  const headers = [["Department Name", "Settings Tab Name", "Active", "Accent Color (optional)"]];
+  const exampleRow = [["My Department", "Settings_MyDepartment", "TRUE", ""]];
+
+  const headerRange = deptsSheet.getRange("A1:D1");
+  headerRange.setValues(headers);
+  headerRange.setFontWeight("bold");
+  headerRange.setBackground(COLORS.HEADER_BG);
+  headerRange.setFontColor(COLORS.HEADER_TEXT);
+
+  deptsSheet.getRange("A2:D2").setValues(exampleRow);
+  deptsSheet.getRange("A2").setFontStyle("italic").setFontColor("#999999");
+  deptsSheet.getRange("B2").setFontStyle("italic").setFontColor("#999999");
+
+  deptsSheet.setColumnWidth(1, 180);
+  deptsSheet.setColumnWidth(2, 200);
+  deptsSheet.setColumnWidth(3, 80);
+  deptsSheet.setColumnWidth(4, 180);
+
+  deptsSheet.getRange("A1").setNote(
+    "Department name — must match the value in the Department column (col K) of the Roster sheet exactly."
+  );
+  deptsSheet.getRange("B1").setNote(
+    "The name of the Settings tab for this department.\n" +
+    "Use Schedule Admin → Setup Department Settings Tab to create it."
+  );
+  deptsSheet.getRange("C1").setNote(
+    "Set to TRUE to include this department in generation, FALSE to skip it."
+  );
+
+  deptsSheet.setFrozenRows(1);
+}
+
+
 function setupSettingsSheetTemplate(settingsSheet) {
   // Only write the template if the sheet appears to be empty.
   if (settingsSheet.getLastRow() > 0) {
     return;
   }
 
-  // --- Table 1: Staffing requirements (columns A–B) ---
-  const staffingHeaders = [["Day", "Min Staff Required"]];
+  // --- Table 1: Staffing requirements (columns A–C) ---
+  // Column C controls whether the target is a head count ("Count") or total paid hours ("Hours").
+  // Leave column C blank or write "Count" for count mode (the default).
+  const staffingHeaders = [["Day", "Target Value", "Type (Count / Hours)"]];
   const staffingData = [
-    ["Monday", 6],
-    ["Tuesday", 6],
-    ["Wednesday", 6],
-    ["Thursday", 6],
-    ["Friday", 6],
-    ["Saturday", 4],
-    ["Sunday", 4],
+    ["Monday",    6, "Count"],
+    ["Tuesday",   6, "Count"],
+    ["Wednesday", 6, "Count"],
+    ["Thursday",  6, "Count"],
+    ["Friday",    6, "Count"],
+    ["Saturday",  4, "Count"],
+    ["Sunday",    4, "Count"],
   ];
 
-  settingsSheet.getRange("A1:B1").setValues(staffingHeaders).setFontWeight("bold");
-  settingsSheet.getRange("A2:B8").setValues(staffingData);
+  settingsSheet.getRange("A1:C1").setValues(staffingHeaders).setFontWeight("bold");
+  settingsSheet.getRange("A2:C8").setValues(staffingData);
+
+  // Add a dropdown on the Type column so managers can easily switch modes.
+  const modeValidation = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["Count", "Hours"], true)
+    .setAllowInvalid(false)
+    .setHelpText("Count = minimum employees scheduled. Hours = minimum total paid hours across all employees.")
+    .build();
+  settingsSheet.getRange("C2:C8").setDataValidation(modeValidation);
 
   // --- Table 2: Shift definitions (columns D–I) ---
   // Shift design rationale:
@@ -812,7 +835,7 @@ function setupSettingsSheetTemplate(settingsSheet) {
   settingsSheet.getRange("D2:I13").setValues(shiftData);
 
   // Style both header rows.
-  settingsSheet.getRange("A1:B1").setBackground(COLORS.HEADER_BG).setFontColor(COLORS.HEADER_TEXT);
+  settingsSheet.getRange("A1:C1").setBackground(COLORS.HEADER_BG).setFontColor(COLORS.HEADER_TEXT);
   settingsSheet.getRange("D1:I1").setBackground(COLORS.HEADER_BG).setFontColor(COLORS.HEADER_TEXT);
 
   // Format the Start Time and End Time columns as time values so GAS reads them correctly.
@@ -892,8 +915,8 @@ function getDepartmentNameForHeader() {
  * @returns {Date|null} The Monday date, or null if the name does not match the expected format.
  */
 function parseWeekStartDateFromSheetName(sheetName) {
-  // Match the pattern "Week_MM_DD_YY" with exactly this format.
-  const namePattern = /^Week_(\d{2})_(\d{2})_(\d{2})$/;
+  // Match "Week_MM_DD_YY" with an optional "_DeptName" suffix (multi-dept format).
+  const namePattern = /^Week_(\d{2})_(\d{2})_(\d{2})(?:_.*)?$/;
   const match = sheetName.match(namePattern);
 
   if (!match) {
@@ -913,3 +936,55 @@ function parseWeekStartDateFromSheetName(sheetName) {
 
   return isNaN(parsedDate.getTime()) ? null : parsedDate;
 }
+
+
+/**
+ * Extracts the department name from a week sheet name that includes a dept suffix.
+ *
+ * "Week_04_07_26_Morning"          → "Morning"
+ * "Week_04_07_26_Drivers/Morning Merch" → "Drivers/Morning Merch"
+ * "Week_04_07_26"                  → null (no dept suffix)
+ *
+ * @param {string} sheetName
+ * @returns {string|null}
+ */
+function parseDeptNameFromWeekSheetName_(sheetName) {
+  // Sheet name format: Week_MM_DD_YY_DeptName  (dept name follows the 4th underscore)
+  const match = sheetName.match(/^Week_\d{2}_\d{2}_\d{2}_(.+)$/);
+  return match ? match[1] : null;
+}
+
+
+/**
+ * Loads shift timing map and staffing requirements for a re-calculation triggered by
+ * a VAC/RDO checkbox edit on an existing week sheet.
+ *
+ * Looks up the department by name in the Departments tab. If not found (or no dept name),
+ * falls back to the base Settings tab so single-dept setups continue to work.
+ *
+ * @param {string|null} departmentName — Parsed from the sheet name, or null.
+ * @returns {{ shiftTimingMap: Object, staffingRequirements: Object }}
+ */
+function loadSettingsForResolve_(departmentName) {
+  if (departmentName) {
+    // Normalize the name parsed from the sheet suffix so it matches the normalized
+    // keys stored in the settings map by readDepartmentList_() / loadAllDepartmentSettings().
+    const normalizedName  = normalizeDeptName_(departmentName);
+    const allDeptSettings = loadAllDepartmentSettings();
+    if (allDeptSettings && allDeptSettings.has(normalizedName)) {
+      const settings = allDeptSettings.get(normalizedName);
+      return {
+        shiftTimingMap:       settings.shiftTimingMap,
+        staffingRequirements: settings.staffingRequirements,
+      };
+    }
+  }
+
+  // Fallback: base Settings tab (single-dept mode or dept not found in map).
+  return {
+    shiftTimingMap:       buildShiftTimingMap(),
+    staffingRequirements: loadStaffingRequirements(),
+  };
+}
+
+

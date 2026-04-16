@@ -1,6 +1,6 @@
 /**
  * rosterIngestion.js — Syncs employees from an external master spreadsheet into the local Roster sheet.
- * VERSION 1.0.0
+ * VERSION 1.2.0
  *
  * This file handles the entire "bring employee data into the workbook" workflow:
  *   1. The manager opens the Ingestion sheet and types a Google Spreadsheet ID.
@@ -336,26 +336,31 @@ function writeNewEmployeesToRoster(newEmployees) {
   // Determine the first empty row below any existing data.
   const firstEmptyRow = Math.max(rosterSheet.getLastRow() + 1, ROSTER_DATA_START_ROW);
 
-  newEmployees.forEach(function (employee, index) {
-    const targetRow = firstEmptyRow + index;
-    writeSingleEmployeeRowToRoster(rosterSheet, employee, targetRow);
+  // Build all rows in memory first, then write them in a single setValues() call.
+  // This replaces N × 13 individual setValue() calls with one batch write.
+  const rowsToWrite = newEmployees.map(function(employee) {
+    return buildEmployeeRosterRow_(employee);
   });
+
+  if (rowsToWrite.length > 0) {
+    rosterSheet
+      .getRange(firstEmptyRow, 1, rowsToWrite.length, ROSTER_COLUMN.PRIMARY_ROLE)
+      .setValues(rowsToWrite);
+  }
 }
 
 
 /**
- * Writes a single employee's data to one row of the Roster sheet with default values.
+ * Builds and returns a single Roster row array for one employee with default values.
  *
- * Writing one row at a time (rather than batching) keeps this function easy to reason about.
- * For typical roster sizes (< 100 employees), the performance difference is negligible.
- * If sync performance becomes an issue with very large rosters, this can be refactored
- * to use a 2D setValues() batch call.
+ * Returns a 1D array whose indices correspond to ROSTER_COLUMN positions (1-indexed columns
+ * mapped to 0-indexed array positions). The caller (writeNewEmployeesToRoster) collects these
+ * arrays and writes them all in one setValues() batch call.
  *
- * @param {Sheet}  rosterSheet — The Roster sheet object.
  * @param {{name: string, employeeId: string, hireDate: Date}} employee — The employee to write.
- * @param {number} rowNumber   — The 1-indexed row number to write to.
+ * @returns {Array} A 13-element array matching columns A–M of the Roster sheet.
  */
-function writeSingleEmployeeRowToRoster(rosterSheet, employee, rowNumber) {
+function buildEmployeeRosterRow_(employee) {
   // Validate the hire date before writing. An invalid date would produce a
   // nonsensical seniority rank and is better caught here with a clear warning.
   const hireDateValue = employee.hireDate instanceof Date && !isNaN(employee.hireDate.getTime())
@@ -370,18 +375,24 @@ function writeSingleEmployeeRowToRoster(rosterSheet, employee, rowNumber) {
     );
   }
 
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.NAME).setValue(employee.name);
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.EMPLOYEE_ID).setValue(employee.employeeId);
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.HIRE_DATE).setValue(hireDateValue || new Date());
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.STATUS).setValue("PT");
-  // Preference columns are left blank — the manager fills these in.
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.DAY_OFF_PREF_ONE).setValue("");
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.DAY_OFF_PREF_TWO).setValue("");
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.PREFERRED_SHIFT).setValue("");
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.QUALIFIED_SHIFTS).setValue("");
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.VACATION_DATES).setValue("");
-  // Seniority rank is a placeholder (0) until refreshAllSeniorityRanks() is called.
-  rosterSheet.getRange(rowNumber, ROSTER_COLUMN.SENIORITY_RANK).setValue(0);
+  // Array indices are (ROSTER_COLUMN value - 1) since ROSTER_COLUMN is 1-indexed.
+  // Columns D–I (preferences, qualified shifts, vacation dates) are left blank —
+  // the manager fills these in after sync.
+  return [
+    employee.name,           // A — NAME
+    employee.employeeId,     // B — EMPLOYEE_ID
+    hireDateValue || new Date(), // C — HIRE_DATE
+    "PT",                    // D — STATUS (default to PT; manager updates to FT if needed)
+    "",                      // E — DAY_OFF_PREF_ONE
+    "",                      // F — DAY_OFF_PREF_TWO
+    "",                      // G — PREFERRED_SHIFT
+    "",                      // H — QUALIFIED_SHIFTS
+    "",                      // I — VACATION_DATES
+    0,                       // J — SENIORITY_RANK (placeholder; refreshAllSeniorityRanks() recalculates)
+    "",                      // K — DEPARTMENT
+    "",                      // L — QUALIFIED_DEPARTMENTS
+    "",                      // M — PRIMARY_ROLE
+  ];
 }
 
 
