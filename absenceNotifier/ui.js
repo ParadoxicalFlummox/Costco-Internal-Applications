@@ -1,6 +1,6 @@
 /**
  * ui.js — Apps Script triggers, custom menu, and menu handler functions.
- * VERSION: 0.2.0
+ * VERSION: 1.0.0
  *
  * This file is the entry point for all user-initiated actions in the absence
  * notifier workbook. It contains:
@@ -44,8 +44,8 @@
 function onOpen() {
   SpreadsheetApp.getActiveSpreadsheet()
     .addMenu('Call Log Admin', [
-      { name: 'Generate New Week Sheet', functionName: 'menuGenerateNewSheet'  },
-      { name: 'Send Digest Now',         functionName: 'menuSendDigestNow'     },
+      { name: 'Generate New Week Sheet', functionName: 'menuGenerateNewSheet' },
+      { name: 'Send Digest Now', functionName: 'menuSendDigestNow' },
       null, // Separator
       { name: 'Setup Config Sheet (First Run)', functionName: 'menuSetupConfigSheet' },
     ]);

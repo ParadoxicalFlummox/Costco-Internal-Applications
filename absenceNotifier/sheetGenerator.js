@@ -1,6 +1,6 @@
 /**
  * sheetGenerator.js — Generates new call log sheets and the Absence Config setup sheet.
- * VERSION: 0.2.3
+ * VERSION: 1.0.1
  *
  * This file owns all sheet creation logic for the absence notifier workbook:
  *
@@ -43,7 +43,7 @@
  * Callable from: "Call Log Admin" → "Generate New Week Sheet"
  */
 function generateNewCallLogSheet() {
-  const workbook   = SpreadsheetApp.getActiveSpreadsheet();
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
   const sheetTitle = getActiveCallLogSheetName_(); // defined in sheetUtils.js
 
   // Guard: do not overwrite an existing sheet
@@ -85,7 +85,7 @@ function generateNewCallLogSheet() {
  */
 function writeCallLogHeaderRows_(sheet) {
   const fyStartDate = readFiscalYearStartDate_(); // defined in sheetUtils.js
-  const today       = new Date();
+  const today = new Date();
 
   // --- Row 1: Fiscal period header ---
 
@@ -162,15 +162,15 @@ function applyCallLogFormatting_(sheet) {
 
   // Column widths (in pixels) — tuned for readability without excessive scrolling
   const columnWidths = {
-    1:  90,  // A — DATE
-    2:  160, // B — EMPLOYEE NAME
-    3:  100, // C — EMPLOYEE ID
-    4:  120, // D — HOME DEPT
-    5:  80,  // E — CALL-OUT  (checkbox)
-    6:  65,  // F — FMLA      (checkbox)
-    7:  80,  // G — NO-SHOW   (checkbox)
-    8:  100, // H — TIME CALLED
-    9:  120, // I — SCHEDULED SHIFT
+    1: 90,  // A — DATE
+    2: 160, // B — EMPLOYEE NAME
+    3: 100, // C — EMPLOYEE ID
+    4: 120, // D — HOME DEPT
+    5: 80,  // E — CALL-OUT  (checkbox)
+    6: 65,  // F — FMLA      (checkbox)
+    7: 80,  // G — NO-SHOW   (checkbox)
+    8: 100, // H — TIME CALLED
+    9: 120, // I — SCHEDULED SHIFT
     10: 100, // J — ARRIVAL TIME
     11: 110, // K — MANAGER APP
     12: 240, // L — COMMENT   (wide; comments can be lengthy)
@@ -179,6 +179,18 @@ function applyCallLogFormatting_(sheet) {
   Object.entries(columnWidths).forEach(([columnNumber, widthPixels]) => {
     sheet.setColumnWidth(Number(columnNumber), widthPixels);
   });
+
+  // Apply alternating row banding to the data rows so entries are easy to track
+  // across wide rows. Applied to a large range so future dynamically-added rows
+  // are covered automatically without any additional per-row formatting calls.
+  //   Odd rows:  white         (#FFFFFF) — clean, unobtrusive base
+  //   Even rows: light blue    (#EDF2FA) — subtle, complements the dark header
+  const bandingRange = sheet.getRange(CALL_LOG_DATA_START_ROW, 1, 500, CALL_LOG_COLUMNS.TOTAL_COLUMNS_TO_READ);
+  const banding = bandingRange.applyRowBanding();
+  banding.setHeaderRowColor(null);       // don't override the header row we already styled
+  banding.setFirstRowColor('#FFFFFF');   // odd data rows
+  banding.setSecondRowColor('#EDF2FA'); // even data rows — very light blue-gray
+  banding.setFooterRowColor(null);
 }
 
 /**
@@ -242,8 +254,8 @@ function insertAbsenceTypeCheckboxes_(sheet, rowNumber) {
 
   const absenceColumns = [
     CALL_LOG_COLUMNS.IS_CALLOUT + 1, // E (0-indexed 4 → 1-indexed 5)
-    CALL_LOG_COLUMNS.IS_FMLA    + 1, // F (0-indexed 5 → 1-indexed 6)
-    CALL_LOG_COLUMNS.IS_NOSHOW  + 1, // G (0-indexed 6 → 1-indexed 7)
+    CALL_LOG_COLUMNS.IS_FMLA + 1, // F (0-indexed 5 → 1-indexed 6)
+    CALL_LOG_COLUMNS.IS_NOSHOW + 1, // G (0-indexed 6 → 1-indexed 7)
   ];
 
   absenceColumns.forEach(columnNumber => {
@@ -299,8 +311,8 @@ function insertNotifyCheckbox_(sheet, rowNumber) {
  * Callable from: "Call Log Admin" → "Setup Config Sheet"
  */
 function setupAbsenceConfigSheet() {
-  const workbook    = SpreadsheetApp.getActiveSpreadsheet();
-  let   configSheet = workbook.getSheetByName(CONFIG_SHEET_NAME);
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  let configSheet = workbook.getSheetByName(CONFIG_SHEET_NAME);
 
   // Guard: if the sheet exists and is already configured, do not overwrite it.
   if (configSheet) {

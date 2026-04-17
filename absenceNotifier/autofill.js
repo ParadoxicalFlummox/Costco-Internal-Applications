@@ -1,6 +1,6 @@
 /**
  * autofill.js — Row activation and employee autofill for call log entry rows.
- * VERSION: 0.2.7
+ * VERSION: 1.0.0
  *
  * This file handles the onEdit trigger for two distinct actions on call log sheets:
  *
@@ -66,9 +66,9 @@
  * @param {GoogleAppsScript.Events.SheetsOnEdit} event — The edit event from Apps Script.
  */
 function onEditHandler(event) {
-  const editedSheet  = event.range.getSheet();
+  const editedSheet = event.range.getSheet();
   const editedColumn = event.range.getColumn();
-  const editedRow    = event.range.getRow();
+  const editedRow = event.range.getRow();
 
   // Ignore edits on non-call-log sheets entirely
   if (!isCallLogSheet_(editedSheet.getName())) return;
@@ -137,7 +137,7 @@ function onEditHandler(event) {
       // manually. If no external ID is configured, the cell stays as plain text.
       const fallbackSpreadsheetId = readEmployeeDataSpreadsheetId_();
       if (fallbackSpreadsheetId && enteredName) {
-        const nameCell    = editedSheet.getRange(editedRow, CALL_LOG_NAME_COLUMN_NUMBER);
+        const nameCell = editedSheet.getRange(editedRow, CALL_LOG_NAME_COLUMN_NUMBER);
         const escapedName = enteredName.replace(/"/g, '""');
         nameCell.clearDataValidations();
         nameCell.setFormula(
@@ -270,7 +270,7 @@ function searchEmployeesByName_(name) {
  */
 function readEmployeeDataSpreadsheetId_() {
   try {
-    const workbook    = SpreadsheetApp.getActiveSpreadsheet();
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
     const configSheet = workbook.getSheetByName(CONFIG_SHEET_NAME); // defined in config.js
     if (!configSheet) return null;
 
@@ -333,25 +333,25 @@ function searchEmployeesInExternalSheet_(name, spreadsheetId) {
   if (allRows.length <= 1) return [];
 
   const columns = EXTERNAL_EMPLOYEE_COLUMNS;
-  const tokens  = tokenize_(name);
+  const tokens = tokenize_(name);
   const results = [];
 
   for (let rowIndex = 1; rowIndex < allRows.length; rowIndex++) {
-    const row       = allRows[rowIndex];
-    const lastName  = String(row[columns.LAST_NAME]  || '').trim();
+    const row = allRows[rowIndex];
+    const lastName = String(row[columns.LAST_NAME] || '').trim();
     const firstName = String(row[columns.FIRST_NAME] || '').trim();
 
     if (!lastName && !firstName) continue;
 
     if (tokensMatchName_(tokens, firstName, lastName)) {
       results.push({
-        employeeId:  String(row[columns.EMPLOYEE_ID] || '').trim(),
-        department:  String(row[columns.DEPT]        || '').trim(),
+        employeeId: String(row[columns.EMPLOYEE_ID] || '').trim(),
+        department: String(row[columns.DEPT] || '').trim(),
         displayName: firstName ? `${firstName} ${lastName}` : lastName,
         // Carry first/last separately so setNameHyperlink_() can build the
         // exact tab name ("Last, First - ID") to resolve the direct GID link.
-        lastName:    lastName,
-        firstName:   firstName,
+        lastName: lastName,
+        firstName: firstName,
       });
     }
   }
@@ -370,7 +370,7 @@ function searchEmployeesInExternalSheet_(name, spreadsheetId) {
  * @returns {Array<{ employeeId, department, displayName }>}
  */
 function searchEmployeesInLocalRoster_(name) {
-  const workbook    = SpreadsheetApp.getActiveSpreadsheet();
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
   const rosterSheet = workbook.getSheetByName(ROSTER_SHEET_NAME);
 
   if (!rosterSheet) {
@@ -382,8 +382,8 @@ function searchEmployeesInLocalRoster_(name) {
   if (lastRow < 2) return [];
 
   const rosterData = rosterSheet.getRange(2, 1, lastRow - 1, 3).getValues();
-  const tokens     = tokenize_(name);
-  const results    = [];
+  const tokens = tokenize_(name);
+  const results = [];
 
   for (let rowIndex = 0; rowIndex < rosterData.length; rowIndex++) {
     const fullName = String(rosterData[rowIndex][0] || '').trim();
@@ -393,8 +393,8 @@ function searchEmployeesInLocalRoster_(name) {
     // so tokensMatchName_ searches the full string.
     if (tokensMatchName_(tokens, fullName, '')) {
       results.push({
-        employeeId:  String(rosterData[rowIndex][1] || '').trim(),
-        department:  String(rosterData[rowIndex][2] || '').trim(),
+        employeeId: String(rosterData[rowIndex][1] || '').trim(),
+        department: String(rosterData[rowIndex][2] || '').trim(),
         displayName: fullName,
       });
     }
@@ -437,8 +437,8 @@ function tokenize_(searchTerm) {
  * @returns {boolean}
  */
 function tokensMatchName_(tokens, firstName, lastName) {
-  const first    = firstName.toLowerCase();
-  const last     = lastName.toLowerCase();
+  const first = firstName.toLowerCase();
+  const last = lastName.toLowerCase();
   const combined = `${first} ${last}`.trim();
 
   return tokens.every(token =>
@@ -489,8 +489,8 @@ function writeAutofillFields_(sheet, rowNumber, employeeData, employeeName) {
       rowNumber,
       employeeName,
       spreadsheetId,
-      employeeData.lastName   || '',
-      employeeData.firstName  || '',
+      employeeData.lastName || '',
+      employeeData.firstName || '',
       employeeData.employeeId || ''
     );
   }
@@ -522,9 +522,9 @@ function setNameHyperlink_(sheet, rowNumber, employeeName, spreadsheetId, lastNa
   // Build the expected tab name using the format defined in config.js.
   // e.g. EMPLOYEE_TAB_NAME_FORMAT = "{LAST}, {FIRST} - {ID}" → "Le, Tony - 12345"
   const expectedTabName = EMPLOYEE_TAB_NAME_FORMAT
-    .replace('{LAST}',  lastName  || '')
+    .replace('{LAST}', lastName || '')
     .replace('{FIRST}', firstName || '')
-    .replace('{ID}',    employeeId || '');
+    .replace('{ID}', employeeId || '');
 
   // Attempt to resolve the GID of the employee's tab.
   // GAS caches SpreadsheetApp.openById() within a script execution, so this
@@ -532,7 +532,7 @@ function setNameHyperlink_(sheet, rowNumber, employeeName, spreadsheetId, lastNa
   let url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
   try {
     const externalWorkbook = SpreadsheetApp.openById(spreadsheetId);
-    const employeeTab      = externalWorkbook.getSheetByName(expectedTabName);
+    const employeeTab = externalWorkbook.getSheetByName(expectedTabName);
 
     if (employeeTab) {
       // Direct link to the employee's specific tab
@@ -569,7 +569,7 @@ function setNameHyperlink_(sheet, rowNumber, employeeName, spreadsheetId, lastNa
  * @param {Array<{ displayName: string }>}     candidates  — The matching employees to list.
  */
 function showSuggestionDropdown_(sheet, rowNumber, candidates) {
-  const nameList   = candidates.map(candidate => candidate.displayName);
+  const nameList = candidates.map(candidate => candidate.displayName);
   const validation = SpreadsheetApp.newDataValidation()
     .requireValueInList(nameList, true) // true = show dropdown arrow
     .setAllowInvalid(true)              // allow the clerk to still type freely
@@ -625,7 +625,7 @@ function clearAutofillFields_(sheet, rowNumber) {
  */
 function sendEntryNotification_(sheet, rowNumber) {
   const timeZone = Session.getScriptTimeZone();
-  const columns  = CALL_LOG_COLUMNS;
+  const columns = CALL_LOG_COLUMNS;
   const notifyCell = sheet.getRange(rowNumber, CALL_LOG_NOTIFY_COLUMN_NUMBER);
 
   // Read all columns for this row in a single call
@@ -645,8 +645,8 @@ function sendEntryNotification_(sheet, rowNumber) {
 
   // --- Validate: at least one absence type must be selected ---
   const isCallout = coerceToBool_(rowData[columns.IS_CALLOUT]); // defined in dataIngestion.js
-  const isFmla    = coerceToBool_(rowData[columns.IS_FMLA]);
-  const isNoShow  = coerceToBool_(rowData[columns.IS_NOSHOW]);
+  const isFmla = coerceToBool_(rowData[columns.IS_FMLA]);
+  const isNoShow = coerceToBool_(rowData[columns.IS_NOSHOW]);
 
   if (!isCallout && !isFmla && !isNoShow) {
     SpreadsheetApp.getActiveSpreadsheet().toast(
@@ -660,17 +660,17 @@ function sendEntryNotification_(sheet, rowNumber) {
 
   // --- Build absence reason ---
   let absenceReason = 'Unknown';
-  if (isCallout)     absenceReason = 'Call-Out';
-  else if (isFmla)   absenceReason = 'FMLA';
+  if (isCallout) absenceReason = 'Call-Out';
+  else if (isFmla) absenceReason = 'FMLA';
   else if (isNoShow) absenceReason = 'No-Show';
 
   // --- Resolve the call time ---
   // Use TIME_CALLED (column H) if it parses successfully; fall back to now.
   // A narrow 1-minute window anchored to the call time is passed to the email
   // builder so the "Window" line in the email body shows a meaningful time.
-  const now          = new Date();
+  const now = new Date();
   const narrowWindow = { start: new Date(now.getTime() - 60000), end: now };
-  let   calledAt     = now;
+  let calledAt = now;
 
   const timeRaw = rowData[columns.TIME_CALLED];
   if (timeRaw) {
@@ -680,15 +680,15 @@ function sendEntryNotification_(sheet, rowNumber) {
 
   // --- Assemble the AbsenceRecord ---
   const record = {
-    rowNumber:       rowNumber,
-    employeeName:    employeeName,
-    employeeId:      String(rowData[columns.EMPLOYEE_ID]     || 'Unknown').trim(),
-    isAbsence:       true,
-    absenceReason:   absenceReason,
-    department:      String(rowData[columns.DEPT]            || '').trim(),
-    employeeComment: String(rowData[columns.COMMENT]         || '').trim(),
-    scheduledShift:  String(rowData[columns.SCHEDULED_SHIFT] || '').trim(),
-    calledAt:        calledAt,
+    rowNumber: rowNumber,
+    employeeName: employeeName,
+    employeeId: String(rowData[columns.EMPLOYEE_ID] || 'Unknown').trim(),
+    isAbsence: true,
+    absenceReason: absenceReason,
+    department: String(rowData[columns.DEPT] || '').trim(),
+    employeeComment: String(rowData[columns.COMMENT] || '').trim(),
+    scheduledShift: String(rowData[columns.SCHEDULED_SHIFT] || '').trim(),
+    calledAt: calledAt,
   };
 
   const emailWindow = { start: calledAt, end: now };
@@ -736,7 +736,7 @@ function sendEntryNotification_(sheet, rowNumber) {
  * @returns {boolean} true if this sheet is a call log sheet.
  */
 function isCallLogSheet_(sheetName) {
-  const fiscalPattern     = /^P\d+\s+W\d+$/i;         // e.g. "P3 W1"
+  const fiscalPattern = /^P\d+\s+W\d+$/i;         // e.g. "P3 W1"
   const weekEndingPattern = /^Week Ending \d+\/\d+\/\d+$/i; // e.g. "Week Ending 10/19/25"
   return fiscalPattern.test(sheetName) || weekEndingPattern.test(sheetName);
 }

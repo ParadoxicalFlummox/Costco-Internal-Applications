@@ -1,6 +1,6 @@
 /**
  * sheetUtils.js — Fiscal calendar math and call log sheet name calculation.
- * VERSION: 0.2.1
+ * VERSION: 1.0.0
  *
  * This file owns two things:
  *
@@ -114,7 +114,7 @@ function calculateFiscalPeriodWeekLabel_(fyStartDate, referenceDate) {
   referenceMidnight.setHours(0, 0, 0, 0);
 
   const millisPerDay = 24 * 60 * 60 * 1000;
-  const daysElapsed  = Math.floor((referenceMidnight - startMidnight) / millisPerDay);
+  const daysElapsed = Math.floor((referenceMidnight - startMidnight) / millisPerDay);
 
   if (daysElapsed < 0) {
     // Reference date is before the fiscal year start — config is probably wrong.
@@ -122,12 +122,12 @@ function calculateFiscalPeriodWeekLabel_(fyStartDate, referenceDate) {
     return calculateWeekEndingLabel_(referenceDate);
   }
 
-  const weekIndex   = Math.floor(daysElapsed / 7); // 0-based week in the fiscal year
+  const weekIndex = Math.floor(daysElapsed / 7); // 0-based week in the fiscal year
   const periodIndex = Math.floor(weekIndex / 4);   // 0-based period (0 = Period 1)
   const weekInPeriod = (weekIndex % 4);             // 0-based week within the period
 
   const period = periodIndex + 1;
-  const week   = weekInPeriod + 1;
+  const week = weekInPeriod + 1;
 
   return `P${period} W${week}`;
 }
@@ -151,17 +151,17 @@ function calculateFiscalPeriodAndWeek_(fyStartDate, referenceDate) {
   referenceMidnight.setHours(0, 0, 0, 0);
 
   const millisPerDay = 24 * 60 * 60 * 1000;
-  const daysElapsed  = Math.floor((referenceMidnight - startMidnight) / millisPerDay);
+  const daysElapsed = Math.floor((referenceMidnight - startMidnight) / millisPerDay);
 
   if (daysElapsed < 0) return null;
 
-  const weekIndex    = Math.floor(daysElapsed / 7);
-  const periodIndex  = Math.floor(weekIndex / 4);
+  const weekIndex = Math.floor(daysElapsed / 7);
+  const periodIndex = Math.floor(weekIndex / 4);
   const weekInPeriod = weekIndex % 4;
 
   return {
     period: periodIndex + 1,
-    week:   weekInPeriod + 1,
+    week: weekInPeriod + 1,
   };
 }
 
@@ -208,9 +208,9 @@ function calculateWeekDateRangeLabel_(referenceDate) {
   // (e.g. "March 31 – April 6" would become "April 31 – 6" which is wrong;
   // instead we use Monday's month for the start and Sunday for the rest).
   const startMonth = monday.toLocaleDateString('en-US', { month: 'long' });
-  const startDay   = monday.getDate();
-  const endDay     = sunday.getDate();
-  const year       = sunday.getFullYear();
+  const startDay = monday.getDate();
+  const endDay = sunday.getDate();
+  const year = sunday.getFullYear();
 
   // If the week crosses a month boundary, show both month names.
   const endMonth = sunday.toLocaleDateString('en-US', { month: 'long' });
@@ -247,8 +247,8 @@ function calculateWeekEndingLabel_(referenceDate) {
   weekEndDate.setDate(referenceDate.getDate() + daysUntilSunday);
 
   const month = weekEndDate.getMonth() + 1; // getMonth() is 0-indexed
-  const day   = weekEndDate.getDate();
-  const year  = String(weekEndDate.getFullYear()).slice(2); // "2025" → "25"
+  const day = weekEndDate.getDate();
+  const year = String(weekEndDate.getFullYear()).slice(2); // "2025" → "25"
 
   return `Week Ending ${month}/${day}/${year}`;
 }
@@ -275,8 +275,8 @@ function calculateWeekEndingLabel_(referenceDate) {
  */
 function readFiscalYearStartDate_() {
   try {
-    const workbook     = SpreadsheetApp.getActiveSpreadsheet();
-    const configSheet  = workbook.getSheetByName(CONFIG_SHEET_NAME);
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const configSheet = workbook.getSheetByName(CONFIG_SHEET_NAME);
 
     if (!configSheet) return null;
 
@@ -297,7 +297,7 @@ function readFiscalYearStartDate_() {
 
     // Number: Sheets serial date (days since Jan 1, 1900)
     if (typeof cellValue === 'number' && cellValue >= 1) {
-      const epochMilliseconds = (cellValue - 25569) * 86400000;
+      const epochMilliseconds = (cellValue - SHEETS_EPOCH_OFFSET) * 86400000;
       const parsed = new Date(epochMilliseconds);
       return isNaN(parsed.getTime()) ? null : parsed;
     }

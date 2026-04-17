@@ -1,6 +1,6 @@
 /**
  * timeWindow.js — Time window calculations and time value parsing utilities.
- * VERSION: 0.1.0
+ * VERSION: 1.0.0
  *
  * This file owns all logic related to time in the Absence Notifier. Its two
  * primary responsibilities are:
@@ -75,7 +75,7 @@ function getPreviousWindow_(windowMinutes) {
 // ---------------------------------------------------------------------------
 
 /**
- * Converts a raw cell value from the "Time Called" column (column I) into an
+ * Converts a raw cell value from the "Time Called" column (column H) into an
  * epoch millisecond timestamp for window comparison.
  *
  * Google Sheets delivers time values in three possible formats depending on cell
@@ -135,8 +135,8 @@ function parseTimeToMilliseconds_(cellValue, window) {
       return anchorTimePartsToWindow_(hours, minutes, seconds, window);
     } else {
       // Excel/Sheets serial date: 1 = January 1, 1900
-      // The Unix epoch (Jan 1, 1970) is serial day 25569.
-      const epochMilliseconds = (cellValue - 25569) * 86400000;
+      // SHEETS_EPOCH_OFFSET (25569) is the Unix epoch in Sheets serial days.
+      const epochMilliseconds = (cellValue - SHEETS_EPOCH_OFFSET) * 86400000;
       const parsed = new Date(epochMilliseconds);
       return isNaN(parsed.getTime()) ? null : parsed.getTime();
     }
@@ -218,11 +218,11 @@ function anchorTimePartsToWindow_(hours, minutes, seconds, window) {
 
 /**
  * Attempts to extract a real calendar date from a raw cell value in the
- * "Call Date" column (column O).
+ * "Date" column (column A).
  *
- * Column O is used to verify that a row belongs to the same calendar day as
+ * Column A is used to verify that a row belongs to the same calendar day as
  * the window currently being scanned. Without this check, a time-only value
- * in column I could produce a false positive for a row that belongs to a
+ * in column H could produce a false positive for a row that belongs to a
  * different day.
  *
  * A "real" calendar date is any value that resolves to a Date whose year
@@ -230,13 +230,10 @@ function anchorTimePartsToWindow_(hours, minutes, seconds, window) {
  * considered time-only placeholders and are rejected (returned as null).
  *
  * @param {Date|number|string|null} cellValue — The raw value from the date cell.
- * @param {string} timeZone — The script's time zone string (e.g., "America/Los_Angeles").
- *   Not used in the conversion itself but passed through so callers do not need
- *   to fetch it again.
  * @returns {Date|null} A Date object if a real calendar date could be extracted,
  *   or null if the value is empty, a time-only placeholder, or unparseable.
  */
-function coerceToCalendarDate_(cellValue, timeZone) {
+function coerceToCalendarDate_(cellValue) {
   if (cellValue == null || cellValue === '') return null;
 
   if (cellValue instanceof Date) {
@@ -249,7 +246,7 @@ function coerceToCalendarDate_(cellValue, timeZone) {
     // A fractional number (< 1) represents a time-only value with no calendar component.
     if (cellValue < 1) return null;
     // Convert from Sheets/Excel serial date to a JavaScript Date.
-    const epochMilliseconds = (cellValue - 25569) * 86400000;
+    const epochMilliseconds = (cellValue - SHEETS_EPOCH_OFFSET) * 86400000;
     const converted = new Date(epochMilliseconds);
     return isNaN(converted.getTime()) ? null : converted;
   }

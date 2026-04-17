@@ -1,6 +1,6 @@
 /**
  * notifier.js — Recipient resolution, email body construction, and digest sending.
- * VERSION: 0.2.2
+ * VERSION: 1.0.0
  *
  * This file is the final stage of the notification pipeline. It receives a filtered
  * list of AbsenceRecord objects from dataIngestion.js and is responsible for:
@@ -20,7 +20,8 @@
  *
  *   4. SENDING:     Calling GmailApp.sendEmail once per department. To run the
  *                   script in dry-run mode without sending emails, comment out
- *                   the GmailApp.sendEmail line in sendDepartmentDigests_().
+ *                   the GmailApp.sendEmail line in sendDepartmentDigests_() and
+ *                   replace it with the console.log dry-run line shown below it.
  */
 
 
@@ -59,11 +60,9 @@ function sendDepartmentDigests_(absenceRecords, window, timeZone) {
     });
 
     const subject = buildEmailSubject_(department, sortedRecords);
-    const body    = buildEmailBody_(department, sortedRecords, window, timeZone);
+    const body = buildEmailBody_(department, sortedRecords, window, timeZone);
 
-    // DRY-RUN MODE: email sending is disabled. Re-enable by swapping the two lines below.
-    // GmailApp.sendEmail(recipients.join(','), subject, body);
-    console.log(`notifier: [DRY RUN] Sending email — To: ${recipients.join(', ')} | Subject: ${subject}\n${body}`);
+    GmailApp.sendEmail(recipients.join(','), subject, body);
 
     console.log(`notifier: Sent digest for "${department}" to ${recipients.join(', ')} — ${sortedRecords.length} record(s).`);
   });
@@ -182,7 +181,7 @@ function resolveRecipientsForDepartment_(department) {
  * @returns {string} The complete subject line.
  */
 function buildEmailSubject_(department, records) {
-  const sheetTitle  = getActiveCallLogSheetName_(); // defined in sheetUtils.js
+  const sheetTitle = getActiveCallLogSheetName_(); // defined in sheetUtils.js
   const displayName = department || 'Unknown Department';
   const recordCount = records.length;
   return `Call Log Update - ${sheetTitle} - ${displayName} (${recordCount})`;

@@ -1,6 +1,6 @@
 /**
  * dataIngestion.js — Reads the call log sheet and produces a filtered list of absence records.
- * VERSION: 0.2.2
+ * VERSION: 1.0.0
  *
  * This file is responsible for turning raw spreadsheet data into structured JavaScript
  * objects that the rest of the notifier can work with. It owns three sequential steps:
@@ -134,27 +134,27 @@ function mapRowsToAbsenceRecords_(rawRows, dataStartRow) {
 
   return rawRows.map((row, arrayIndex) => {
     const isCallout = coerceToBool_(row[columns.IS_CALLOUT]);
-    const isFmla    = coerceToBool_(row[columns.IS_FMLA]);
-    const isNoShow  = coerceToBool_(row[columns.IS_NOSHOW]);
+    const isFmla = coerceToBool_(row[columns.IS_FMLA]);
+    const isNoShow = coerceToBool_(row[columns.IS_NOSHOW]);
 
     // Determine the absence reason from the first flag that is true.
     // Priority order: Call-Out → FMLA → No-Show. If none are true, the reason
     // is irrelevant because the row will be filtered out, but we still set a
     // safe default so no field is ever undefined.
     let absenceReason = 'Unknown';
-    if (isCallout)     absenceReason = 'Call-Out';
-    else if (isFmla)   absenceReason = 'FMLA';
+    if (isCallout) absenceReason = 'Call-Out';
+    else if (isFmla) absenceReason = 'FMLA';
     else if (isNoShow) absenceReason = 'No-Show';
 
     return {
-      rowNumber:        dataStartRow + arrayIndex, // 1-based sheet row number
-      employeeName:     String(row[columns.NAME]             || 'Unknown').trim(),
-      employeeId:       String(row[columns.EMPLOYEE_ID]      || 'Unknown').trim(),
-      isAbsence:        isCallout || isFmla || isNoShow,
-      absenceReason:    absenceReason,
-      department:       String(row[columns.DEPT]             || '').trim(),
-      employeeComment:  String(row[columns.COMMENT]          || '').trim(),
-      scheduledShift:   String(row[columns.SCHEDULED_SHIFT]  || '').trim(),
+      rowNumber: dataStartRow + arrayIndex, // 1-based sheet row number
+      employeeName: String(row[columns.NAME] || 'Unknown').trim(),
+      employeeId: String(row[columns.EMPLOYEE_ID] || 'Unknown').trim(),
+      isAbsence: isCallout || isFmla || isNoShow,
+      absenceReason: absenceReason,
+      department: String(row[columns.DEPT] || '').trim(),
+      employeeComment: String(row[columns.COMMENT] || '').trim(),
+      scheduledShift: String(row[columns.SCHEDULED_SHIFT] || '').trim(),
 
       // The date of the absence lives in column A. It is used by the filter
       // step to verify the row belongs to the same calendar day as the window.
@@ -206,8 +206,8 @@ function mapRowsToAbsenceRecords_(rawRows, dataStartRow) {
  */
 function filterRecordsToWindow_(records, window, timeZone) {
   const windowStartMilliseconds = window.start.getTime();
-  const windowEndMilliseconds   = window.end.getTime();
-  const windowDayKey            = getLocalDateKey_(window.end, timeZone);
+  const windowEndMilliseconds = window.end.getTime();
+  const windowDayKey = getLocalDateKey_(window.end, timeZone);
 
   return records.filter(record => {
     // Condition 1: Must be an absence row
@@ -233,7 +233,7 @@ function filterRecordsToWindow_(records, window, timeZone) {
     }
 
     // Conditions 4 & 5: Date must be a real calendar date matching the window's day
-    const callDate = coerceToCalendarDate_(record.dateRaw, timeZone);
+    const callDate = coerceToCalendarDate_(record.dateRaw);
     if (!callDate) {
       console.log(`dataIngestion: Row ${record.rowNumber} skipped — absence date is missing or a time-only value.`);
       return false;
@@ -273,10 +273,10 @@ function filterRecordsToWindow_(records, window, timeZone) {
  * @returns {boolean|null} true, false, or null if the value is unrecognized.
  */
 function coerceToBool_(cellValue) {
-  if (cellValue === true  || cellValue === false) return cellValue;
+  if (cellValue === true || cellValue === false) return cellValue;
   if (typeof cellValue === 'string') {
     const lowered = cellValue.trim().toLowerCase();
-    if (lowered === 'true')  return true;
+    if (lowered === 'true') return true;
     if (lowered === 'false') return false;
   }
   if (typeof cellValue === 'number') {

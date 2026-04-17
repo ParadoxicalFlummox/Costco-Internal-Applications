@@ -1,6 +1,6 @@
 /**
  * config.js — Central configuration for the Costco Absence Notifier.
- * VERSION: 0.2.5
+ * VERSION: 1.0.0
  *
  * This file is the single source of truth for every configurable value in the
  * notification system. Nothing in any other file should hard-code a value that
@@ -280,3 +280,19 @@ const MAILING_LIST = {
 const FALLBACK_RECIPIENTS = [
   "admin.management@example.com",
 ];
+
+
+// ---------------------------------------------------------------------------
+// Date Conversion Utility
+// ---------------------------------------------------------------------------
+
+/**
+ * The number of days between the Google Sheets / Excel epoch (January 1, 1900)
+ * and the Unix epoch (January 1, 1970). Used to convert Sheets serial date
+ * numbers to JavaScript milliseconds:
+ *   epochMs = (serialDate - SHEETS_EPOCH_OFFSET) * 86400000
+ *
+ * This constant is defined here so it appears in exactly one place rather than
+ * being repeated as a magic number in timeWindow.js and sheetUtils.js.
+ */
+const SHEETS_EPOCH_OFFSET = 25569;

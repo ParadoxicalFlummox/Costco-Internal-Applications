@@ -1,5 +1,5 @@
 /*
-VERSION: 0.2.2
+VERSION: 1.0.0
 LICENSE: MIT (Generic Logic Engine)
 PURPOSE: A time-windowed digest notification system.
          Reads call log entries from a Google Sheets workbook, filters them
