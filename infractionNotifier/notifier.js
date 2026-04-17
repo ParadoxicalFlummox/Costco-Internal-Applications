@@ -1,6 +1,6 @@
 /**
  * notifier.js — CN email construction and sending.
- * VERSION: 0.1.0
+ * VERSION: 1.0.0
  *
  * This file is the final stage of the notification pipeline. It receives a
  * list of new CN proposals from infractionEngine.js and is responsible for:
@@ -39,8 +39,8 @@ function sendCNNotifications_(proposals, dryRun, timeZone) {
 
   proposals.forEach(proposal => {
     const recipients = resolveRecipients_();
-    const subject    = buildEmailSubject_(proposal);
-    const body       = buildEmailBody_(proposal, timeZone);
+    const subject = buildEmailSubject_(proposal);
+    const body = buildEmailBody_(proposal, timeZone);
 
     if (!dryRun) {
       try {
@@ -78,9 +78,9 @@ function sendCNNotifications_(proposals, dryRun, timeZone) {
  * @returns {string[]} Deduplicated array of email address strings.
  */
 function resolveRecipients_() {
-  const raw    = (PAYROLL_RECIPIENTS || []).slice(); // config.js
-  const split  = s => String(s).split(/[;,]+/).map(addr => addr.trim()).filter(Boolean);
-  const flat   = raw.flatMap(item => Array.isArray(item) ? item.flatMap(split) : split(item));
+  const raw = (PAYROLL_RECIPIENTS || []).slice(); // config.js
+  const split = s => String(s).split(/[;,]+/).map(addr => addr.trim()).filter(Boolean);
+  const flat = raw.flatMap(item => Array.isArray(item) ? item.flatMap(split) : split(item));
   return Array.from(new Set(flat));
 }
 
@@ -99,14 +99,14 @@ function resolveRecipients_() {
  * @returns {string}
  */
 function buildEmailSubject_(proposal) {
-  const name      = proposal.employeeName || 'Unknown Employee';
-  const idPart    = proposal.employeeId   ? ` (${proposal.employeeId})` : '';
-  const rulePart  = proposal.rule && proposal.rule !== 'GLOBAL'
+  const name = proposal.employeeName || 'Unknown Employee';
+  const idPart = proposal.employeeId ? ` (${proposal.employeeId})` : '';
+  const rulePart = proposal.rule && proposal.rule !== 'GLOBAL'
     ? `${proposal.count}x ${proposal.rule}`
     : `${proposal.count} infraction(s)`;
-  const daysPart  = `in ${proposal.windowDays} days`;
-  const startFmt  = formatShortDate_(proposal.windowStart);
-  const endFmt    = formatShortDate_(proposal.windowEnd);
+  const daysPart = `in ${proposal.windowDays} days`;
+  const startFmt = formatShortDate_(proposal.windowStart);
+  const endFmt = formatShortDate_(proposal.windowEnd);
 
   return `CN Alert: ${name}${idPart} — ${rulePart} ${daysPart} (${startFmt} – ${endFmt})`;
 }
@@ -166,6 +166,6 @@ function buildEmailBody_(proposal, timeZone) {
  * @returns {string}
  */
 function formatShortDate_(date) {
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${months[date.getMonth()]} ${date.getDate()}`;
 }

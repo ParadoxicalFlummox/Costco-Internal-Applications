@@ -1,6 +1,6 @@
 /**
  * tabManager.js — Employee tab and spreadsheet creation from the Employee Details roster.
- * VERSION: 0.1.0
+ * VERSION: 1.0.0
  *
  * This file owns all functions for generating individual employee attendance
  * controller tabs or standalone spreadsheets from the "(Employee Details)" roster sheet.
@@ -41,10 +41,10 @@
 // Constants
 // ---------------------------------------------------------------------------
 
-const TAB_MANAGER_SOURCE_SHEET      = '(Employee Details)';
-const TAB_MANAGER_TEMPLATE_COLOR    = '(Color-coded Electronic)';
+const TAB_MANAGER_SOURCE_SHEET = '(Employee Details)';
+const TAB_MANAGER_TEMPLATE_COLOR = '(Color-coded Electronic)';
 const TAB_MANAGER_TEMPLATE_NO_COLOR = '(Electronic - No Color)';
-const TAB_MANAGER_DRIVE_FOLDER      = '2026 Attendance Controllers';
+const TAB_MANAGER_DRIVE_FOLDER = '2026 Attendance Controllers';
 
 
 // ---------------------------------------------------------------------------
@@ -81,8 +81,8 @@ function buildtabs2() {
  * @param {string} templateName — The name of the template sheet tab to copy.
  */
 function buildTabsFromTemplate_(templateName) {
-  const workbook     = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterSheet  = workbook.getSheetByName(TAB_MANAGER_SOURCE_SHEET);
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const rosterSheet = workbook.getSheetByName(TAB_MANAGER_SOURCE_SHEET);
   const templateSheet = workbook.getSheetByName(templateName);
 
   if (!rosterSheet) {
@@ -94,17 +94,17 @@ function buildTabsFromTemplate_(templateName) {
     return;
   }
 
-  const rows      = rosterSheet.getRange('A2:F').getValues();
-  let   created   = 0;
-  let   skipped   = 0;
+  const rows = rosterSheet.getRange('A2:F').getValues();
+  let created = 0;
+  let skipped = 0;
 
   rows.forEach((row, index) => {
     const employeeId = row[0];
-    const lastName   = row[1];
-    const firstName  = row[2];
-    const hireDate   = row[3];
+    const lastName = row[1];
+    const firstName = row[2];
+    const hireDate = row[3];
     const department = row[4];
-    const completed  = row[5];
+    const completed = row[5];
 
     if (!employeeId || !lastName || !firstName) return; // blank row
     if (completed === 'Completed') { skipped++; return; }
@@ -176,8 +176,8 @@ function buildSheetNoColor() {
  * @param {string} templateName — The name of the template sheet tab to copy.
  */
 function buildIndividualSheets_(templateName) {
-  const workbook      = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterSheet   = workbook.getSheetByName(TAB_MANAGER_SOURCE_SHEET);
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const rosterSheet = workbook.getSheetByName(TAB_MANAGER_SOURCE_SHEET);
   const templateSheet = workbook.getSheetByName(templateName);
 
   if (!rosterSheet) {
@@ -192,28 +192,28 @@ function buildIndividualSheets_(templateName) {
   // Resolve the target Drive folder, creating it if needed
   const targetFolder = getOrCreateDriveFolder_(TAB_MANAGER_DRIVE_FOLDER);
 
-  const lastRow  = rosterSheet.getLastRow();
-  const rows     = rosterSheet.getRange(`A2:F${lastRow}`).getValues();
-  let   created  = 0;
-  let   skipped  = 0;
+  const lastRow = rosterSheet.getLastRow();
+  const rows = rosterSheet.getRange(`A2:F${lastRow}`).getValues();
+  let created = 0;
+  let skipped = 0;
 
   rows.forEach((row, index) => {
     const employeeId = row[0];
-    const lastName   = row[1];
-    const firstName  = row[2];
-    const hireDate   = row[3];
+    const lastName = row[1];
+    const firstName = row[2];
+    const hireDate = row[3];
     const department = row[4];
-    const completed  = row[5];
+    const completed = row[5];
 
     if (!employeeId || !lastName || !firstName) return;
     if (completed === 'Completed') { skipped++; return; }
 
-    const fileName  = `${lastName}, ${firstName} ${employeeId} - 2026 Attendance`;
-    const tabName   = `${lastName}, ${firstName} - ${employeeId}`;
+    const fileName = `${lastName}, ${firstName} ${employeeId} - 2026 Attendance`;
+    const tabName = `${lastName}, ${firstName} - ${employeeId}`;
 
     // Create the new spreadsheet
-    const newSpreadsheet  = SpreadsheetApp.create(fileName);
-    const blankSheet      = newSpreadsheet.getActiveSheet(); // default Sheet1
+    const newSpreadsheet = SpreadsheetApp.create(fileName);
+    const blankSheet = newSpreadsheet.getActiveSheet(); // default Sheet1
 
     // Copy template into the new workbook
     templateSheet.copyTo(newSpreadsheet);
@@ -265,8 +265,8 @@ function buildIndividualSheets_(templateName) {
  * "Last, First - ID" order automatically.
  */
 function sortTabs() {
-  const workbook   = SpreadsheetApp.getActiveSpreadsheet();
-  const sheets     = workbook.getSheets();
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = workbook.getSheets();
   const sheetNames = sheets.map(s => s.getName()).sort();
 
   sheetNames.forEach((name, position) => {

@@ -1,6 +1,6 @@
 /**
  * ui.js — Custom menu and menu handler wrappers for the Infraction Notifier.
- * VERSION: 0.1.1
+ * VERSION: 1.0.0
  *
  * This file registers the "Infraction Notifier" menu when the attendance
  * controller workbook is opened, and provides thin handler functions for each
@@ -52,24 +52,24 @@ function onOpen() {
 
   // --- Infraction Notifier ---
   ui.createMenu('Infraction Notifier')
-    .addItem('Dry Run (Log Only)',  'menuDryRun')
-    .addItem('Send CNs (Live)',     'menuSendLive')
+    .addItem('Dry Run (Log Only)', 'menuDryRun')
+    .addItem('Send CNs (Live)', 'menuSendLive')
     .addSeparator()
-    .addItem('Run Expiry Check',   'menuExpireCheck')
+    .addItem('Run Expiry Check', 'menuExpireCheck')
     .addSeparator()
     .addItem('Debug: Active Sheet', 'menuDebugActiveSheet')
-    .addItem('Setup Config Sheet',  'menuSetupConfigSheet')
+    .addItem('Setup Config Sheet', 'menuSetupConfigSheet')
     .addToUi();
 
   // --- Create Tabs In Sheet (tabManager.js) ---
   ui.createMenu('Create Tabs In Sheet')
-    .addItem('Create Tabs W Color',   'buildtabs')
+    .addItem('Create Tabs W Color', 'buildtabs')
     .addItem('Create Tabs W/O Color', 'buildtabs2')
     .addToUi();
 
   // --- Create Individual Sheets (tabManager.js) ---
   ui.createMenu('Create Individual Sheets')
-    .addItem('Create Sheets W Color',   'buildSheetColor')
+    .addItem('Create Sheets W Color', 'buildSheetColor')
     .addItem('Create Sheets W/O Color', 'buildSheetNoColor')
     .addToUi();
 
@@ -129,12 +129,21 @@ function menuSendLive() {
  * Runs the CN expiry check.
  * Marks Active CNs older than EXPIRY_DAYS as Expired in the CN_Log and
  * sends expiry notifications to payroll.
+ * Only performs writes and sends emails when DRY_RUN is false — shows a
+ * warning if not, matching the same guard on menuSendLive.
  */
 function menuExpireCheck() {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   try {
+    if (DRY_RUN) { // config.js
+      SpreadsheetApp.getUi().alert(
+        'Expiry check is in dry-run mode — no CNs will be marked expired and no emails will be sent.\n\n' +
+        'Set DRY_RUN = false in config.js to enable live expiry processing.'
+      );
+      return;
+    }
     workbook.toast('Checking for expired CNs…', 'Infraction Notifier', 5);
-    expireCNsDaily(!!DRY_RUN); // cnLog.js — passes current dry-run mode
+    expireCNsDaily(false); // cnLog.js
     workbook.toast('Expiry check complete. Check Apps Script logs for details.', 'Done', 6);
   } catch (error) {
     console.error('ui: menuExpireCheck failed —', error);
@@ -153,11 +162,11 @@ function menuExpireCheck() {
 function menuDebugActiveSheet() {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   try {
-    const sheet    = workbook.getActiveSheet();
+    const sheet = workbook.getActiveSheet();
     const timeZone = Session.getScriptTimeZone();
-    const ctx      = readEmployeeContext_(sheet); // calendarParser.js
-    const year     = parseYearFromTitle_(ctx.yearTitle) || new Date().getFullYear();
-    const events   = parseCalendarEvents_(sheet, year, timeZone, ctx); // calendarParser.js
+    const ctx = readEmployeeContext_(sheet); // calendarParser.js
+    const year = parseYearFromTitle_(ctx.yearTitle) || new Date().getFullYear();
+    const events = parseCalendarEvents_(sheet, year, timeZone, ctx); // calendarParser.js
 
     events.sort((a, b) => a.date.getTime() - b.date.getTime());
 
@@ -166,7 +175,7 @@ function menuDebugActiveSheet() {
 
     events.forEach(e => {
       const dateStr = Utilities.formatDate(e.date, timeZone, 'yyyy-MM-dd');
-      const status  = e.isIgnored ? 'IGNORED' : (e.isInfraction ? 'INFRACTION' : 'other');
+      const status = e.isIgnored ? 'IGNORED' : (e.isInfraction ? 'INFRACTION' : 'other');
       console.log(`  ${dateStr}  ${e.code.padEnd(4)}  ${status.padEnd(10)}  cell ${e.a1}`);
     });
 
@@ -192,8 +201,8 @@ function menuDebugActiveSheet() {
  * setup is skipped and the manager is shown the current value.
  */
 function menuSetupConfigSheet() {
-  const workbook    = SpreadsheetApp.getActiveSpreadsheet();
-  const ui          = SpreadsheetApp.getUi();
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
 
   try {
     let configSheet = workbook.getSheetByName(INFRACTION_CONFIG_SHEET_NAME); // config.js

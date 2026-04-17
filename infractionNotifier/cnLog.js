@@ -1,6 +1,6 @@
 /**
  * cnLog.js — CN_Log sheet management, Active CNs view, and CN expiry processing.
- * VERSION: 0.1.1
+ * VERSION: 1.0.0
  *
  * This file owns all interactions with the three CN tracking sheets:
  *
@@ -45,7 +45,7 @@
 function resolveLogWorkbook_() {
   try {
     const activeWorkbook = SpreadsheetApp.getActiveSpreadsheet();
-    const configSheet    = activeWorkbook.getSheetByName(INFRACTION_CONFIG_SHEET_NAME); // config.js
+    const configSheet = activeWorkbook.getSheetByName(INFRACTION_CONFIG_SHEET_NAME); // config.js
     if (!configSheet) return activeWorkbook;
 
     const idValue = configSheet.getRange(LOG_SPREADSHEET_ID_CELL).getValue(); // config.js
@@ -77,7 +77,7 @@ function resolveLogWorkbook_() {
  */
 function getOrCreateLogSheet_() {
   const workbook = resolveLogWorkbook_();
-  let   sheet    = workbook.getSheetByName(CN_LOG_SHEET_NAME); // config.js
+  let sheet = workbook.getSheetByName(CN_LOG_SHEET_NAME); // config.js
 
   if (!sheet) {
     sheet = workbook.insertSheet(CN_LOG_SHEET_NAME);
@@ -106,7 +106,7 @@ function getOrCreateLogSheet_() {
  */
 function getOrCreateActiveCNsSheet_() {
   const workbook = resolveLogWorkbook_();
-  let   sheet    = workbook.getSheetByName(ACTIVE_CNS_SHEET_NAME); // config.js
+  let sheet = workbook.getSheetByName(ACTIVE_CNS_SHEET_NAME); // config.js
 
   if (!sheet) {
     sheet = workbook.insertSheet(ACTIVE_CNS_SHEET_NAME);
@@ -140,7 +140,7 @@ function getOrCreateActiveCNsSheet_() {
  */
 function getOrCreateExpiredCNsSheet_() {
   const workbook = resolveLogWorkbook_();
-  let   sheet    = workbook.getSheetByName(EXPIRED_CNS_SHEET_NAME); // config.js
+  let sheet = workbook.getSheetByName(EXPIRED_CNS_SHEET_NAME); // config.js
 
   if (!sheet) {
     sheet = workbook.insertSheet(EXPIRED_CNS_SHEET_NAME);
@@ -174,11 +174,11 @@ function getOrCreateExpiredCNsSheet_() {
  * @returns {Map<string, { eventsHash: string }>}
  */
 function buildLogIndex_(logSheet) {
-  const index   = new Map();
+  const index = new Map();
   const lastRow = logSheet.getLastRow();
   if (lastRow < 2) return index;
 
-  const keys   = logSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  const keys = logSheet.getRange(2, 1, lastRow - 1, 1).getValues();
   const hashes = logSheet.getRange(2, 8, lastRow - 1, 1).getValues(); // EventsHash col 8
 
   for (let i = 0; i < keys.length; i++) {
@@ -228,9 +228,9 @@ function appendActiveCNRow_(proposal, issuedAt, timeZone) {
   // plain text otherwise.
   let nameCell;
   if (proposal.sourceSpreadsheetId && proposal.sourceSheetGid != null) {
-    const url          = `https://docs.google.com/spreadsheets/d/${proposal.sourceSpreadsheetId}/edit#gid=${proposal.sourceSheetGid}`;
-    const escapedName  = String(proposal.employeeName || '').replace(/"/g, '""');
-    nameCell           = `=HYPERLINK("${url}","${escapedName}")`;
+    const url = `https://docs.google.com/spreadsheets/d/${proposal.sourceSpreadsheetId}/edit#gid=${proposal.sourceSheetGid}`;
+    const escapedName = String(proposal.employeeName || '').replace(/"/g, '""');
+    nameCell = `=HYPERLINK("${url}","${escapedName}")`;
   } else {
     nameCell = proposal.employeeName || '';
   }
@@ -243,14 +243,14 @@ function appendActiveCNRow_(proposal, issuedAt, timeZone) {
   const rowValues = [
     proposal.cnKey,
     nameCell,
-    proposal.employeeId   || '',
-    proposal.department   || '',
-    proposal.rule         || 'GLOBAL',
+    proposal.employeeId || '',
+    proposal.department || '',
+    proposal.rule || 'GLOBAL',
     proposal.count,
     formatDate(proposal.windowStart),
     formatDate(proposal.windowEnd),
     issuedAt,
-    proposal.sheetName    || '',
+    proposal.sheetName || '',
   ];
 
   const newRow = sheet.getLastRow() + 1;
@@ -280,9 +280,9 @@ function appendActiveCNRow_(proposal, issuedAt, timeZone) {
  * @param {boolean} dryRun — If true, logs what would happen but makes no changes.
  */
 function expireCNsDaily(dryRun) {
-  const timeZone   = Session.getScriptTimeZone();
-  const logSheet   = getOrCreateLogSheet_();
-  const lastRow    = logSheet.getLastRow();
+  const timeZone = Session.getScriptTimeZone();
+  const logSheet = getOrCreateLogSheet_();
+  const lastRow = logSheet.getLastRow();
 
   if (lastRow < 2) {
     console.log('cnLog: CN_Log is empty — nothing to expire.');
@@ -295,37 +295,37 @@ function expireCNsDaily(dryRun) {
   const col = {};
   headerRow.forEach((name, i) => { col[String(name).trim()] = i + 1; });
 
-  const allRows  = logSheet.getRange(2, 1, lastRow - 1, logSheet.getLastColumn()).getValues();
-  const now      = new Date();
+  const allRows = logSheet.getRange(2, 1, lastRow - 1, logSheet.getLastColumn()).getValues();
+  const now = new Date();
   const expiryMs = EXPIRY_DAYS * 24 * 60 * 60 * 1000; // config.js
-  let   expiredCount = 0;
+  let expiredCount = 0;
 
   allRows.forEach((row, rowOffset) => {
     const sheetRow = rowOffset + 2;
-    const status   = String(row[(col.Status    || 13) - 1] || '').trim() || 'Active';
+    const status = String(row[(col.Status || 13) - 1] || '').trim() || 'Active';
     if (status !== 'Active') return;
 
     const issuedStr = String(row[(col.IssuedAt || 9) - 1] || '').trim();
-    const issuedAt  = parseTimestamp_(issuedStr) || new Date(row[(col.IssuedAt || 9) - 1]);
+    const issuedAt = parseTimestamp_(issuedStr) || new Date(row[(col.IssuedAt || 9) - 1]);
     if (!issuedAt || isNaN(issuedAt.getTime())) return;
     if (now.getTime() - issuedAt.getTime() < expiryMs) return;
 
     // --- This CN has expired ---
-    const cnKey        = String(row[(col.CN_Key       || 1)  - 1] || '').trim();
-    const employeeName = String(row[(col.EmployeeName || 3)  - 1] || '').trim();
-    const employeeId   = String(row[(col.EmployeeID   || 2)  - 1] || '').trim();
-    const department   = String(row[(col.Department   || 4)  - 1] || '').trim();
-    const windowStart  = String(row[(col.WindowStart  || 5)  - 1] || '').trim();
-    const windowEnd    = String(row[(col.WindowEnd    || 6)  - 1] || '').trim();
-    const rule         = String(row[(col.Rule         || 15) - 1] || '').trim();
-    const sheetName    = String(row[(col.SheetName    || 12) - 1] || '').trim();
+    const cnKey = String(row[(col.CN_Key || 1) - 1] || '').trim();
+    const employeeName = String(row[(col.EmployeeName || 3) - 1] || '').trim();
+    const employeeId = String(row[(col.EmployeeID || 2) - 1] || '').trim();
+    const department = String(row[(col.Department || 4) - 1] || '').trim();
+    const windowStart = String(row[(col.WindowStart || 5) - 1] || '').trim();
+    const windowEnd = String(row[(col.WindowEnd || 6) - 1] || '').trim();
+    const rule = String(row[(col.Rule || 15) - 1] || '').trim();
+    const sheetName = String(row[(col.SheetName || 12) - 1] || '').trim();
     const expiredStamp = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd HH:mm:ss');
 
     console.log(`cnLog: CN expired — ${employeeName} (${employeeId}) | Rule: ${rule} | Window: ${windowStart}–${windowEnd}`);
 
     if (!dryRun) {
       // Step 1: Update CN_Log status FIRST (before email, so record is never lost)
-      if (col.Status)    logSheet.getRange(sheetRow, col.Status).setValue('Expired');
+      if (col.Status) logSheet.getRange(sheetRow, col.Status).setValue('Expired');
       if (col.ExpiredAt) logSheet.getRange(sheetRow, col.ExpiredAt).setValue(expiredStamp);
 
       // Step 2: Move the row from Active CNs to (Expired CNs)
@@ -334,7 +334,7 @@ function expireCNsDaily(dryRun) {
 
     // Step 3: Send expiry notification
     const subject = buildExpiryEmailSubject_(employeeName, employeeId, windowStart, windowEnd, rule);
-    const body    = buildExpiryEmailBody_(employeeName, employeeId, department, windowStart, windowEnd, rule, issuedStr, expiredStamp);
+    const body = buildExpiryEmailBody_(employeeName, employeeId, department, windowStart, windowEnd, rule, issuedStr, expiredStamp);
 
     if (!dryRun) {
       try {
@@ -368,7 +368,7 @@ function expireCNsDaily(dryRun) {
  */
 function moveToExpiredSheet_(cnKey, expiredStamp, employeeName, employeeId) {
   try {
-    const activeSheet  = getOrCreateActiveCNsSheet_();
+    const activeSheet = getOrCreateActiveCNsSheet_();
     const expiredSheet = getOrCreateExpiredCNsSheet_();
 
     const lastActiveRow = activeSheet.getLastRow();
@@ -378,8 +378,8 @@ function moveToExpiredSheet_(cnKey, expiredStamp, employeeName, employeeId) {
     }
 
     // Find the row by CN_Key (column A)
-    const keys    = activeSheet.getRange(2, 1, lastActiveRow - 1, 1).getDisplayValues();
-    let   foundRow = -1;
+    const keys = activeSheet.getRange(2, 1, lastActiveRow - 1, 1).getDisplayValues();
+    let foundRow = -1;
     for (let i = 0; i < keys.length; i++) {
       if (String(keys[i][0] || '').trim() === cnKey) {
         foundRow = i + 2; // 1-based sheet row
@@ -399,7 +399,7 @@ function moveToExpiredSheet_(cnKey, expiredStamp, employeeName, employeeId) {
 
     // Append to (Expired CNs) with the expiry timestamp as the last column
     const expiredRowData = activeRowData.concat([expiredStamp]);
-    const newExpiredRow  = expiredSheet.getLastRow() + 1;
+    const newExpiredRow = expiredSheet.getLastRow() + 1;
     expiredSheet.getRange(newExpiredRow, 1, 1, expiredRowData.length).setValues([expiredRowData]);
 
     // The Employee Name cell in Active CNs may be a HYPERLINK formula — copy it
@@ -469,9 +469,9 @@ function buildExpiryEmailBody_(employeeName, employeeId, department, windowStart
  * @param {string[]} expectedHeaders
  */
 function upgradeHeaders_(sheet, expectedHeaders) {
-  const existing    = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
   const existingSet = new Set(existing.map(h => String(h || '').trim()));
-  const missing     = expectedHeaders.filter(h => !existingSet.has(h));
+  const missing = expectedHeaders.filter(h => !existingSet.has(h));
   if (missing.length === 0) return;
   const merged = existing.concat(missing);
   sheet.getRange(1, 1, 1, merged.length).setValues([merged]);

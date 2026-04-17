@@ -1,6 +1,6 @@
 /**
  * infractionDetector.js — Rolling-window CN detection logic.
- * VERSION: 0.1.0
+ * VERSION: 1.0.0
  *
  * This file owns the logic for determining whether a sequence of infraction
  * events is severe enough to trigger a Counseling Notice (CN).
@@ -46,6 +46,22 @@
  *     rule:         string   — Code that triggered this CN, or "GLOBAL"
  *     windowDays:   number   — Window length used for this proposal
  *   }
+ */
+
+/**
+ * @typedef {{
+ *   cnKey:        string,
+ *   eventsHash:   string,
+ *   employeeId:   string,
+ *   employeeName: string,
+ *   department:   string,
+ *   windowStart:  Date,
+ *   windowEnd:    Date,
+ *   count:        number,
+ *   events:       Array<{ date: Date, code: string, a1: string }>,
+ *   rule:         string,
+ *   windowDays:   number
+ * }} CNProposal
  */
 
 
@@ -107,10 +123,10 @@ function buildAllCNProposals_(infractionEvents, timeZone, ctx) {
  */
 function buildRuleBasedCNs_(events, timeZone, ctx) {
   const proposals = [];
-  const rules     = CODE_RULES || {}; // config.js
+  const rules = CODE_RULES || {}; // config.js
 
   Object.keys(rules).forEach(code => {
-    const rule       = rules[code];
+    const rule = rules[code];
     const codeEvents = events
       .filter(e => e.code === code)
       .sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -119,7 +135,7 @@ function buildRuleBasedCNs_(events, timeZone, ctx) {
 
     const codeProposals = buildCNProposals_(
       codeEvents,
-      rule.threshold  || THRESHOLD_COUNT,
+      rule.threshold || THRESHOLD_COUNT,
       rule.windowDays || WINDOW_DAYS,
       timeZone,
       ctx,
@@ -159,18 +175,18 @@ function buildRuleBasedCNs_(events, timeZone, ctx) {
  * @returns {CNProposal[]}
  */
 function buildCNProposals_(events, threshold, windowDays, timeZone, ctx, ruleLabel) {
-  const proposals  = [];
+  const proposals = [];
   if (!events || events.length === 0) return proposals;
 
-  const msPerDay   = 24 * 60 * 60 * 1000;
+  const msPerDay = 24 * 60 * 60 * 1000;
   const windowSpan = (windowDays - 1) * msPerDay; // inclusive: [end - N-1 days, end]
 
-  const queue      = [];
-  let lastEndKey   = null;
+  const queue = [];
+  let lastEndKey = null;
 
   for (let i = 0; i < events.length; i++) {
-    const current  = events[i];
-    const endMs    = startOfDayMs_(current.date);
+    const current = events[i];
+    const endMs = startOfDayMs_(current.date);
 
     // Evict events from the front of the queue that fall outside the window
     while (queue.length > 0 && (endMs - startOfDayMs_(queue[0].date)) > windowSpan) {
@@ -180,8 +196,8 @@ function buildCNProposals_(events, threshold, windowDays, timeZone, ctx, ruleLab
 
     if (queue.length >= threshold) {
       const windowStart = queue[0].date;
-      const windowEnd   = current.date;
-      const endKey      = formatDateYmd_(windowEnd, timeZone);
+      const windowEnd = current.date;
+      const endKey = formatDateYmd_(windowEnd, timeZone);
 
       // Coalesce: skip if we already emitted a proposal for this same end date
       if (endKey === lastEndKey) continue;
@@ -189,7 +205,7 @@ function buildCNProposals_(events, threshold, windowDays, timeZone, ctx, ruleLab
       const eventsSnapshot = queue.map(e => ({
         date: new Date(e.date),
         code: e.code,
-        a1:   e.a1,
+        a1: e.a1,
       }));
 
       const eventsHash = computeEventsHash_(eventsSnapshot, timeZone);
@@ -198,21 +214,21 @@ function buildCNProposals_(events, threshold, windowDays, timeZone, ctx, ruleLab
         ctx.employeeId || ctx.employeeName || 'UNKNOWN',
         `RULE:${ruleLabel}`,
         formatDateYmd_(windowStart, timeZone),
-        formatDateYmd_(windowEnd,   timeZone),
+        formatDateYmd_(windowEnd, timeZone),
       ].join('|');
 
       proposals.push({
-        cnKey:        cnKey,
-        eventsHash:   eventsHash,
-        employeeId:   ctx.employeeId   || '',
+        cnKey: cnKey,
+        eventsHash: eventsHash,
+        employeeId: ctx.employeeId || '',
         employeeName: ctx.employeeName || '',
-        department:   ctx.department   || '',
-        windowStart:  windowStart,
-        windowEnd:    windowEnd,
-        count:        queue.length,
-        events:       eventsSnapshot,
-        rule:         ruleLabel,
-        windowDays:   windowDays,
+        department: ctx.department || '',
+        windowStart: windowStart,
+        windowEnd: windowEnd,
+        count: queue.length,
+        events: eventsSnapshot,
+        rule: ruleLabel,
+        windowDays: windowDays,
       });
 
       lastEndKey = endKey;
@@ -279,18 +295,3 @@ function computeEventsHash_(events, timeZone) {
     .join('');
 }
 
-/**
- * Groups an array of objects by the string key returned by keyFn.
- *
- * @param {Array}    array
- * @param {Function} keyFn — Function that returns a string key for each element.
- * @returns {Object.<string, Array>}
- */
-function groupBy_(array, keyFn) {
-  return array.reduce((groups, item) => {
-    const key = keyFn(item);
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(item);
-    return groups;
-  }, {});
-}

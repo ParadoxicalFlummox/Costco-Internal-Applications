@@ -1,6 +1,6 @@
 /**
  * calendarParser.js — Reads individual employee tabs from the attendance controller.
- * VERSION: 0.1.1
+ * VERSION: 1.0.0
  *
  * This file owns all logic for turning a raw attendance controller sheet into
  * structured event objects that the infraction detector can work with.
@@ -55,12 +55,12 @@
 function readEmployeeContext_(sheet) {
   const fields = EMPLOYEE_FIELDS; // defined in config.js
   return {
-    sheetName:    sheet.getName(),
+    sheetName: sheet.getName(),
     employeeName: String(sheet.getRange(fields.employeeName).getDisplayValue() || '').trim(),
-    employeeId:   String(sheet.getRange(fields.employeeId).getDisplayValue()   || '').trim(),
-    department:   String(sheet.getRange(fields.department).getDisplayValue()   || '').trim(),
-    hireDate:     sheet.getRange(fields.hireDate).getValue(),
-    yearTitle:    String(sheet.getRange(fields.yearTitle).getDisplayValue()    || '').trim(),
+    employeeId: String(sheet.getRange(fields.employeeId).getDisplayValue() || '').trim(),
+    department: String(sheet.getRange(fields.department).getDisplayValue() || '').trim(),
+    hireDate: sheet.getRange(fields.hireDate).getValue(),
+    yearTitle: String(sheet.getRange(fields.yearTitle).getDisplayValue() || '').trim(),
   };
 }
 
@@ -84,7 +84,7 @@ function readEmployeeContext_(sheet) {
  */
 function parseCalendarEvents_(sheet, year, timeZone, ctx) {
   const lastRow = sheet.getLastRow();
-  const events  = [];
+  const events = [];
 
   DATA_BANDS.forEach((band, bandIndex) => { // DATA_BANDS defined in config.js
     // The grid for this band runs from firstGridRow up to lastGridRow (explicit
@@ -97,15 +97,15 @@ function parseCalendarEvents_(sheet, year, timeZone, ctx) {
         : lastRow + 1;
 
     const gridStartRow = band.firstGridRow;
-    const gridEndRow   = nextBandStart - 1;
-    const numRows      = Math.max(0, gridEndRow - gridStartRow + 1);
+    const gridEndRow = nextBandStart - 1;
+    const numRows = Math.max(0, gridEndRow - gridStartRow + 1);
     if (numRows <= 0) return;
 
     START_COLUMNS.forEach(startColA1 => { // START_COLUMNS defined in config.js
       const startColIndex = colLetterToIndex_(startColA1); // 1-based
 
       // Read the month name from the header row of this block
-      const monthName  = String(
+      const monthName = String(
         sheet.getRange(band.monthRow, startColIndex).getDisplayValue() || ''
       ).trim();
       const monthIndex = monthNameToIndex_(monthName); // 0–11, or null
@@ -125,9 +125,9 @@ function parseCalendarEvents_(sheet, year, timeZone, ctx) {
           const cellValue = String(values[rowOffset][colOffset] == null ? '' : values[rowOffset][colOffset]).trim();
           if (!cellValue) continue;
 
-          const absRow   = gridStartRow + rowOffset;
-          const absCol   = startColIndex + colOffset;
-          const a1Addr   = colIndexToLetter_(absCol) + absRow;
+          const absRow = gridStartRow + rowOffset;
+          const absCol = startColIndex + colOffset;
+          const a1Addr = colIndexToLetter_(absCol) + absRow;
 
           // If this cell is a day number (1–31), update the anchor for this column
           const parsed = parseInt(cellValue, 10);
@@ -144,22 +144,22 @@ function parseCalendarEvents_(sheet, year, timeZone, ctx) {
           codes.forEach(code => {
             if (!code) return;
 
-            const isIgnored      = IGNORE_CODES.indexOf(code) >= 0;          // config.js
+            const isIgnored = IGNORE_CODES.indexOf(code) >= 0;          // config.js
             const inInfractionList = INFRACTION_CODES.indexOf(code) >= 0;    // config.js
-            const hasCodeRule    = !!(CODE_RULES && CODE_RULES[code]);        // config.js
-            const isInfraction   = (inInfractionList || hasCodeRule) && !isIgnored;
+            const hasCodeRule = !!(CODE_RULES && CODE_RULES[code]);        // config.js
+            const isInfraction = (inInfractionList || hasCodeRule) && !isIgnored;
 
             events.push({
               employeeName: ctx.employeeName,
-              employeeId:   ctx.employeeId,
-              department:   ctx.department,
-              hireDate:     ctx.hireDate,
-              month:        monthName,
-              date:         new Date(year, monthIndex, dayNum),
-              code:         code,
+              employeeId: ctx.employeeId,
+              department: ctx.department,
+              hireDate: ctx.hireDate,
+              month: monthName,
+              date: new Date(year, monthIndex, dayNum),
+              code: code,
               isInfraction: isInfraction,
-              isIgnored:    isIgnored,
-              a1:           a1Addr,
+              isIgnored: isIgnored,
+              a1: a1Addr,
             });
           });
         }
@@ -241,8 +241,8 @@ function normalizeAndSplitCodes_(cellValue) {
 function monthNameToIndex_(monthName) {
   if (!monthName) return null;
   const lookup = {
-    'JANUARY': 0, 'FEBRUARY': 1, 'MARCH':     2, 'APRIL':   3,
-    'MAY':     4, 'JUNE':     5, 'JULY':       6, 'AUGUST':  7,
+    'JANUARY': 0, 'FEBRUARY': 1, 'MARCH': 2, 'APRIL': 3,
+    'MAY': 4, 'JUNE': 5, 'JULY': 6, 'AUGUST': 7,
     'SEPTEMBER': 8, 'OCTOBER': 9, 'NOVEMBER': 10, 'DECEMBER': 11,
   };
   return lookup.hasOwnProperty(String(monthName).trim().toUpperCase())
@@ -285,7 +285,7 @@ function colIndexToLetter_(index) {
   let remaining = index;
   while (remaining > 0) {
     const remainder = (remaining - 1) % 26;
-    result    = String.fromCharCode(65 + remainder) + result;
+    result = String.fromCharCode(65 + remainder) + result;
     remaining = Math.floor((remaining - 1) / 26);
   }
   return result;

@@ -1,6 +1,6 @@
 /**
  * infractionEngine.js — Main orchestrator for the infraction detection pipeline.
- * VERSION: 0.1.1
+ * VERSION: 1.0.0
  *
  * This file contains a single public function: scanAndIssueCNs(). Its only
  * job is to call the other files in the correct order and pass data between
@@ -85,15 +85,15 @@ function sendCNsDaily() {
  * @param {{ dryRun?: boolean }} options
  */
 function scanAndIssueCNs(options) {
-  const opts     = options || {};
-  const dryRun   = opts.dryRun != null ? !!opts.dryRun : !!DRY_RUN; // config.js
+  const opts = options || {};
+  const dryRun = opts.dryRun != null ? !!opts.dryRun : !!DRY_RUN; // config.js
   const timeZone = Session.getScriptTimeZone();
 
   console.log(`infractionEngine: Starting scan — dryRun=${dryRun}, daysBack=${DAYS_BACK}`);
 
-  const workbook             = SpreadsheetApp.getActiveSpreadsheet();
-  const sourceSpreadsheetId  = workbook.getId(); // captured once; attached to every proposal
-  const sheets               = workbook.getSheets();
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sourceSpreadsheetId = workbook.getId(); // captured once; attached to every proposal
+  const sheets = workbook.getSheets();
 
   // Step 1: Open the log and build the deduplication index
   const logSheet = getOrCreateLogSheet_();   // cnLog.js
@@ -108,10 +108,10 @@ function scanAndIssueCNs(options) {
     if (!isEmployeeTab_(sheetName)) return; // calendarParser.js — skip non-employee tabs
 
     try {
-      const ctx  = readEmployeeContext_(sheet);   // calendarParser.js
+      const ctx = readEmployeeContext_(sheet);   // calendarParser.js
       const year = parseYearFromTitle_(ctx.yearTitle) || new Date().getFullYear();
 
-      const allEvents       = parseCalendarEvents_(sheet, year, timeZone, ctx); // calendarParser.js
+      const allEvents = parseCalendarEvents_(sheet, year, timeZone, ctx); // calendarParser.js
       const infractionEvents = allEvents
         .filter(e => e.isInfraction && !e.isIgnored)
         .sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -125,9 +125,9 @@ function scanAndIssueCNs(options) {
       // proposal so cnLog.js can build a direct HYPERLINK to the employee tab.
       const sourceSheetGid = sheet.getSheetId();
       proposals.forEach(p => {
-        p.sheetName           = sheetName;
+        p.sheetName = sheetName;
         p.sourceSpreadsheetId = sourceSpreadsheetId;
-        p.sourceSheetGid      = sourceSheetGid;
+        p.sourceSheetGid = sourceSheetGid;
       });
 
       console.log(
@@ -175,23 +175,23 @@ function scanAndIssueCNs(options) {
     toSend.forEach(proposal => {
       // Write to CN_Log (dedup source of truth)
       appendLogRow_(logSheet, { // cnLog.js
-        CN_Key:              proposal.cnKey,
-        EmployeeID:          proposal.employeeId,
-        EmployeeName:        proposal.employeeName,
-        Department:          proposal.department,
-        WindowStart:         formatDateYmd_(proposal.windowStart, timeZone), // infractionDetector.js
-        WindowEnd:           formatDateYmd_(proposal.windowEnd,   timeZone),
-        Count:               String(proposal.count),
-        EventsHash:          proposal.eventsHash,
-        IssuedAt:            issuedAt,
-        IssuedBy:            issuedBy,
-        DryRun:              'FALSE',
-        SheetName:           proposal.sheetName || '',
-        Status:              'Active',
-        ExpiredAt:           '',
-        Rule:                proposal.rule || 'GLOBAL',
+        CN_Key: proposal.cnKey,
+        EmployeeID: proposal.employeeId,
+        EmployeeName: proposal.employeeName,
+        Department: proposal.department,
+        WindowStart: formatDateYmd_(proposal.windowStart, timeZone), // infractionDetector.js
+        WindowEnd: formatDateYmd_(proposal.windowEnd, timeZone),
+        Count: String(proposal.count),
+        EventsHash: proposal.eventsHash,
+        IssuedAt: issuedAt,
+        IssuedBy: issuedBy,
+        DryRun: 'FALSE',
+        SheetName: proposal.sheetName || '',
+        Status: 'Active',
+        ExpiredAt: '',
+        Rule: proposal.rule || 'GLOBAL',
         SourceSpreadsheetId: proposal.sourceSpreadsheetId || '',
-        SourceSheetGid:      proposal.sourceSheetGid != null ? String(proposal.sourceSheetGid) : '',
+        SourceSheetGid: proposal.sourceSheetGid != null ? String(proposal.sourceSheetGid) : '',
       });
 
       // Write to Active CNs (manager-facing view with hyperlink)

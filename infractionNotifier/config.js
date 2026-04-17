@@ -1,6 +1,6 @@
 /**
  * config.js — Central configuration for the Costco Infraction Notifier.
- * VERSION: 0.1.2
+ * VERSION: 1.0.0
  *
  * This file is the single source of truth for every configurable value in the
  * infraction detection and notification system. Nothing in any other file should
@@ -97,10 +97,10 @@ const THRESHOLD_COUNT = 3;
  * here without touching any other file.
  */
 const CODE_RULES = {
-  TD: { threshold: 3, windowDays: 30  },
-  NS: { threshold: 1, windowDays: 30  },
-  SE: { threshold: 3, windowDays: 30  },
-  MP: { threshold: 3, windowDays: 30  },
+  TD: { threshold: 3, windowDays: 30 },
+  NS: { threshold: 1, windowDays: 30 },
+  SE: { threshold: 3, windowDays: 30 },
+  MP: { threshold: 3, windowDays: 30 },
   SZ: { threshold: 3, windowDays: 365 },
 };
 
@@ -178,7 +178,7 @@ const EXPIRY_DAYS = 180;
  * controller uses a different layout, update these values here.
  */
 const DATA_BANDS = [
-  { monthRow: 5,  dayOfWeekRow: 6,  firstGridRow: 7,  lastGridRow: 30 },
+  { monthRow: 5, dayOfWeekRow: 6, firstGridRow: 7, lastGridRow: 30 },
   { monthRow: 32, dayOfWeekRow: 33, firstGridRow: 34, lastGridRow: 57 },
   { monthRow: 59, dayOfWeekRow: 60, firstGridRow: 61, lastGridRow: 83 },
 ];
@@ -210,11 +210,11 @@ const DAY_COLS_PER_BLOCK = 7;
  *   hireDate     — AD3 e.g. date value
  */
 const EMPLOYEE_FIELDS = {
-  yearTitle:    'D1',
+  yearTitle: 'D1',
   employeeName: 'X1',
-  department:   'R3',
-  employeeId:   'X3',
-  hireDate:     'AD3',
+  department: 'R3',
+  employeeId: 'X3',
+  hireDate: 'AD3',
 };
 
 /**
