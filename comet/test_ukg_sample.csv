@@ -1,0 +1,29 @@
+Report: Employee Export,,,,,,,,,,
+Generated: 04/18/2026,,,,,,,,,,
+Warehouse: 0123,,,,,,,,,,
+,,,,,,,,,,
+,,,,,,,,,,
+,,,,,,,,,,
+,,,,,,,,,,
+,,,,,,,,,,
+PERSON_NAME,PERSON_ID,ADJUSTED_HIRE_DATE,HOME_LOCATION,DEPARTMENT,POSITION,STATUS,WAGE_TYPE,PAY_RATE,SUPERVISOR,EMAIL
+"Smith, John",10001,04/15/2019,Maintenance,Maintenance,Maintenance Associate,Active,Hourly,22.50,Williams James,jsmith@costco.com
+"Le, Tony",10002,03/22/2017,Night Merch,Night Merch,Merchandise Associate,Active,Hourly,24.75,Garcia Maria,tle@costco.com
+"Johnson, Sarah",10003,11/08/2021,Front End,Front End,Cashier,Active,Hourly,21.00,Williams James,sjohnson@costco.com
+"Nguyen, Kevin",10004,06/30/2020,Maintenance,Maintenance,Maintenance Associate,Active,Hourly,23.00,Williams James,knguyen@costco.com
+"Garcia, Maria",10005,01/14/2016,Night Merch,Night Merch,Merchandise Supervisor,Active,Hourly,28.50,Rodriguez Carlos,mgarcia@costco.com
+"Patel, Priya",10006,09/03/2022,Front End,Front End,Cashier,Active,Hourly,21.00,Williams James,ppatel@costco.com
+"Williams, James",10007,07/19/2014,Maintenance,Maintenance,Maintenance Supervisor,Active,Hourly,31.00,Rodriguez Carlos,jwilliams@costco.com
+"Chen, David",10008,02/27/2023,Night Merch,Night Merch,Merchandise Associate,Active,Hourly,21.50,Garcia Maria,dchen@costco.com
+"Rodriguez, Carlos",10009,05/11/2013,Front End,Front End,Front End Manager,Active,Salary,58000.00,,crodriguez@costco.com
+"Kim, Rachel",10010,08/16/2018,Maintenance,Maintenance,Maintenance Associate,Active,Hourly,23.25,Williams James,rkim@costco.com
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,
+zz-newHire,,,,,,,,,

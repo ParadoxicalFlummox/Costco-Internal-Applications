@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <?!= include('stylesheet') ?>
+</head>
+<body>
+
+  <!-- =====================================================================
+       Navbar
+       ===================================================================== -->
+  <nav class="navbar comet-navbar">
+    <div class="container-fluid">
+      <span class="comet-brand navbar-brand mb-0">
+        <span class="comet-logo-icon">&#9733;</span>COMET
+      </span>
+      <ul class="navbar-nav flex-row ms-3">
+        <li class="nav-item">
+          <a class="nav-link active" data-view="schedule"  href="#">Schedule</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" data-view="absences"   href="#">Absences</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" data-view="infractions" href="#">Infractions</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" data-view="admin"      href="#">Admin</a>
+        </li>
+      </ul>
+    </div>
+  </nav>
+
+
+  <!-- =====================================================================
+       Main Content
+       ===================================================================== -->
+  <main class="comet-main">
+
+
+    <!-- -------------------------------------------------------------------
+         Schedule View
+         ------------------------------------------------------------------- -->
+    <div id="view-schedule" class="comet-view">
+      <div class="comet-view-header d-flex align-items-center justify-content-between">
+        <h1 class="comet-view-title">Schedule Generator</h1>
+      </div>
+
+      <!-- Controls row -->
+      <div class="row g-2 mb-3 align-items-end">
+        <div class="col-auto">
+          <label class="form-label mb-1 small fw-semibold" for="scheduleDept">Department</label>
+          <select id="scheduleDept" class="form-select form-select-sm" style="min-width:180px;">
+            <option value="">— select —</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-1 small fw-semibold" for="scheduleWeek">Week of (Monday)</label>
+          <input type="date" id="scheduleWeek" class="form-control form-control-sm">
+        </div>
+        <div class="col-auto">
+          <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
+          <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
+        </div>
+      </div>
+
+      <!-- Schedule table output -->
+      <div id="scheduleTableContainer" class="comet-table-container">
+        <div class="p-3 text-comet-muted small">Select a department and week, then click Generate.</div>
+      </div>
+    </div>
+
+
+    <!-- -------------------------------------------------------------------
+         Absences View
+         ------------------------------------------------------------------- -->
+    <div id="view-absences" class="comet-view" style="display:none;">
+      <div class="comet-view-header d-flex align-items-center justify-content-between">
+        <h1 class="comet-view-title">Absence Log</h1>
+        <div class="d-flex align-items-center gap-2">
+          <label class="form-label mb-0 small fw-semibold" for="absenceDate">Date</label>
+          <input type="date" id="absenceDate" class="form-control form-control-sm" style="width:auto;">
+          <button id="btnNewAbsence" class="btn btn-primary btn-sm">+ New Entry</button>
+        </div>
+      </div>
+
+      <div class="comet-table-container">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Dept</th>
+              <th>Time</th>
+              <th>Callout</th>
+              <th>FMLA</th>
+              <th>No Show</th>
+              <th>Comment</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="absenceTableBody">
+            <tr><td colspan="8" class="text-comet-muted small p-3">No entries yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- -------------------------------------------------------------------
+         Infractions View
+         ------------------------------------------------------------------- -->
+    <div id="view-infractions" class="comet-view" style="display:none;">
+      <div class="comet-view-header d-flex align-items-center justify-content-between">
+        <h1 class="comet-view-title">CN Dashboard</h1>
+        <div class="d-flex gap-2">
+          <div class="form-check form-switch mb-0 d-flex align-items-center me-2">
+            <input class="form-check-input" type="checkbox" id="dryRunToggle" checked>
+            <label class="form-check-label ms-2 small" for="dryRunToggle">Dry Run</label>
+          </div>
+          <button id="btnRunScan"    class="btn btn-primary btn-sm">Run CN Scan</button>
+          <button id="btnRunExpiry"  class="btn btn-outline-secondary btn-sm">Run Expiry Check</button>
+        </div>
+      </div>
+
+      <div class="comet-table-container">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Dept</th>
+              <th>Rule</th>
+              <th>Count</th>
+              <th>Window Start</th>
+              <th>Window End</th>
+              <th>Issued At</th>
+              <th>Days Left</th>
+            </tr>
+          </thead>
+          <tbody id="cnTableBody">
+            <tr><td colspan="8" class="text-comet-muted small p-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- -------------------------------------------------------------------
+         Admin View
+         ------------------------------------------------------------------- -->
+    <div id="view-admin" class="comet-view" style="display:none;">
+      <div class="comet-view-header">
+        <h1 class="comet-view-title">Admin</h1>
+      </div>
+
+      <div class="row g-3">
+
+        <!-- UKG Import -->
+        <div class="col-12 col-md-6">
+          <div class="card h-100">
+            <div class="card-header fw-semibold">UKG Import</div>
+            <div class="card-body">
+              <p class="small text-comet-muted mb-2">Upload a UKG employee CSV export to update the Employees sheet.</p>
+              <input type="file" id="ukgFileInput" accept=".csv" class="form-control form-control-sm mb-2">
+              <button id="btnImportUKG" class="btn btn-primary btn-sm">Import</button>
+              <div id="importResult" class="mt-2 small"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schedule Settings -->
+        <div class="col-12 col-md-6">
+          <div class="card h-100">
+            <div class="card-header fw-semibold">Schedule Settings</div>
+            <div class="card-body">
+              <div class="mb-2">
+                <label class="form-label small fw-semibold mb-1" for="settingsDept">Department</label>
+                <select id="settingsDept" class="form-select form-select-sm" data-dept-select>
+                  <option value="">— select —</option>
+                </select>
+              </div>
+              <div id="deptSettingsArea" style="display:none;">
+                <p class="small fw-semibold mt-3 mb-1">Staffing Requirements</p>
+                <table class="table table-sm mb-2" id="staffingReqsTable">
+                  <thead><tr><th>Day</th><th>Count</th><th>Mode</th></tr></thead>
+                  <tbody id="staffingReqsBody"></tbody>
+                </table>
+                <p class="small fw-semibold mt-3 mb-1">Shift Definitions</p>
+                <table class="table table-sm mb-2" id="shiftDefsTable">
+                  <thead><tr><th>Name</th><th>FT/PT</th><th>Start</th><th>End</th><th>Paid Hrs</th><th>Lunch</th><th></th></tr></thead>
+                  <tbody id="shiftDefsBody"></tbody>
+                </table>
+                <button id="btnAddShift" class="btn btn-outline-secondary btn-sm mb-2">+ Add Shift</button>
+                <br>
+                <button id="btnSaveDeptSettings" class="btn btn-primary btn-sm">Save Settings</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Employee List -->
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header d-flex align-items-center justify-content-between fw-semibold">
+              <span>Employee List</span>
+              <input type="search" id="employeeSearch" placeholder="Search…"
+                     class="form-control form-control-sm ms-2" style="max-width:220px;">
+            </div>
+            <div class="card-body p-0">
+              <div class="comet-table-container" style="border:none; border-radius:0;">
+                <table class="table table-hover mb-0">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>ID</th>
+                      <th>Hire Date</th>
+                      <th>Department</th>
+                      <th>Status</th>
+                      <th>FT/PT</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="employeeTableBody">
+                    <tr><td colspan="7" class="text-comet-muted small p-3">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- First-Run Setup -->
+        <div class="col-12 col-md-6">
+          <div class="card">
+            <div class="card-header fw-semibold">Setup</div>
+            <div class="card-body">
+              <p class="small text-comet-muted mb-2">Creates all required sheets if they don't exist. Safe to run multiple times.</p>
+              <button id="btnRunSetup" class="btn btn-outline-secondary btn-sm">Run Setup</button>
+              <div id="setupResult" class="mt-2 small"></div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /.row -->
+    </div><!-- /#view-admin -->
+
+  </main>
+
+
+  <!-- =====================================================================
+       Loading Overlay
+       ===================================================================== -->
+  <div id="loadingOverlay" class="comet-loading-overlay" style="display:none;">
+    <div class="spinner-border text-primary" role="status">
+      <span class="visually-hidden">Loading…</span>
+    </div>
+  </div>
+
+
+  <!-- =====================================================================
+       Toast
+       ===================================================================== -->
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1100;">
+    <div id="cometToast" class="toast align-items-center border-0" role="alert" aria-live="assertive">
+      <div class="d-flex">
+        <div class="toast-body" id="cometToastBody"></div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =====================================================================
+       Absence Entry Modal
+       ===================================================================== -->
+  <div id="absenceModal" class="modal" tabindex="-1" style="display:none;">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">New Absence Entry</h5>
+          <button type="button" class="btn-close" onclick="closeModal('absenceModal')"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label small">Employee Name</label>
+            <input type="text" id="absenceName" class="form-control form-control-sm" list="absenceEmployeeList" placeholder="Last, First">
+            <datalist id="absenceEmployeeList"></datalist>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Department</label>
+            <input type="text" id="absenceDept" class="form-control form-control-sm" list="absenceDeptList">
+            <datalist id="absenceDeptList"></datalist>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Time Called</label>
+            <input type="time" id="absenceTime" class="form-control form-control-sm">
+          </div>
+          <div class="mb-2 d-flex gap-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="absenceIsCallout">
+              <label class="form-check-label small" for="absenceIsCallout">Call-Out</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="absenceIsFmla">
+              <label class="form-check-label small" for="absenceIsFmla">FMLA</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="absenceIsNoShow">
+              <label class="form-check-label small" for="absenceIsNoShow">No Show</label>
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Comment</label>
+            <textarea id="absenceComment" class="form-control form-control-sm" rows="2"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary btn-sm" onclick="closeModal('absenceModal')">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="btnSaveAbsence">Save Entry</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =====================================================================
+       Employee Edit Modal
+       ===================================================================== -->
+  <div id="employeeEditModal" class="modal" tabindex="-1" style="display:none;">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Employee — Schedule Fields</h5>
+          <button type="button" class="btn-close" onclick="closeModal('employeeEditModal')"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editEmployeeId">
+          <div class="row g-2">
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">FT / PT</label>
+              <select id="editFtpt" class="form-select form-select-sm">
+                <option value="">— —</option>
+                <option value="FT">FT</option>
+                <option value="PT">PT</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Day Off Pref 1</label>
+              <select id="editDayOffPrefOne" class="form-select form-select-sm">
+                <option value="">— none —</option>
+                <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Day Off Pref 2</label>
+              <select id="editDayOffPrefTwo" class="form-select form-select-sm">
+                <option value="">— none —</option>
+                <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Role</label>
+              <input type="text" id="editRole" class="form-control form-control-sm" placeholder="e.g. Cashier">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label small fw-semibold">Preferred Shift</label>
+              <input type="text" id="editPreferredShift" class="form-control form-control-sm"
+                     list="editShiftNameList" placeholder="e.g. Morning">
+              <datalist id="editShiftNameList"></datalist>
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label small fw-semibold">Qualified Shifts</label>
+              <input type="text" id="editQualifiedShifts" class="form-control form-control-sm"
+                     placeholder="Comma-separated, e.g. Morning, Closing">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Vacation Dates</label>
+              <input type="text" id="editVacationDates" class="form-control form-control-sm"
+                     placeholder="Comma-separated, e.g. 2026-07-04, 07/05">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary btn-sm" onclick="closeModal('employeeEditModal')">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="btnSaveEmployee">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =====================================================================
+       Cell Override Modal
+       ===================================================================== -->
+  <div id="cellOverrideModal" class="modal" tabindex="-1" style="display:none;">
+    <div class="modal-dialog modal-sm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="cellOverrideModalTitle">Edit Cell</h5>
+          <button type="button" class="btn-close" onclick="closeModal('cellOverrideModal')"></button>
+        </div>
+        <div class="modal-body d-flex flex-column gap-2">
+          <button class="btn btn-primary btn-sm" data-override-type="SHIFT">Assign Shift</button>
+          <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC">Mark Vacation</button>
+          <button class="btn btn-secondary btn-sm" data-override-type="RDO">Mark RDO</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal backdrop (shared, toggled by openModal/closeModal) -->
+  <div id="modalBackdrop" class="modal-backdrop fade" style="display:none;"></div>
+
+
+  <?!= include('javascript') ?>
+</body>
+</html>
