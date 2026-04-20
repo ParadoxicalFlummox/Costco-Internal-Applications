@@ -1,6 +1,6 @@
 /**
  * callLog.js — Absence log sheet management and email notifications for COMET.
- * VERSION: 0.1.0
+ * VERSION: 0.2.4
  *
  * This file owns all server-side logic for the Absence Log feature:
  *   - Auto-creating a Call Log sheet for each new week
@@ -18,13 +18,15 @@
  *   A (0)  — Employee Name
  *   B (1)  — Employee ID
  *   C (2)  — (reserved)
- *   D (3)  — Is Callout    (checkbox)
+ *   D (3)  — Is Callout       (checkbox)
  *   E (4)  — (reserved)
- *   F (5)  — Is FMLA       (checkbox)
- *   G (6)  — Is No Show    (checkbox)
+ *   F (5)  — Is FMLA          (checkbox)
+ *   G (6)  — Is No Show       (checkbox)
  *   H (7)  — Department
- *   I (8)  — Time Called   (HH:MM)
- *   J–N    — (reserved / comment overflow)
+ *   I (8)  — Time Called      (HH:MM)
+ *   J (9)  — Manager          (who took the call)
+ *   K (10) — Scheduled Shift
+ *   L-M    — (reserved)
  *   N (13) — Comment
  *   O (14) — Date          (date value)
  *
@@ -88,14 +90,16 @@ function getCallLogEntriesForDate_(dateString) {
  * Creates the sheet if it does not exist yet.
  *
  * @param {{
- *   name:        string,
- *   employeeId:  string,
- *   department:  string,
- *   time:        string,
- *   isCallout:   boolean,
- *   isFmla:      boolean,
- *   isNoShow:    boolean,
- *   comment:     string,
+ *   name:             string,
+ *   employeeId:       string,
+ *   department:       string,
+ *   time:             string,
+ *   manager:          string,
+ *   scheduledShift:   string,
+ *   isCallout:        boolean,
+ *   isFmla:           boolean,
+ *   isNoShow:         boolean,
+ *   comment:          string,
  * }} data
  * @returns {{ sheetName: string, rowNumber: number }}
  */
@@ -105,15 +109,17 @@ function appendCallLogEntry_(data) {
 
   // Build the 15-column row matching the Call Log layout
   const row = new Array(CALL_LOG_COLUMN.DATE + 1).fill('');
-  row[CALL_LOG_COLUMN.NAME]        = data.name       || '';
-  row[CALL_LOG_COLUMN.EMPLOYEE_ID] = data.employeeId || '';
-  row[CALL_LOG_COLUMN.IS_CALLOUT]  = !!data.isCallout;
-  row[CALL_LOG_COLUMN.IS_FMLA]     = !!data.isFmla;
-  row[CALL_LOG_COLUMN.IS_NOSHOW]   = !!data.isNoShow;
-  row[CALL_LOG_COLUMN.DEPARTMENT]  = data.department || '';
-  row[CALL_LOG_COLUMN.TIME]        = data.time       || '';
-  row[CALL_LOG_COLUMN.COMMENT]     = data.comment    || '';
-  row[CALL_LOG_COLUMN.DATE]        = today;
+  row[CALL_LOG_COLUMN.NAME]             = data.name            || '';
+  row[CALL_LOG_COLUMN.EMPLOYEE_ID]      = data.employeeId      || '';
+  row[CALL_LOG_COLUMN.IS_CALLOUT]       = !!data.isCallout;
+  row[CALL_LOG_COLUMN.IS_FMLA]          = !!data.isFmla;
+  row[CALL_LOG_COLUMN.IS_NOSHOW]        = !!data.isNoShow;
+  row[CALL_LOG_COLUMN.DEPARTMENT]       = data.department      || '';
+  row[CALL_LOG_COLUMN.TIME]             = data.time            || '';
+  row[CALL_LOG_COLUMN.MANAGER]          = data.manager         || '';
+  row[CALL_LOG_COLUMN.SCHEDULED_SHIFT]  = data.scheduledShift  || '';
+  row[CALL_LOG_COLUMN.COMMENT]          = data.comment         || '';
+  row[CALL_LOG_COLUMN.DATE]             = today;
 
   const newRow = sheet.getLastRow() + 1;
   sheet.getRange(newRow, 1, 1, row.length).setValues([row]);
@@ -185,16 +191,24 @@ function buildEmailContent_(entry) {
   const lines = [
     'COMET Absence Notification',
     '──────────────────────────',
-    `Employee:   ${entry.name}`,
-    `ID:         ${entry.employeeId || '—'}`,
-    `Department: ${entry.department || '—'}`,
-    `Date:       ${dateStr}`,
-    `Time Called: ${entry.time || '—'}`,
-    `Type:       ${typeLabel}`,
+    `Employee:        ${entry.name}`,
+    `ID:              ${entry.employeeId || '—'}`,
+    `Department:      ${entry.department || '—'}`,
+    `Date:            ${dateStr}`,
+    `Time Called:     ${entry.time || '—'}`,
+    `Type:            ${typeLabel}`,
   ];
 
+  if (entry.manager) {
+    lines.push(`Manager:         ${entry.manager}`);
+  }
+
+  if (entry.scheduledShift) {
+    lines.push(`Scheduled Shift: ${entry.scheduledShift}`);
+  }
+
   if (entry.comment) {
-    lines.push(`Comment:    ${entry.comment}`);
+    lines.push(`Comment:         ${entry.comment}`);
   }
 
   lines.push('', '──────────────────────────');
@@ -270,15 +284,17 @@ function writeCallLogHeader_(sheet, date) {
 
   // Row 2 — column headers
   const headers = new Array(totalCols).fill('');
-  headers[CALL_LOG_COLUMN.NAME]        = 'Employee Name';
-  headers[CALL_LOG_COLUMN.EMPLOYEE_ID] = 'Employee ID';
-  headers[CALL_LOG_COLUMN.IS_CALLOUT]  = 'Call-Out';
-  headers[CALL_LOG_COLUMN.IS_FMLA]     = 'FMLA';
-  headers[CALL_LOG_COLUMN.IS_NOSHOW]   = 'No Show';
-  headers[CALL_LOG_COLUMN.DEPARTMENT]  = 'Department';
-  headers[CALL_LOG_COLUMN.TIME]        = 'Time Called';
-  headers[CALL_LOG_COLUMN.COMMENT]     = 'Comment';
-  headers[CALL_LOG_COLUMN.DATE]        = 'Date';
+  headers[CALL_LOG_COLUMN.NAME]             = 'Employee Name';
+  headers[CALL_LOG_COLUMN.EMPLOYEE_ID]      = 'Employee ID';
+  headers[CALL_LOG_COLUMN.IS_CALLOUT]       = 'Call-Out';
+  headers[CALL_LOG_COLUMN.IS_FMLA]          = 'FMLA';
+  headers[CALL_LOG_COLUMN.IS_NOSHOW]        = 'No Show';
+  headers[CALL_LOG_COLUMN.DEPARTMENT]       = 'Department';
+  headers[CALL_LOG_COLUMN.TIME]             = 'Time Called';
+  headers[CALL_LOG_COLUMN.MANAGER]          = 'Manager';
+  headers[CALL_LOG_COLUMN.SCHEDULED_SHIFT]  = 'Scheduled Shift';
+  headers[CALL_LOG_COLUMN.COMMENT]          = 'Comment';
+  headers[CALL_LOG_COLUMN.DATE]             = 'Date';
 
   sheet.getRange(2, 1, 1, totalCols)
     .setValues([headers])
@@ -289,13 +305,23 @@ function writeCallLogHeader_(sheet, date) {
   sheet.setFrozenRows(2);
   sheet.setTabColor('#57BB8A');
 
-  // Column widths
-  sheet.setColumnWidth(CALL_LOG_COLUMN.NAME + 1,        180);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.EMPLOYEE_ID + 1, 110);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.DEPARTMENT + 1,  150);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.TIME + 1,        100);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.COMMENT + 1,     250);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.DATE + 1,        110);
+  // Column widths for data columns
+  sheet.setColumnWidth(CALL_LOG_COLUMN.NAME + 1,             180);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.EMPLOYEE_ID + 1,      110);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.DEPARTMENT + 1,       150);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.TIME + 1,             100);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.MANAGER + 1,          150);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.SCHEDULED_SHIFT + 1,  120);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.COMMENT + 1,          250);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.DATE + 1,             110);
+
+  // Compress reserved columns (hide visual gaps)
+  sheet.setColumnWidth(3,  1); // Column C (2-indexed as 3)
+  sheet.setColumnWidth(5,  1); // Column E (4-indexed as 5)
+  sheet.setColumnWidth(10, 1); // Column J (9-indexed as 10)
+  sheet.setColumnWidth(11, 1); // Column K (10-indexed as 11)
+  sheet.setColumnWidth(12, 1); // Column L (11-indexed as 12)
+  sheet.setColumnWidth(13, 1); // Column M (12-indexed as 13)
 }
 
 /**
@@ -333,17 +359,19 @@ function getMondayOfWeek_(date) {
 
 /**
  * @typedef {{
- *   name:       string,
- *   employeeId: string,
- *   isCallout:  boolean,
- *   isFmla:     boolean,
- *   isNoShow:   boolean,
- *   department: string,
- *   time:       string,
- *   comment:    string,
- *   dateRaw:    any,
- *   sheetName:  string,
- *   rowNumber:  number,
+ *   name:             string,
+ *   employeeId:       string,
+ *   isCallout:        boolean,
+ *   isFmla:           boolean,
+ *   isNoShow:         boolean,
+ *   department:       string,
+ *   time:             string,
+ *   manager:          string,
+ *   scheduledShift:   string,
+ *   comment:          string,
+ *   dateRaw:          any,
+ *   sheetName:        string,
+ *   rowNumber:        number,
  * }} CallLogEntry
  */
 
@@ -357,15 +385,17 @@ function getMondayOfWeek_(date) {
  */
 function rowToCallLogEntry_(row, sheetName, rowNumber) {
   return {
-    name:       String(row[CALL_LOG_COLUMN.NAME]        || '').trim(),
-    employeeId: String(row[CALL_LOG_COLUMN.EMPLOYEE_ID] || '').trim(),
-    isCallout:  coerceBool_(row[CALL_LOG_COLUMN.IS_CALLOUT]),
-    isFmla:     coerceBool_(row[CALL_LOG_COLUMN.IS_FMLA]),
-    isNoShow:   coerceBool_(row[CALL_LOG_COLUMN.IS_NOSHOW]),
-    department: String(row[CALL_LOG_COLUMN.DEPARTMENT]  || '').trim(),
-    time:       formatCallLogTime_(row[CALL_LOG_COLUMN.TIME]),
-    comment:    String(row[CALL_LOG_COLUMN.COMMENT]     || '').trim(),
-    dateRaw:    row[CALL_LOG_COLUMN.DATE],
+    name:             String(row[CALL_LOG_COLUMN.NAME]             || '').trim(),
+    employeeId:       String(row[CALL_LOG_COLUMN.EMPLOYEE_ID]      || '').trim(),
+    isCallout:        coerceBool_(row[CALL_LOG_COLUMN.IS_CALLOUT]),
+    isFmla:           coerceBool_(row[CALL_LOG_COLUMN.IS_FMLA]),
+    isNoShow:         coerceBool_(row[CALL_LOG_COLUMN.IS_NOSHOW]),
+    department:       String(row[CALL_LOG_COLUMN.DEPARTMENT]       || '').trim(),
+    time:             formatCallLogTime_(row[CALL_LOG_COLUMN.TIME]),
+    manager:          String(row[CALL_LOG_COLUMN.MANAGER]          || '').trim(),
+    scheduledShift:   String(row[CALL_LOG_COLUMN.SCHEDULED_SHIFT]  || '').trim(),
+    comment:          String(row[CALL_LOG_COLUMN.COMMENT]          || '').trim(),
+    dateRaw:          row[CALL_LOG_COLUMN.DATE],
     sheetName,
     rowNumber,
   };

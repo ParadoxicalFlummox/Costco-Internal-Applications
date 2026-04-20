@@ -1,7 +1,7 @@
 <script>
 /* ============================================================
    javascript.html — COMET Frontend JavaScript
-   VERSION: 0.2.0
+   VERSION: 0.2.6
 
    Loaded via <?!= include('javascript') ?> at the bottom of
    index.html. All modules are plain-object namespaces; no
@@ -58,6 +58,24 @@ var UI = (function() {
       link.addEventListener('click', function(e) {
         e.preventDefault();
         var viewName = link.dataset.view;
+
+        // --- Cleanup outgoing view ---
+        // Close any open modals
+        document.querySelectorAll('.modal.show').forEach(function(m) {
+          closeModal(m.id);
+        });
+        // Collapse dept settings panel in Admin
+        var settingsArea = document.getElementById('deptSettingsArea');
+        if (settingsArea) settingsArea.style.display = 'none';
+        var settingsDept = document.getElementById('settingsDept');
+        if (settingsDept) settingsDept.value = '';
+        // Clear schedule grid so it doesn't linger when returning
+        var scheduleContainer = document.getElementById('scheduleTableContainer');
+        if (scheduleContainer) {
+          scheduleContainer.innerHTML = '<div class="p-3 text-comet-muted small">Select a department and week, then click Generate.</div>';
+        }
+
+        // --- Switch view ---
         document.querySelectorAll('.nav-link[data-view]').forEach(function(l) {
           l.classList.remove('active');
         });
@@ -225,17 +243,9 @@ var Schedule = (function() {
   var _pendingOverride = null; // { employeeId, dayIndex }
 
   function onShow() {
+    // Refresh dept dropdown in case departments were added since startup
     UI.callServer('getDepartments', undefined, function(data) {
-      var sel = document.getElementById('scheduleDept');
-      // Clear and repopulate, preserving the placeholder
-      while (sel.options.length > 1) sel.remove(1);
-      (data.departments || []).forEach(function(dept) {
-        var opt = document.createElement('option');
-        opt.value = opt.textContent = dept;
-        sel.appendChild(opt);
-      });
-      // Also populate Admin dept selects
-      _populateDeptSelects(data.departments || []);
+      _populateAllDeptSelects(data.departments || []);
     });
 
     document.getElementById('btnGenerate').onclick = handleGenerate;
@@ -263,7 +273,23 @@ var Schedule = (function() {
       _weekGrid      = data.weekGrid;
       _employeeList  = data.employeeList;
       renderScheduleGrid();
-      UI.showToast('Schedule generated.', 'success');
+
+      // Warn about employees who ended up with all non-SHIFT days — likely
+      // missing shift config or FT/PT not set in the Employees sheet.
+      var unscheduled = (_employeeList || []).filter(function(emp, ei) {
+        return (_weekGrid[ei] || []).every(function(cell) {
+          return cell.type !== 'SHIFT';
+        });
+      });
+      if (unscheduled.length > 0) {
+        UI.showToast(
+          unscheduled.length + ' employee(s) could not be scheduled — check their FT/PT and Qualified Shifts in Admin → Employee List: '
+          + unscheduled.map(function(e) { return e.name; }).join(', '),
+          'error'
+        );
+      } else {
+        UI.showToast('Schedule generated.', 'success');
+      }
     });
   }
 
@@ -276,20 +302,64 @@ var Schedule = (function() {
     _currentDept   = dept;
     _currentMonday = monday;
 
-    UI.callServer('getScheduleForWeek', [dept, monday], function(data) {
+    // Load all existing weeks for the selected dept in the same calendar month
+    UI.callServer('getScheduleWeeksForMonth', [dept, monday], function(data) {
+      var weeks = data.weeks || [];
+      if (weeks.length === 0) {
+        UI.showToast('No schedules found for ' + dept + ' this month. Click Generate to create one.', 'info');
+        return;
+      }
+
+      // Build week-tab buttons above the grid
+      var container = document.getElementById('scheduleTableContainer');
+      var tabHtml = '<div class="d-flex gap-2 flex-wrap p-2 border-bottom mb-0" id="weekTabBar">';
+      weeks.forEach(function(w) {
+        var d = new Date(w.mondayDate + 'T00:00:00');
+        var label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        var active = w.mondayDate === monday ? ' btn-primary' : ' btn-outline-secondary';
+        tabHtml += '<button class="btn btn-sm' + active + '" '
+                + 'data-monday="' + esc(w.mondayDate) + '" '
+                + 'onclick="Schedule._onWeekTabClick(this)">'
+                + 'Week of ' + label + '</button>';
+      });
+      tabHtml += '</div><div id="scheduleGridInner"></div>';
+      container.innerHTML = tabHtml;
+
+      // Auto-load the first week (or the selected one if present)
+      var toLoad = weeks.find(function(w) { return w.mondayDate === monday; }) || weeks[0];
+      _loadWeekIntoGrid(toLoad.mondayDate);
+    });
+  }
+
+  function _loadWeekIntoGrid(mondayDate) {
+    var dept = _currentDept;
+    UI.callServer('getScheduleForWeek', [dept, mondayDate], function(data) {
       if (!data.weekGrid) {
-        UI.showToast('No schedule found for this week. Click Generate to create one.', 'info');
+        document.getElementById('scheduleGridInner').innerHTML =
+          '<div class="p-3 text-comet-muted small">No schedule data for this week.</div>';
         return;
       }
       _weekSheetName = data.weekSheetName;
       _weekGrid      = data.weekGrid;
       _employeeList  = data.employeeList;
-      renderScheduleGrid();
+      _currentMonday = mondayDate;
+      renderScheduleGrid(true); // true = render into #scheduleGridInner
     });
   }
 
-  function renderScheduleGrid() {
-    var container = document.getElementById('scheduleTableContainer');
+  function _onWeekTabClick(btn) {
+    // Update active state on tab bar
+    document.querySelectorAll('#weekTabBar button').forEach(function(b) {
+      b.className = b.className.replace('btn-primary', 'btn-outline-secondary');
+    });
+    btn.className = btn.className.replace('btn-outline-secondary', 'btn-primary');
+    _loadWeekIntoGrid(btn.dataset.monday);
+  }
+
+  function renderScheduleGrid(innerOnly) {
+    var container = innerOnly
+      ? (document.getElementById('scheduleGridInner') || document.getElementById('scheduleTableContainer'))
+      : document.getElementById('scheduleTableContainer');
     if (!_weekGrid || !_employeeList) {
       container.innerHTML = '<div class="p-3 text-comet-muted small">No schedule data.</div>';
       return;
@@ -396,21 +466,8 @@ var Schedule = (function() {
     _pendingOverride = null;
   }
 
-  function _populateDeptSelects(departments) {
-    ['scheduleDept', 'settingsDept'].forEach(function(selId) {
-      var sel = document.getElementById(selId);
-      if (!sel) return;
-      while (sel.options.length > 1) sel.remove(1);
-      departments.forEach(function(dept) {
-        var opt = document.createElement('option');
-        opt.value = opt.textContent = dept;
-        sel.appendChild(opt);
-      });
-    });
-  }
-
-  // Expose _onCellClick for inline onclick
-  return { onShow, _onCellClick };
+  // Expose click handlers for inline onclick attributes
+  return { onShow, _onCellClick, _onWeekTabClick };
 })();
 
 
@@ -419,15 +476,48 @@ var Schedule = (function() {
 // ------------------------------------------------------------
 
 var Absences = (function() {
+  var _employeeMap = {}; // Maps employee name → {id, department, shift}
+
   function onShow() {
     loadEntriesForDate(document.getElementById('absenceDate').value);
     document.getElementById('absenceDate').onchange = function() {
       loadEntriesForDate(this.value);
     };
     document.getElementById('btnNewAbsence').onclick = function() {
+      clearAbsenceForm();
       openModal('absenceModal');
     };
     document.getElementById('btnSaveAbsence').onclick = handleSaveAbsence;
+
+    // Autofill when employee name is selected
+    document.getElementById('absenceName').onchange = handleEmployeeNameChange;
+  }
+
+  function handleEmployeeNameChange() {
+    var selectedName = document.getElementById('absenceName').value.trim();
+    if (!selectedName || !_employeeMap[selectedName]) {
+      // Clear autofilled fields if name is not found
+      document.getElementById('absenceEmployeeId').value = '';
+      document.getElementById('absenceDept').value = '';
+      return;
+    }
+    // Autofill employee ID and department
+    var emp = _employeeMap[selectedName];
+    document.getElementById('absenceEmployeeId').value = emp.id || '';
+    document.getElementById('absenceDept').value = emp.department || '';
+  }
+
+  function clearAbsenceForm() {
+    document.getElementById('absenceName').value = '';
+    document.getElementById('absenceEmployeeId').value = '';
+    document.getElementById('absenceDept').value = '';
+    document.getElementById('absenceTime').value = '';
+    document.getElementById('absenceManager').value = '';
+    document.getElementById('absenceScheduledShift').value = '';
+    document.getElementById('absenceIsCallout').checked = false;
+    document.getElementById('absenceIsFmla').checked = false;
+    document.getElementById('absenceIsNoShow').checked = false;
+    document.getElementById('absenceComment').value = '';
   }
 
   function loadEntriesForDate(dateString) {
@@ -440,7 +530,7 @@ var Absences = (function() {
   function renderAbsenceTable(entries) {
     var tbody = document.getElementById('absenceTableBody');
     if (entries.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-comet-muted small p-3">No entries.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" class="text-comet-muted small p-3">No entries.</td></tr>';
       return;
     }
     tbody.innerHTML = entries.map(function(e) {
@@ -448,6 +538,8 @@ var Absences = (function() {
         + '<td>' + esc(e.name) + '</td>'
         + '<td>' + esc(e.department) + '</td>'
         + '<td>' + esc(e.time) + '</td>'
+        + '<td>' + esc(e.manager || '') + '</td>'
+        + '<td>' + esc(e.scheduledShift || '') + '</td>'
         + '<td class="text-center">' + (e.isCallout ? '&#10003;' : '') + '</td>'
         + '<td class="text-center">' + (e.isFmla    ? '&#10003;' : '') + '</td>'
         + '<td class="text-center">' + (e.isNoShow  ? '&#10003;' : '') + '</td>'
@@ -461,18 +553,22 @@ var Absences = (function() {
 
   function handleSaveAbsence() {
     var data = {
-      name:       document.getElementById('absenceName').value.trim(),
-      department: document.getElementById('absenceDept').value.trim(),
-      time:       document.getElementById('absenceTime').value,
-      isCallout:  document.getElementById('absenceIsCallout').checked,
-      isFmla:     document.getElementById('absenceIsFmla').checked,
-      isNoShow:   document.getElementById('absenceIsNoShow').checked,
-      comment:    document.getElementById('absenceComment').value.trim(),
+      name:            document.getElementById('absenceName').value.trim(),
+      employeeId:      document.getElementById('absenceEmployeeId').value.trim(),
+      department:      document.getElementById('absenceDept').value.trim(),
+      time:            document.getElementById('absenceTime').value,
+      manager:         document.getElementById('absenceManager').value.trim(),
+      scheduledShift:  document.getElementById('absenceScheduledShift').value.trim(),
+      isCallout:       document.getElementById('absenceIsCallout').checked,
+      isFmla:          document.getElementById('absenceIsFmla').checked,
+      isNoShow:        document.getElementById('absenceIsNoShow').checked,
+      comment:         document.getElementById('absenceComment').value.trim(),
     };
     if (!data.name) { UI.showToast('Employee name is required.', 'error'); return; }
 
     UI.callServer('logAbsenceEntry', data, function() {
       closeModal('absenceModal');
+      clearAbsenceForm();
       loadEntriesForDate(document.getElementById('absenceDate').value);
       UI.showToast('Entry saved.', 'success');
     });
@@ -496,9 +592,20 @@ var Infractions = (function() {
   function onShow() {
     loadActiveCNs();
     document.getElementById('btnRunScan').onclick = function() {
-      var dryRun = document.getElementById('dryRunToggle').checked;
-      UI.callServer('runCNScan', dryRun, function() {
-        UI.showToast('Scan complete.', 'success');
+      var dryRun    = document.getElementById('dryRunToggle').checked;
+      var sendEmail = document.getElementById('sendEmailToggle').checked;
+      UI.callServer('runCNScan', [dryRun, sendEmail], function(data) {
+        var proposals = data.proposals || 0;
+        var issued    = data.issued    || 0;
+        var msg;
+        if (dryRun) {
+          msg = 'Dry run — ' + proposals + ' proposal(s) found. Nothing written.';
+        } else if (!sendEmail) {
+          msg = issued + ' CN(s) logged to CN_Log. Email suppressed.';
+        } else {
+          msg = issued + ' CN(s) logged and notifications sent.';
+        }
+        UI.showToast(msg, issued > 0 || (dryRun && proposals > 0) ? 'success' : 'info');
         loadActiveCNs();
       });
     };
@@ -550,7 +657,8 @@ var Infractions = (function() {
 // ------------------------------------------------------------
 
 var Admin = (function() {
-  var _allEmployees = [];
+  var _allEmployees      = [];
+  var _renderedEmployees = []; // tracks what's currently in the table (may be filtered)
   var _currentDeptSettings = null;
 
   function onShow() {
@@ -580,6 +688,21 @@ var Admin = (function() {
       tr.innerHTML = buildShiftDefRow({ name:'', ftpt:'FT', startTime:'08:00', endTime:'16:30', paidHours:8, hasLunch:true }, idx);
       tbody.appendChild(tr);
       wireDeleteButtons();
+    };
+
+    // Generate attendance controller tabs
+    var attendanceYearInput = document.getElementById('attendanceYear');
+    if (attendanceYearInput) attendanceYearInput.value = new Date().getFullYear();
+    document.getElementById('btnGenerateTabs').onclick = function() {
+      var year = parseInt(document.getElementById('attendanceYear').value, 10);
+      if (!year || year < 2020 || year > 2099) {
+        UI.showToast('Enter a valid year (2020–2099).', 'error'); return;
+      }
+      UI.callServer('generateAttendanceTabs', year, function(data) {
+        var msg = 'Done — Created: ' + data.created + ', Skipped (existing): ' + data.skipped;
+        document.getElementById('tabsResult').textContent = msg;
+        UI.showToast(msg, 'success');
+      });
     };
 
     // Setup
@@ -612,16 +735,23 @@ var Admin = (function() {
   }
 
   function renderEmployeeList(employees) {
+    _renderedEmployees = employees; // store reference so index-based onclick can look up
     var tbody = document.getElementById('employeeTableBody');
     if (!employees.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-comet-muted small p-3">No employees found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-comet-muted small p-3">No employees found.</td></tr>';
       return;
     }
-    tbody.innerHTML = employees.map(function(emp) {
+    tbody.innerHTML = employees.map(function(emp, i) {
       var statusClass = emp.status === 'Archived' ? 'text-muted' : '';
       var toggleLabel = emp.status === 'Active' ? 'Archive' : 'Restore';
       var toggleClass = emp.status === 'Active' ? 'btn-outline-secondary' : 'btn-outline-success';
-      var newStatus   = emp.status === 'Active' ? 'Archived' : 'Active';
+      // View button: render as direct <a> link using URL pre-fetched in getEmployeeList.
+      // Using window.open() after an async callback is blocked by popup blockers.
+      var viewHtml = emp.attendanceSheetUrl
+        ? '<a href="' + esc(emp.attendanceSheetUrl) + '" target="_blank" rel="noopener" '
+          + 'class="btn btn-sm btn-outline-info">View</a>'
+        : '<button class="btn btn-sm btn-outline-secondary" disabled '
+          + 'title="Generate Attendance Tabs first">View</button>';
       return '<tr class="' + statusClass + '">'
         + '<td>' + esc(emp.name)       + '</td>'
         + '<td>' + esc(emp.id)         + '</td>'
@@ -629,17 +759,22 @@ var Admin = (function() {
         + '<td>' + esc(emp.department) + '</td>'
         + '<td>' + esc(emp.status)     + '</td>'
         + '<td>' + esc(emp.ftpt || '') + '</td>'
+        + '<td>' + viewHtml + '</td>'
+        // Use index (i) rather than JSON.stringify(emp) — embedded JSON breaks HTML
+        // attribute quoting because JSON uses double-quotes.
         + '<td class="d-flex gap-1">'
         + '<button class="btn btn-sm btn-outline-primary" '
-        +   'onclick="Admin.openEmployeeEditModal(' + JSON.stringify(emp) + ')">Edit</button>'
+        +   'onclick="Admin.openEmployeeEditModal(' + i + ')">Edit</button>'
         + '<button class="btn btn-sm ' + toggleClass + '" '
-        +   'onclick="Admin.toggleStatus(' + JSON.stringify(emp.id) + ',' + JSON.stringify(newStatus) + ')">'
+        +   'onclick="Admin.toggleStatus(' + i + ')">'
         +   toggleLabel + '</button>'
         + '</td></tr>';
     }).join('');
   }
 
-  function openEmployeeEditModal(emp) {
+  function openEmployeeEditModal(i) {
+    var emp = _renderedEmployees[i];
+    if (!emp) return;
     document.getElementById('editEmployeeId').value          = emp.id || '';
     document.getElementById('editFtpt').value                = emp.ftpt || '';
     document.getElementById('editDayOffPrefOne').value       = emp.dayOffPrefOne || '';
@@ -688,8 +823,16 @@ var Admin = (function() {
     });
   }
 
-  function toggleStatus(id, newStatus) {
-    UI.callServer('setEmployeeStatus', [id, newStatus], function() {
+  function toggleStatus(i) {
+    var emp = _renderedEmployees[i];
+    if (!emp) return;
+    var newStatus = emp.status === 'Active' ? 'Archived' : 'Active';
+    if (newStatus === 'Archived') {
+      if (!confirm('Archive ' + emp.name + '?\n\nThey will be removed from all active lists and excluded from schedule generation and CN scans. This can be undone with Restore.')) {
+        return;
+      }
+    }
+    UI.callServer('setEmployeeStatus', [emp.id, newStatus], function() {
       loadEmployeeList();
       UI.showToast('Status updated.', 'success');
     });
@@ -798,13 +941,17 @@ var Admin = (function() {
         UI.showToast('No valid rows found in the CSV.', 'error');
         return;
       }
-      UI.callServer('importFromUKG', rows, function(data) {
+      UI.callServer('importFromUKG', [rows], function(data) {
         var msg = 'Import complete — Added: ' + data.added
                 + ', Updated: ' + data.updated
                 + ', Skipped: ' + data.skipped;
         document.getElementById('importResult').textContent = msg;
         UI.showToast(msg, 'success');
         loadEmployeeList();
+        // Refresh dept dropdowns — import may have introduced new departments
+        UI.callServer('getDepartments', undefined, function(deptData) {
+          _populateAllDeptSelects(deptData.departments || []);
+        });
       });
     };
     reader.readAsText(fileInput.files[0]);
@@ -854,18 +1001,37 @@ var Admin = (function() {
     return result;
   }
 
+  function openAttendanceSheet(employeeId) {
+    UI.callServer('getAttendanceSheetUrl', employeeId, function(data) {
+      if (!data.url) {
+        UI.showToast(data.message || 'No attendance controller tab found.', 'error');
+        return;
+      }
+      window.open(data.url, '_blank');
+    });
+  }
+
   function _buildAbsenceEmployeeDatalist(employees) {
     var dl = document.getElementById('absenceEmployeeList');
     if (!dl) return;
     dl.innerHTML = '';
     var deptDl = document.getElementById('absenceDeptList');
     var depts  = {};
+
+    // Build both datalist and employee map for autofill
+    _employeeMap = {};
     employees.forEach(function(emp) {
       if (emp.status !== 'Active') return;
       var opt = document.createElement('option');
       opt.value = emp.name;
       dl.appendChild(opt);
       if (emp.department) depts[emp.department] = true;
+
+      // Store employee data for autofill lookup
+      _employeeMap[emp.name] = {
+        id: emp.id || '',
+        department: emp.department || '',
+      };
     });
     if (deptDl) {
       deptDl.innerHTML = '';
@@ -877,13 +1043,33 @@ var Admin = (function() {
     }
   }
 
-  return { onShow, openEmployeeEditModal, toggleStatus };
+  return { onShow, loadEmployeeList, openEmployeeEditModal, toggleStatus, openAttendanceSheet };
 })();
 
 
 // ------------------------------------------------------------
 // Utility
 // ------------------------------------------------------------
+
+/**
+ * Populates every department <select> in the app from a single departments array.
+ * Called on startup and after any action that might add a new department.
+ */
+function _populateAllDeptSelects(departments) {
+  ['scheduleDept', 'settingsDept'].forEach(function(selId) {
+    var sel = document.getElementById(selId);
+    if (!sel) return;
+    var current = sel.value;
+    while (sel.options.length > 1) sel.remove(1);
+    departments.forEach(function(dept) {
+      var opt = document.createElement('option');
+      opt.value = opt.textContent = dept;
+      sel.appendChild(opt);
+    });
+    // Restore previous selection if it still exists
+    if (current && departments.indexOf(current) !== -1) sel.value = current;
+  });
+}
 
 /** Escapes HTML special characters to prevent XSS in innerHTML. */
 function esc(str) {
@@ -907,7 +1093,28 @@ function esc(str) {
 // Initialize after Bootstrap JS is loaded
 document.addEventListener('DOMContentLoaded', function() {
   UI.init();
-  // Load CNs on startup so the badge data is ready if the user goes to Schedule first
+
+  // Refresh button — reloads dynamic data without navigating away.
+  // window.location.reload() drops the GAS auth token and returns a blank page,
+  // so instead we re-initialize all data in place.
+  document.getElementById('btnRefresh').addEventListener('click', function() {
+    UI.callServer('getDepartments', undefined, function(data) {
+      _populateAllDeptSelects(data.departments || []);
+    });
+    Infractions.loadActiveCNs();
+    if (typeof Admin !== 'undefined') Admin.loadEmployeeList();
+    UI.showToast('Refreshed.', 'success');
+  });
+
+  // Load departments on startup so dropdowns are populated immediately
+  UI.callServer('getDepartments', undefined, function(data) {
+    _populateAllDeptSelects(data.departments || []);
+  });
+
+  // Load CNs on startup so badge data is ready before the user visits Schedule
   Infractions.loadActiveCNs();
+
+  // Absences is the default view — trigger its onShow so the table loads
+  Absences.onShow();
 });
 </script>

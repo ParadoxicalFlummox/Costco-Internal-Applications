@@ -1,6 +1,6 @@
 /**
  * cnLog.js — CN_Log sheet management, Active CNs view, and CN expiry processing.
- * VERSION: 0.1.0
+ * VERSION: 0.2.3
  *
  * This file owns all interactions with the three CN tracking sheets:
  *

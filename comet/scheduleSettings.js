@@ -1,6 +1,6 @@
 /**
  * scheduleSettings.js — Per-department schedule settings read/write for COMET.
- * VERSION: 0.1.0
+ * VERSION: 0.2.3
  *
  * Each department has its own Settings sheet tab named "Settings_[DeptName]"
  * (e.g., "Settings_Maintenance"). This file owns all reads and writes to those sheets.

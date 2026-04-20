@@ -1,6 +1,6 @@
 /**
  * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION: 0.1.0
+ * VERSION: 0.2.4
  *
  * This file is the only place in the codebase that writes to a Week schedule sheet.
  * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
@@ -103,16 +103,34 @@ function writeWeekHeader(scheduleSheet, weekStartDate, departmentName) {
   titleRange.setBackground(COLORS.HEADER_BG);
   titleRange.setFontColor(COLORS.HEADER_TEXT);
   titleRange.setHorizontalAlignment("center");
+  titleRange.setVerticalAlignment("middle");
 
-  // Row 2: Generation timestamp — helps managers identify the most recent draft.
-  scheduleSheet
-    .getRange(WEEK_SHEET.TIMESTAMP_ROW, 1)
-    .setValue("Generated: " + new Date().toLocaleString());
+  // Row 2: Generation timestamp — formatted for human readability.
+  // Format: "Generated: April 20, 2026 at 3:45 PM"
+  const now = new Date();
+  const timestampText = "Generated: " +
+    now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) +
+    " at " +
+    now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
-  // Row 3: Department name.
-  scheduleSheet
-    .getRange(WEEK_SHEET.DEPARTMENT_ROW, 1)
-    .setValue("Department: " + departmentName);
+  const timestampRange = scheduleSheet.getRange(WEEK_SHEET.TIMESTAMP_ROW, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS);
+  timestampRange.setValue(timestampText);
+  timestampRange.setFontSize(10);
+  timestampRange.setFontColor("#666666");
+  timestampRange.setHorizontalAlignment("left");
+
+  // Row 3: Department name — styled for consistency.
+  const deptText = "Department: " + departmentName;
+  const deptRange = scheduleSheet.getRange(WEEK_SHEET.DEPARTMENT_ROW, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS);
+  deptRange.setValue(deptText);
+  deptRange.setFontSize(11);
+  deptRange.setFontWeight("bold");
+  deptRange.setFontColor("#000000");
+  deptRange.setHorizontalAlignment("left");
+
+  // Row 4: Spacer — light background for visual separation (between department and column headers).
+  const spacerRange = scheduleSheet.getRange(WEEK_SHEET.COLUMN_HEADER_ROW - 1, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS);
+  spacerRange.setBackground("#EEEEEE");
 }
 
 

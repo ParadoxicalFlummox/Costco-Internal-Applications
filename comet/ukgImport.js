@@ -1,6 +1,6 @@
 /**
  * ukgImport.js — UKG employee data import for COMET.
- * VERSION: 0.1.0
+ * VERSION: 0.2.3
  *
  * This file owns the server-side logic for upserting employee rows into the
  * Employees sheet from a parsed UKG CSV export.
@@ -116,7 +116,9 @@ function getAllEmployees_() {
   if (lastRow < EMPLOYEES_DATA_START_ROW) return []; // config.js
 
   const numRows = lastRow - EMPLOYEES_DATA_START_ROW + 1;
-  const data = sheet.getRange(EMPLOYEES_DATA_START_ROW, 1, numRows, 5).getValues();
+  // Read all 13 columns (A–M) so schedule-specific fields F–M are included.
+  const numCols = Math.max(5, EMPLOYEE_COLUMN.SENIORITY_RANK); // 13
+  const data = sheet.getRange(EMPLOYEES_DATA_START_ROW, 1, numRows, numCols).getValues();
 
   return data
     .filter(row => String(row[EMPLOYEE_COLUMN.ID - 1] || '').trim() !== '')
@@ -129,11 +131,19 @@ function getAllEmployees_() {
         hireDate = String(hireDateRaw).trim();
       }
       return {
-        name:       String(row[EMPLOYEE_COLUMN.NAME       - 1] || '').trim(),
-        id:         String(row[EMPLOYEE_COLUMN.ID         - 1] || '').trim(),
+        name:            String(row[EMPLOYEE_COLUMN.NAME            - 1] || '').trim(),
+        id:              String(row[EMPLOYEE_COLUMN.ID              - 1] || '').trim(),
         hireDate,
-        department: String(row[EMPLOYEE_COLUMN.DEPARTMENT - 1] || '').trim(),
-        status:     String(row[EMPLOYEE_COLUMN.STATUS     - 1] || 'Active').trim(),
+        department:      String(row[EMPLOYEE_COLUMN.DEPARTMENT      - 1] || '').trim(),
+        status:          String(row[EMPLOYEE_COLUMN.STATUS          - 1] || 'Active').trim(),
+        ftpt:            String(row[EMPLOYEE_COLUMN.FTPT            - 1] || '').trim(),
+        dayOffPrefOne:   String(row[EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE - 1] || '').trim(),
+        dayOffPrefTwo:   String(row[EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO - 1] || '').trim(),
+        preferredShift:  String(row[EMPLOYEE_COLUMN.PREFERRED_SHIFT - 1] || '').trim(),
+        qualifiedShifts: String(row[EMPLOYEE_COLUMN.QUALIFIED_SHIFTS - 1] || '').trim(),
+        vacationDates:   String(row[EMPLOYEE_COLUMN.VACATION_DATES  - 1] || '').trim(),
+        role:            String(row[EMPLOYEE_COLUMN.ROLE            - 1] || '').trim(),
+        seniorityRank:   Number(row[EMPLOYEE_COLUMN.SENIORITY_RANK  - 1] || 0),
       };
     });
 }
@@ -195,20 +205,32 @@ function getOrCreateEmployeesSheet_(workbook) {
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
  */
 function writeEmployeesSheetHeader_(sheet) {
-  const headers = ['Name (Last, First)', 'Employee ID', 'Hire Date', 'Department', 'Status'];
+  const headers = [
+    'Name (Last, First)', 'Employee ID', 'Hire Date', 'Department', 'Status',
+    'FT/PT', 'Day Off Pref 1', 'Day Off Pref 2', 'Preferred Shift',
+    'Qualified Shifts', 'Vacation Dates', 'Role', 'Seniority Rank',
+  ];
   const headerRange = sheet.getRange(1, 1, 1, headers.length);
 
   headerRange
     .setValues([headers])
     .setFontWeight('bold')
-    .setBackground('#005DAA')   // Costco blue
+    .setBackground('#005DAA')
     .setFontColor('#FFFFFF');
 
-  sheet.setColumnWidth(1, 200); // Name
-  sheet.setColumnWidth(2, 110); // ID
-  sheet.setColumnWidth(3, 110); // Hire Date
-  sheet.setColumnWidth(4, 160); // Department
-  sheet.setColumnWidth(5, 90);  // Status
+  sheet.setColumnWidth(1,  200); // Name
+  sheet.setColumnWidth(2,  110); // ID
+  sheet.setColumnWidth(3,  110); // Hire Date
+  sheet.setColumnWidth(4,  160); // Department
+  sheet.setColumnWidth(5,   90); // Status
+  sheet.setColumnWidth(6,   70); // FT/PT
+  sheet.setColumnWidth(7,  120); // Day Off Pref 1
+  sheet.setColumnWidth(8,  120); // Day Off Pref 2
+  sheet.setColumnWidth(9,  140); // Preferred Shift
+  sheet.setColumnWidth(10, 180); // Qualified Shifts
+  sheet.setColumnWidth(11, 180); // Vacation Dates
+  sheet.setColumnWidth(12, 160); // Role
+  sheet.setColumnWidth(13, 110); // Seniority Rank
 
   sheet.setFrozenRows(1);
 }
@@ -217,6 +239,53 @@ function writeEmployeesSheetHeader_(sheet) {
 // ---------------------------------------------------------------------------
 // Internal Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Writes schedule-specific fields (columns F–M) for a single employee.
+ *
+ * Only fields present in the `fields` object are written; omitted keys are
+ * left unchanged so partial updates are safe.
+ *
+ * @param {string} id     — Employee ID.
+ * @param {{
+ *   ftpt?: string,
+ *   dayOffPrefOne?: string,
+ *   dayOffPrefTwo?: string,
+ *   preferredShift?: string,
+ *   qualifiedShifts?: string,
+ *   vacationDates?: string,
+ *   role?: string,
+ * }} fields
+ * @returns {boolean} true if the employee was found and updated.
+ */
+function updateEmployeeScheduleFields_(id, fields) {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getOrCreateEmployeesSheet_(workbook);
+  const index = readEmployeeIndex_(sheet);
+
+  if (!index.has(String(id))) return false;
+
+  const sheetRow = index.get(String(id));
+  const writes = [
+    [EMPLOYEE_COLUMN.FTPT,              'ftpt'],
+    [EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE,  'dayOffPrefOne'],
+    [EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO,  'dayOffPrefTwo'],
+    [EMPLOYEE_COLUMN.PREFERRED_SHIFT,   'preferredShift'],
+    [EMPLOYEE_COLUMN.QUALIFIED_SHIFTS,  'qualifiedShifts'],
+    [EMPLOYEE_COLUMN.VACATION_DATES,    'vacationDates'],
+    [EMPLOYEE_COLUMN.ROLE,              'role'],
+  ];
+
+  writes.forEach(([col, key]) => {
+    if (fields[key] != null) {
+      sheet.getRange(sheetRow, col).setValue(fields[key]);
+    }
+  });
+
+  SpreadsheetApp.flush();
+  return true;
+}
+
 
 /**
  * Builds a Map of { employeeId → sheetRowNumber } from the Employees sheet.

@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <?!= include('stylesheet') ?>
 </head>
+
 <body>
 
   <!-- =====================================================================
@@ -16,18 +18,21 @@
       </span>
       <ul class="navbar-nav flex-row ms-3">
         <li class="nav-item">
-          <a class="nav-link active" data-view="schedule"  href="#">Schedule</a>
+          <a class="nav-link active" data-view="absences" href="#">Absences</a>
         </li>
         <li class="nav-item">
-          <a class="nav-link" data-view="absences"   href="#">Absences</a>
+          <a class="nav-link" data-view="schedule" href="#">Schedule</a>
         </li>
         <li class="nav-item">
           <a class="nav-link" data-view="infractions" href="#">Infractions</a>
         </li>
         <li class="nav-item">
-          <a class="nav-link" data-view="admin"      href="#">Admin</a>
+          <a class="nav-link" data-view="admin" href="#">Admin</a>
         </li>
       </ul>
+      <button id="btnRefresh" class="btn btn-sm ms-auto"
+        style="color:rgba(255,255,255,0.75); background:none; border:1px solid rgba(255,255,255,0.3);"
+        title="Reload the app">&#8635; Refresh</button>
     </div>
   </nav>
 
@@ -41,7 +46,7 @@
     <!-- -------------------------------------------------------------------
          Schedule View
          ------------------------------------------------------------------- -->
-    <div id="view-schedule" class="comet-view">
+    <div id="view-schedule" class="comet-view" style="display:none;">
       <div class="comet-view-header d-flex align-items-center justify-content-between">
         <h1 class="comet-view-title">Schedule Generator</h1>
       </div>
@@ -74,7 +79,7 @@
     <!-- -------------------------------------------------------------------
          Absences View
          ------------------------------------------------------------------- -->
-    <div id="view-absences" class="comet-view" style="display:none;">
+    <div id="view-absences" class="comet-view">
       <div class="comet-view-header d-flex align-items-center justify-content-between">
         <h1 class="comet-view-title">Absence Log</h1>
         <div class="d-flex align-items-center gap-2">
@@ -91,6 +96,8 @@
               <th>Name</th>
               <th>Dept</th>
               <th>Time</th>
+              <th>Manager</th>
+              <th>Shift</th>
               <th>Callout</th>
               <th>FMLA</th>
               <th>No Show</th>
@@ -99,7 +106,9 @@
             </tr>
           </thead>
           <tbody id="absenceTableBody">
-            <tr><td colspan="8" class="text-comet-muted small p-3">No entries yet.</td></tr>
+            <tr>
+              <td colspan="11" class="text-comet-muted small p-3">No entries yet.</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -117,9 +126,19 @@
             <input class="form-check-input" type="checkbox" id="dryRunToggle" checked>
             <label class="form-check-label ms-2 small" for="dryRunToggle">Dry Run</label>
           </div>
-          <button id="btnRunScan"    class="btn btn-primary btn-sm">Run CN Scan</button>
-          <button id="btnRunExpiry"  class="btn btn-outline-secondary btn-sm">Run Expiry Check</button>
+          <div class="form-check form-switch mb-0 d-flex align-items-center me-2">
+            <input class="form-check-input" type="checkbox" id="sendEmailToggle">
+            <label class="form-check-label ms-2 small" for="sendEmailToggle">Send Email</label>
+          </div>
+          <button id="btnRunScan" class="btn btn-primary btn-sm">Run CN Scan</button>
+          <button id="btnRunExpiry" class="btn btn-outline-secondary btn-sm">Run Expiry Check</button>
         </div>
+      </div>
+
+      <div class="alert alert-info small py-2 mb-3" role="alert">
+        <strong>Note:</strong> CN scans read individual employee attendance controller tabs (named
+        <em>Last, First - EmployeeNumber</em>) in this workbook. If no tabs exist yet, the scan
+        will find no infractions. Active CNs from previous scans are always shown below regardless.
       </div>
 
       <div class="comet-table-container">
@@ -137,7 +156,9 @@
             </tr>
           </thead>
           <tbody id="cnTableBody">
-            <tr><td colspan="8" class="text-comet-muted small p-3">Loading…</td></tr>
+            <tr>
+              <td colspan="8" class="text-comet-muted small p-3">Loading…</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -181,12 +202,28 @@
               <div id="deptSettingsArea" style="display:none;">
                 <p class="small fw-semibold mt-3 mb-1">Staffing Requirements</p>
                 <table class="table table-sm mb-2" id="staffingReqsTable">
-                  <thead><tr><th>Day</th><th>Count</th><th>Mode</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Day</th>
+                      <th>Count</th>
+                      <th>Mode</th>
+                    </tr>
+                  </thead>
                   <tbody id="staffingReqsBody"></tbody>
                 </table>
                 <p class="small fw-semibold mt-3 mb-1">Shift Definitions</p>
                 <table class="table table-sm mb-2" id="shiftDefsTable">
-                  <thead><tr><th>Name</th><th>FT/PT</th><th>Start</th><th>End</th><th>Paid Hrs</th><th>Lunch</th><th></th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>FT/PT</th>
+                      <th>Start</th>
+                      <th>End</th>
+                      <th>Paid Hrs</th>
+                      <th>Lunch</th>
+                      <th></th>
+                    </tr>
+                  </thead>
                   <tbody id="shiftDefsBody"></tbody>
                 </table>
                 <button id="btnAddShift" class="btn btn-outline-secondary btn-sm mb-2">+ Add Shift</button>
@@ -202,8 +239,8 @@
           <div class="card">
             <div class="card-header d-flex align-items-center justify-content-between fw-semibold">
               <span>Employee List</span>
-              <input type="search" id="employeeSearch" placeholder="Search…"
-                     class="form-control form-control-sm ms-2" style="max-width:220px;">
+              <input type="search" id="employeeSearch" placeholder="Search…" class="form-control form-control-sm ms-2"
+                style="max-width:220px;">
             </div>
             <div class="card-body p-0">
               <div class="comet-table-container" style="border:none; border-radius:0;">
@@ -216,11 +253,14 @@
                       <th>Department</th>
                       <th>Status</th>
                       <th>FT/PT</th>
+                      <th>Attendance</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody id="employeeTableBody">
-                    <tr><td colspan="7" class="text-comet-muted small p-3">Loading…</td></tr>
+                    <tr>
+                      <td colspan="8" class="text-comet-muted small p-3">Loading…</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -233,9 +273,30 @@
           <div class="card">
             <div class="card-header fw-semibold">Setup</div>
             <div class="card-body">
-              <p class="small text-comet-muted mb-2">Creates all required sheets if they don't exist. Safe to run multiple times.</p>
+              <p class="small text-comet-muted mb-2">Creates all required sheets if they don't exist. Safe to run
+                multiple times.</p>
               <button id="btnRunSetup" class="btn btn-outline-secondary btn-sm">Run Setup</button>
               <div id="setupResult" class="mt-2 small"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generate Attendance Controller Tabs -->
+        <div class="col-12 col-md-6">
+          <div class="card">
+            <div class="card-header fw-semibold">Attendance Controller Tabs</div>
+            <div class="card-body">
+              <p class="small text-comet-muted mb-2">
+                Generates one attendance controller tab per active employee for the selected year.
+                Existing tabs are skipped — safe to run again if new employees were added.
+              </p>
+              <div class="d-flex align-items-center gap-2 mb-2">
+                <label class="form-label small fw-semibold mb-0" for="attendanceYear">Year</label>
+                <input type="number" id="attendanceYear" class="form-control form-control-sm" style="width:90px;"
+                  min="2020" max="2099">
+                <button id="btnGenerateTabs" class="btn btn-primary btn-sm">Generate Tabs</button>
+              </div>
+              <div id="tabsResult" class="small"></div>
             </div>
           </div>
         </div>
@@ -282,8 +343,13 @@
         <div class="modal-body">
           <div class="mb-2">
             <label class="form-label small">Employee Name</label>
-            <input type="text" id="absenceName" class="form-control form-control-sm" list="absenceEmployeeList" placeholder="Last, First">
+            <input type="text" id="absenceName" class="form-control form-control-sm" list="absenceEmployeeList"
+              placeholder="Last, First">
             <datalist id="absenceEmployeeList"></datalist>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Employee ID</label>
+            <input type="text" id="absenceEmployeeId" class="form-control form-control-sm" readonly>
           </div>
           <div class="mb-2">
             <label class="form-label small">Department</label>
@@ -293,6 +359,15 @@
           <div class="mb-2">
             <label class="form-label small">Time Called</label>
             <input type="time" id="absenceTime" class="form-control form-control-sm">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Manager</label>
+            <input type="text" id="absenceManager" class="form-control form-control-sm">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Scheduled Shift</label>
+            <input type="text" id="absenceScheduledShift" class="form-control form-control-sm" list="absenceScheduledShiftList">
+            <datalist id="absenceScheduledShiftList"></datalist>
           </div>
           <div class="mb-2 d-flex gap-3">
             <div class="form-check">
@@ -347,16 +422,26 @@
               <label class="form-label small fw-semibold">Day Off Pref 1</label>
               <select id="editDayOffPrefOne" class="form-select form-select-sm">
                 <option value="">— none —</option>
-                <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
-                <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                <option>Monday</option>
+                <option>Tuesday</option>
+                <option>Wednesday</option>
+                <option>Thursday</option>
+                <option>Friday</option>
+                <option>Saturday</option>
+                <option>Sunday</option>
               </select>
             </div>
             <div class="col-6 col-md-3">
               <label class="form-label small fw-semibold">Day Off Pref 2</label>
               <select id="editDayOffPrefTwo" class="form-select form-select-sm">
                 <option value="">— none —</option>
-                <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
-                <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                <option>Monday</option>
+                <option>Tuesday</option>
+                <option>Wednesday</option>
+                <option>Thursday</option>
+                <option>Friday</option>
+                <option>Saturday</option>
+                <option>Sunday</option>
               </select>
             </div>
             <div class="col-6 col-md-3">
@@ -365,19 +450,19 @@
             </div>
             <div class="col-12 col-md-6">
               <label class="form-label small fw-semibold">Preferred Shift</label>
-              <input type="text" id="editPreferredShift" class="form-control form-control-sm"
-                     list="editShiftNameList" placeholder="e.g. Morning">
+              <input type="text" id="editPreferredShift" class="form-control form-control-sm" list="editShiftNameList"
+                placeholder="e.g. Morning">
               <datalist id="editShiftNameList"></datalist>
             </div>
             <div class="col-12 col-md-6">
               <label class="form-label small fw-semibold">Qualified Shifts</label>
               <input type="text" id="editQualifiedShifts" class="form-control form-control-sm"
-                     placeholder="Comma-separated, e.g. Morning, Closing">
+                placeholder="Comma-separated, e.g. Morning, Closing">
             </div>
             <div class="col-12">
               <label class="form-label small fw-semibold">Vacation Dates</label>
               <input type="text" id="editVacationDates" class="form-control form-control-sm"
-                     placeholder="Comma-separated, e.g. 2026-07-04, 07/05">
+                placeholder="Comma-separated, e.g. 2026-07-04, 07/05">
             </div>
           </div>
         </div>
@@ -415,4 +500,5 @@
 
   <?!= include('javascript') ?>
 </body>
+
 </html>

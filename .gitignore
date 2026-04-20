@@ -1,0 +1,74 @@
+# Project-specific
+CLAUDE.md
+test_ukg_sample.csv
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+*~
+
+# IDE & Editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.vim/
+.emacs.d/
+
+# Node.js (for clasp, dev dependencies, build tools)
+node_modules/
+npm-debug.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Google Apps Script & Clasp
+.clasp.json
+.claspignore
+appsscript.json.bak
+
+# Google authentication & credentials (CRITICAL - never commit)
+.google/
+credentials.json
+token.json
+oauth2.json
+client_secret.json
+service-account-key.json
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS-specific
+Thumbs.db
+Desktop.ini
+.DS_Store
+$RECYCLE.BIN/
+
+# Build & dist artifacts
+dist/
+build/
+*.min.js
+*.min.css
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.log
+.cache/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Local testing artifacts
+test-output.json
+test-results.html

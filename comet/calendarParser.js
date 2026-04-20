@@ -1,6 +1,6 @@
 /**
  * calendarParser.js — Reads individual employee tabs from the attendance controller.
- * VERSION: 0.1.0
+ * VERSION: 0.2.3
  *
  * This file owns all logic for turning a raw attendance controller sheet into
  * structured event objects that the infraction detector can work with.

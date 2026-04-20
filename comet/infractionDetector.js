@@ -1,6 +1,6 @@
 /**
  * infractionDetector.js — Rolling-window CN detection logic.
- * VERSION: 0.1.0
+ * VERSION: 0.2.3
  *
  * This file owns the logic for determining whether a sequence of infraction
  * events is severe enough to trigger a Counseling Notice (CN).

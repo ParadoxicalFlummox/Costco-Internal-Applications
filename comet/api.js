@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.1.1
+ * VERSION: 0.2.4
  * 
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -107,6 +107,10 @@ function generateSchedule(deptName, mondayDate) {
     if (!sheet) sheet = workbook.insertSheet(result.weekSheetName);
     const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
     writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName); // formatter.js
+
+    // Sort workbook tabs and clean up stale Week sheets.
+    cleanupWeekSheets_();
+    sortWorkbookSheets_();
 
     return {
       ok: true,
@@ -276,6 +280,8 @@ function getAbsenceLogForDay(dateString) {
       isNoShow: e.isNoShow,
       department: e.department,
       time: e.time,
+      manager: e.manager,
+      scheduledShift: e.scheduledShift,
       comment: e.comment,
       sheetName: e.sheetName,
       rowNumber: e.rowNumber,
@@ -346,15 +352,19 @@ function getActiveCNs() {
 /**
  * Runs the infraction scanner across all active employee tabs.
  *
- * @param {boolean} dryRun — When true, logs proposals but sends no emails
- *   and writes nothing to CN_Log.
- * @returns {{ ok: boolean, data?: object, error?: string }}
- *
+ * @param {boolean} dryRun    — When true, proposals are returned but nothing is written.
+ * @param {boolean} sendEmail — When false (and not dryRun), CNs are logged but no
+ *   emails are sent. When true, emails are sent normally. Ignored during dry run.
+ * @returns {{ ok: boolean, data?: { proposals, issued, dryRun }, error?: string }}
  */
-function runCNScan(dryRun) {
+function runCNScan(dryRun, sendEmail) {
   try {
-    scanAndIssueCNs({ dryRun: !!dryRun }); // infractionEngine.js
-    return { ok: true, data: { issued: 0, dryRun: !!dryRun } };
+    const result = scanAndIssueCNs({ dryRun: !!dryRun, sendEmail: !!sendEmail }); // infractionEngine.js
+    return { ok: true, data: {
+      proposals: (result && result.proposals) || 0,
+      issued:    (result && result.issued)    || 0,
+      dryRun:    !!dryRun,
+    }};
   } catch (error) {
     console.error('api: runCNScan failed —', error);
     return { ok: false, error: error.message };
@@ -421,17 +431,31 @@ function importFromUKG(rows) {
 }
 
 /**
- * Returns the sorted unique department names from all Active employees.
- * Used to populate department dropdowns in the Schedule and Absences views.
+ * Returns the sorted unique department names.
+ *
+ * Unions two sources so departments appear in the dropdown as soon as
+ * either source knows about them:
+ *   1. Active employees in the Employees sheet (populated by UKG import).
+ *   2. Existing Settings_[Dept] sheet tabs (created when settings are saved
+ *      or auto-created on first generate — available even before any import).
  *
  * @returns {{ ok: boolean, data?: object, error?: string }}
  */
 function getDepartments() {
   try {
+    // Source 1 — Employees sheet
     const employees = getActiveEmployees_(); // ukgImport.js
-    const departments = [...new Set(
-      employees.map(e => e.department).filter(Boolean)
-    )].sort();
+    const fromEmployees = employees.map(e => e.department).filter(Boolean);
+
+    // Source 2 — Settings_* sheet tabs
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const fromSettings = workbook.getSheets()
+      .map(s => s.getName())
+      .filter(n => n.startsWith(DEPT_SETTINGS_PREFIX)) // config.js
+      .map(n => n.slice(DEPT_SETTINGS_PREFIX.length).trim())
+      .filter(Boolean);
+
+    const departments = [...new Set([...fromEmployees, ...fromSettings])].sort();
     return { ok: true, data: { departments } };
   } catch (error) {
     console.error('api: getDepartments failed —', error);
@@ -443,12 +467,27 @@ function getDepartments() {
  * Returns the full employee list from the Employees sheet, including
  * both Active and Archived employees.
  *
- * @returns {{ ok: boolean, data?: object, error?: string }}
+ * Each employee object includes an `attendanceSheetUrl` property (string or null)
+ * so the frontend can render View as a direct <a> link without an extra round-trip.
+ * window.open() after a callback is blocked by popup blockers in GAS iframes.
  *
+ * @returns {{ ok: boolean, data?: object, error?: string }}
  */
 function getEmployeeList() {
   try {
-    const employees = getAllEmployees_(); // ukgImport.js
+    const workbook   = SpreadsheetApp.getActiveSpreadsheet();
+    const workbookUrl = workbook.getUrl();
+    const employees  = getAllEmployees_(); // ukgImport.js
+
+    // Attach attendance sheet URL to each employee in one pass.
+    employees.forEach(function(emp) {
+      const tabName = emp.name + ' - ' + emp.id;
+      const sheet   = workbook.getSheetByName(tabName);
+      emp.attendanceSheetUrl = sheet
+        ? workbookUrl + '#gid=' + sheet.getSheetId()
+        : null;
+    });
+
     return { ok: true, data: { employees } };
   } catch (error) {
     console.error('api: getEmployeeList failed —', error);
@@ -475,17 +514,174 @@ function setEmployeeStatus(id, status) {
 }
 
 /**
- * Generates the next fiscal year's attendance controller workbook and
- * returns a link to the new file in Google Drive.
+ * Creates attendance controller sheet tabs for all active employees for the
+ * given calendar year. Existing tabs are skipped.
+ *
+ * @param {number} year — e.g. 2026
+ * @returns {{ ok: boolean, data?: { created, skipped }, error?: string }}
+ */
+function generateAttendanceTabs(year) {
+  try {
+    if (!year) year = new Date().getFullYear();
+    const result = generateAttendanceControllerTabs_(Number(year)); // tabManager.js
+    return { ok: true, data: result };
+  } catch (error) {
+    console.error('api: generateAttendanceTabs failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Returns the URL of an employee's attendance controller tab so the
+ * frontend can open it directly in a new browser tab.
+ *
+ * @param {string} employeeId
+ * @returns {{ ok: boolean, data?: { url: string|null, message?: string }, error?: string }}
+ */
+function getAttendanceSheetUrl(employeeId) {
+  try {
+    if (!employeeId) throw new Error('employeeId is required.');
+    const workbook  = SpreadsheetApp.getActiveSpreadsheet();
+    const employees = getAllEmployees_(); // ukgImport.js
+    const emp = employees.find(e => String(e.id) === String(employeeId));
+    if (!emp) throw new Error('Employee ' + employeeId + ' not found.');
+
+    const tabName = emp.name + ' - ' + emp.id;
+    const sheet   = workbook.getSheetByName(tabName);
+    if (!sheet) {
+      return { ok: true, data: {
+        url: null,
+        message: 'No attendance controller tab found for ' + emp.name + '. Use "Generate Attendance Tabs" in Admin first.',
+      }};
+    }
+    const url = workbook.getUrl() + '#gid=' + sheet.getSheetId();
+    return { ok: true, data: { url } };
+  } catch (error) {
+    console.error('api: getAttendanceSheetUrl failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Returns the names and Monday dates of all existing Week sheets for a
+ * department within the calendar month containing the given date.
+ * Used by the "Load Existing" view to show all weeks at once.
+ *
+ * @param {string} deptName
+ * @param {string} monthDate — any ISO date string within the target month
+ * @returns {{ ok: boolean, data?: { weeks: Array<{weekSheetName,mondayDate}> }, error?: string }}
+ */
+function getScheduleWeeksForMonth(deptName, monthDate) {
+  try {
+    if (!deptName) throw new Error('deptName is required.');
+    const anchor    = new Date((monthDate || new Date().toISOString().slice(0, 10)) + 'T00:00:00');
+    const year      = anchor.getFullYear();
+    const month     = anchor.getMonth(); // 0-based
+
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const prefix   = 'Week_';
+    const weeks    = [];
+
+    workbook.getSheets().forEach(function(sheet) {
+      const name = sheet.getName();
+      if (!name.startsWith(prefix)) return;
+
+      // Sheet name format: Week_MM_DD_YY_DeptName
+      const parts = name.split('_');
+      if (parts.length < 5) return;
+
+      // Check department suffix matches
+      const sheetDept = parts.slice(4).join('_');
+      if (sheetDept.toLowerCase() !== deptName.toLowerCase()) return;
+
+      // Parse date from Week_MM_DD_YY
+      const sheetDate = new Date('20' + parts[3] + '-' + parts[1] + '-' + parts[2] + 'T00:00:00');
+      if (isNaN(sheetDate.getTime())) return;
+
+      // Include if the Monday falls within the target month
+      if (sheetDate.getFullYear() === year && sheetDate.getMonth() === month) {
+        weeks.push({
+          weekSheetName: name,
+          mondayDate:    sheetDate.toISOString().slice(0, 10),
+        });
+      }
+    });
+
+    // Sort chronologically
+    weeks.sort(function(a, b) { return a.mondayDate.localeCompare(b.mondayDate); });
+    return { ok: true, data: { weeks } };
+  } catch (error) {
+    console.error('api: getScheduleWeeksForMonth failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Hides Week sheets older than the current week and permanently deletes
+ * Week sheets older than 2 months. Called automatically after generation.
+ *
+ * Hidden sheets remain accessible via right-click → Show Sheet if needed.
+ * Deletion is permanent — only sheets confirmed to be more than ~9 weeks
+ * old are removed.
+ *
+ * @returns {{ hidden: number, deleted: number }}
+ */
+function cleanupWeekSheets_() {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const now      = new Date();
+
+  // Monday of the current week
+  const today    = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dow      = today.getDay();
+  const daysToMon = (dow === 0) ? -6 : 1 - dow;
+  const thisMonday = new Date(today);
+  thisMonday.setDate(today.getDate() + daysToMon);
+
+  const twoMonthsAgo = new Date(thisMonday);
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
+  let hidden = 0;
+  let deleted = 0;
+
+  workbook.getSheets().forEach(function(sheet) {
+    const name = sheet.getName();
+    if (!name.startsWith('Week_')) return;
+
+    const parts = name.split('_');
+    if (parts.length < 4) return;
+
+    const sheetDate = new Date('20' + parts[3] + '-' + parts[1] + '-' + parts[2] + 'T00:00:00');
+    if (isNaN(sheetDate.getTime())) return;
+
+    if (sheetDate < twoMonthsAgo) {
+      // Older than 2 months — delete permanently
+      try {
+        workbook.deleteSheet(sheet);
+        deleted++;
+      } catch (e) {
+        console.warn('cleanupWeekSheets_: could not delete "' + name + '": ' + e.message);
+      }
+    } else if (sheetDate < thisMonday) {
+      // Older than this week but within 2 months — hide
+      if (!sheet.isSheetHidden()) {
+        sheet.hideSheet();
+        hidden++;
+      }
+    }
+  });
+
+  return { hidden, deleted };
+}
+
+/**
+ * Generates the next fiscal year's attendance controller workbook.
+ * Kept as a stub until Phase 6 multi-workbook support is added.
  *
  * @returns {{ ok: boolean, data?: object, error?: string }}
- *
- * TODO Phase 6: Replace stub with tabManager.js next-year generation call.
  */
 function generateNextYearWorkbook() {
   try {
-    // Phase 1 stub
-    return { ok: true, data: { url: null } };
+    return { ok: true, data: { url: null, message: 'Use "Generate Attendance Tabs" with the target year instead.' } };
   } catch (error) {
     console.error('api: generateNextYearWorkbook failed —', error);
     return { ok: false, error: error.message };
@@ -526,4 +722,60 @@ function updateConfig(key, value) {
     console.error('api: updateConfig failed —', error);
     return { ok: false, error: error.message };
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// Internal — Workbook Tab Sorting
+// ---------------------------------------------------------------------------
+
+/**
+ * Sorts all sheet tabs in the active workbook into logical groups so managers
+ * can quickly find what they need without scrolling through a mix of types.
+ *
+ * Group order:
+ *   0 — Employees (master roster)
+ *   1 — COMET Config
+ *   2 — Active CNs
+ *   3 — CN_Log
+ *   4 — (Expired CNs)
+ *   5 — Settings_* sheets (alphabetical by dept name)
+ *   6 — Week_* schedule sheets (newest first — desc by sheet name)
+ *   7 — Call Log * sheets (newest first)
+ *   8 — Everything else
+ *   9 — Attendance controller tabs (Last, First - ID)
+ */
+function sortWorkbookSheets_() {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = workbook.getSheets();
+
+  function groupOf(name) {
+    if (name === EMPLOYEES_SHEET_NAME)     return 0;
+    if (name === COMET_CONFIG_SHEET_NAME)  return 1;
+    if (name === ACTIVE_CNS_SHEET_NAME)    return 2;
+    if (name === CN_LOG_SHEET_NAME)        return 3;
+    if (name === EXPIRED_CNS_SHEET_NAME)   return 4;
+    if (name.startsWith(DEPT_SETTINGS_PREFIX)) return 5;
+    if (name.startsWith('Week_'))          return 6;
+    if (name.startsWith('Call Log'))       return 7;
+    if (EMPLOYEE_TAB_PATTERN.test(name))   return 9;
+    return 8;
+  }
+
+  const sorted = sheets.slice().sort(function(a, b) {
+    const ga = groupOf(a.getName());
+    const gb = groupOf(b.getName());
+    if (ga !== gb) return ga - gb;
+    // Week sheets: newest first (descending by name — Week_MM_DD_YY sorts correctly)
+    if (ga === 6) return b.getName().localeCompare(a.getName());
+    // Call Log sheets: newest first
+    if (ga === 7) return b.getName().localeCompare(a.getName());
+    // Everything else: alphabetical
+    return a.getName().localeCompare(b.getName());
+  });
+
+  sorted.forEach(function(sheet, index) {
+    workbook.setActiveSheet(sheet);
+    workbook.moveActiveSheet(index + 1);
+  });
 }

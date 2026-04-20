@@ -1,6 +1,6 @@
 /**
  * setup.js — First-run sheet bootstrap and onOpen menu for COMET.
- * VERSION: 0.1.0
+ * VERSION: 0.2.4
  *
  * This file has two responsibilities:
  *
@@ -156,7 +156,21 @@ function runCometSetup_() {
  */
 function createEmployeesSheet_(workbook) {
   const sheet = workbook.insertSheet(EMPLOYEES_SHEET_NAME);
-  const headers = ['Name (Last, First)', 'Employee ID', 'Hire Date', 'Department', 'Status'];
+  const headers = [
+    'Name (Last, First)',
+    'Employee ID',
+    'Hire Date',
+    'Department',
+    'Status',
+    'FT/PT',
+    'Day Off Pref 1',
+    'Day Off Pref 2',
+    'Preferred Shift',
+    'Qualified Shifts',
+    'Vacation Dates',
+    'Role',
+    'Seniority Rank'
+  ];
 
   sheet.getRange(1, 1, 1, headers.length)
     .setValues([headers])
@@ -169,6 +183,14 @@ function createEmployeesSheet_(workbook) {
   sheet.setColumnWidth(3, 110);
   sheet.setColumnWidth(4, 160);
   sheet.setColumnWidth(5, 90);
+  sheet.setColumnWidth(6, 80);   // FT/PT
+  sheet.setColumnWidth(7, 140);  // Day Off Pref 1
+  sheet.setColumnWidth(8, 140);  // Day Off Pref 2
+  sheet.setColumnWidth(9, 130);  // Preferred Shift
+  sheet.setColumnWidth(10, 150); // Qualified Shifts
+  sheet.setColumnWidth(11, 150); // Vacation Dates
+  sheet.setColumnWidth(12, 120); // Role
+  sheet.setColumnWidth(13, 130); // Seniority Rank
   sheet.setFrozenRows(1);
   sheet.setTabColor('#005DAA');
 

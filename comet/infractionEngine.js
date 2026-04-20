@@ -1,6 +1,6 @@
 /**
  * infractionEngine.js — Main orchestrator for the infraction detection pipeline.
- * VERSION: 0.1.0
+ * VERSION: 0.2.3
  *
  * This file contains a single public function: scanAndIssueCNs(). Its only
  * job is to call the other files in the correct order and pass data between
@@ -82,11 +82,13 @@ function sendCNsDaily() {
  * Errors on individual sheets are caught and logged so a single malformed tab
  * cannot abort the entire scan.
  *
- * @param {{ dryRun?: boolean }} options
+ * @param {{ dryRun?: boolean, sendEmail?: boolean }} options
+ * @returns {{ proposals: number, issued: number }}
  */
 function scanAndIssueCNs(options) {
-  const opts = options || {};
-  const dryRun = opts.dryRun != null ? !!opts.dryRun : !!DRY_RUN; // config.js
+  const opts      = options || {};
+  const dryRun    = opts.dryRun    != null ? !!opts.dryRun    : !!DRY_RUN; // config.js
+  const sendEmail = opts.sendEmail != null ? !!opts.sendEmail : !dryRun;   // default: send when not dry run
   const timeZone = Session.getScriptTimeZone();
 
   console.log(`infractionEngine: Starting scan — dryRun=${dryRun}, daysBack=${DAYS_BACK}`);
@@ -160,7 +162,7 @@ function scanAndIssueCNs(options) {
 
   if (newProposals.length === 0) {
     console.log('infractionEngine: No CN proposals found across all employee tabs.');
-    return;
+    return { proposals: 0, issued: 0 };
   }
 
   // Step 5: Deduplicate against the log index
@@ -179,47 +181,53 @@ function scanAndIssueCNs(options) {
     `${toSend.length} new to send.`
   );
 
-  if (toSend.length === 0) return;
+  if (toSend.length === 0) return { proposals: newProposals.length, issued: 0 };
 
-  // Step 6: Send notifications and write to the log
-  sendCNNotifications_(toSend, dryRun, timeZone); // notifier.js
-
-  if (!dryRun) {
-    const issuedAt = Utilities.formatDate(new Date(), timeZone, 'yyyy-MM-dd HH:mm:ss');
-    const issuedBy = Session.getActiveUser() ? Session.getActiveUser().getEmail() : '';
-
-    toSend.forEach(proposal => {
-      // Write to CN_Log (dedup source of truth)
-      appendLogRow_(logSheet, { // cnLog.js
-        CN_Key: proposal.cnKey,
-        EmployeeID: proposal.employeeId,
-        EmployeeName: proposal.employeeName,
-        Department: proposal.department,
-        WindowStart: formatDateYmd_(proposal.windowStart, timeZone), // infractionDetector.js
-        WindowEnd: formatDateYmd_(proposal.windowEnd, timeZone),
-        Count: String(proposal.count),
-        EventsHash: proposal.eventsHash,
-        IssuedAt: issuedAt,
-        IssuedBy: issuedBy,
-        DryRun: 'FALSE',
-        SheetName: proposal.sheetName || '',
-        Status: 'Active',
-        ExpiredAt: '',
-        Rule: proposal.rule || 'GLOBAL',
-        SourceSpreadsheetId: proposal.sourceSpreadsheetId || '',
-        SourceSheetGid: proposal.sourceSheetGid != null ? String(proposal.sourceSheetGid) : '',
-      });
-
-      // Write to Active CNs (manager-facing view with hyperlink)
-      appendActiveCNRow_(proposal, issuedAt, timeZone); // cnLog.js
-
-      // Update the in-memory index so subsequent proposals in the same run
-      // that share a key are not re-logged
-      logIndex.set(proposal.cnKey, { eventsHash: proposal.eventsHash });
-    });
-
-    console.log(`infractionEngine: ${toSend.length} CN(s) logged to CN_Log.`);
+  // Step 6: Send notifications and/or write to the log
+  // dryRun  → log to console only, no sheet writes, no email
+  // !dryRun → always write to sheet; sendEmail controls whether emails go out
+  if (dryRun) {
+    sendCNNotifications_(toSend, true, timeZone); // notifier.js — dry-run: console only
+    console.log('infractionEngine: Dry run complete. No sheets written.');
+    return { proposals: newProposals.length, issued: 0 };
   }
 
+  sendCNNotifications_(toSend, !sendEmail, timeZone); // notifier.js — suppress email when sendEmail=false
+
+  const issuedAt = Utilities.formatDate(new Date(), timeZone, 'yyyy-MM-dd HH:mm:ss');
+  const issuedBy = Session.getActiveUser() ? Session.getActiveUser().getEmail() : '';
+
+  toSend.forEach(proposal => {
+    // Write to CN_Log (dedup source of truth)
+    appendLogRow_(logSheet, { // cnLog.js
+      CN_Key: proposal.cnKey,
+      EmployeeID: proposal.employeeId,
+      EmployeeName: proposal.employeeName,
+      Department: proposal.department,
+      WindowStart: formatDateYmd_(proposal.windowStart, timeZone), // infractionDetector.js
+      WindowEnd: formatDateYmd_(proposal.windowEnd, timeZone),
+      Count: String(proposal.count),
+      EventsHash: proposal.eventsHash,
+      IssuedAt: issuedAt,
+      IssuedBy: issuedBy,
+      DryRun: 'FALSE',
+      SheetName: proposal.sheetName || '',
+      Status: 'Active',
+      ExpiredAt: '',
+      Rule: proposal.rule || 'GLOBAL',
+      SourceSpreadsheetId: proposal.sourceSpreadsheetId || '',
+      SourceSheetGid: proposal.sourceSheetGid != null ? String(proposal.sourceSheetGid) : '',
+    });
+
+    // Write to Active CNs (manager-facing view with hyperlink)
+    appendActiveCNRow_(proposal, issuedAt, timeZone); // cnLog.js
+
+    // Update the in-memory index so subsequent proposals in the same run
+    // that share a key are not re-logged
+    logIndex.set(proposal.cnKey, { eventsHash: proposal.eventsHash });
+  });
+
+  console.log(`infractionEngine: ${toSend.length} CN(s) logged to CN_Log. Email sent: ${sendEmail}`);
   console.log('infractionEngine: Scan complete.');
+  return { proposals: newProposals.length, issued: toSend.length };
 }

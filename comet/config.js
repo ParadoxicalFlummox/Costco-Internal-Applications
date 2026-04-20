@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.1.1
+ * VERSION: 0.2.5
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -441,30 +441,34 @@ const LOG_SPREADSHEET_ID_CELL = 'B2';
  *   A (0)  — Employee Name
  *   B (1)  — Employee ID
  *   C (2)  — (reserved)
- *   D (3)  — Is Callout    (checkbox)
+ *   D (3)  — Is Callout       (checkbox)
  *   E (4)  — (reserved)
- *   F (5)  — Is FMLA       (checkbox)
- *   G (6)  — Is No Show    (checkbox)
+ *   F (5)  — Is FMLA          (checkbox)
+ *   G (6)  — Is No Show       (checkbox)
  *   H (7)  — Department
  *   I (8)  — Time Called
- *   J–N    — (reserved)
+ *   J (9)  — Manager (who took the call)
+ *   K (10) — Scheduled Shift
+ *   L-M (11-12) — (reserved)
  *   N (13) — Comment
  *   O (14) — Date
  */
 const CALL_LOG_COLUMN = {
-  NAME:        0,
-  EMPLOYEE_ID: 1,
-  IS_CALLOUT:  3,
-  IS_FMLA:     5,
-  IS_NOSHOW:   6,
-  DEPARTMENT:  7,
-  TIME:        8,
-  COMMENT:     13,
-  DATE:        14,
+  NAME:             0,
+  EMPLOYEE_ID:      1,
+  IS_CALLOUT:       3,
+  IS_FMLA:          5,
+  IS_NOSHOW:        6,
+  DEPARTMENT:       7,
+  TIME:             8,
+  MANAGER:          9,
+  SCHEDULED_SHIFT:  10,
+  COMMENT:          13,
+  DATE:             14,
 };
 
-/** Row number where Call Log data begins (row 1 is the header). */
-const CALL_LOG_DATA_START_ROW = 2;
+/** Row number where Call Log data begins (row 1 = title, row 2 = headers, row 3 = data). */
+const CALL_LOG_DATA_START_ROW = 3;
 
 /**
  * Google Sheets uses a serial date where Dec 30, 1899 = 0.

@@ -1,6 +1,6 @@
 /**
  * webapp.js — GAS Web App entry point for COMET.
- * VERSION: 0.1.1
+ * VERSION: 0.2.3
  *
  * Serves the single-page HTML shell and handles the include() helper
  * used by index.html to inject stylesheet and javascript partials.

@@ -1,6 +1,6 @@
 /**
  * notifier.js — CN email construction and sending.
- * VERSION: 0.1.0
+ * VERSION: 0.2.3
  *
  * This file is the final stage of the notification pipeline. It receives a
  * list of new CN proposals from infractionEngine.js and is responsible for:

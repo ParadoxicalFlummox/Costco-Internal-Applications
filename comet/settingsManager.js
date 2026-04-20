@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Builds shift timing maps and staffing requirements for the schedule engine.
- * VERSION: 0.1.0 (ported from autoScheduleGenerator v1.2.1)
+ * VERSION: 0.2.3
  *
  * In the original autoScheduleGenerator this file read directly from a Settings sheet.
  * In COMET, settings are owned by scheduleSettings.js and stored in Settings_[Dept] sheets.
