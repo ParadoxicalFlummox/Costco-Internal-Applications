@@ -1,7 +1,7 @@
 <script>
 /* ============================================================
    javascript.html — COMET Frontend JavaScript
-   VERSION: 0.2.6
+   VERSION: 0.2.8
 
    Loaded via <?!= include('javascript') ?> at the bottom of
    index.html. All modules are plain-object namespaces; no
@@ -235,12 +235,13 @@ var CNStore = (function() {
 // ------------------------------------------------------------
 
 var Schedule = (function() {
-  var _weekSheetName = null;
-  var _weekGrid      = null;
-  var _employeeList  = null;
-  var _currentDept   = null;
-  var _currentMonday = null;
-  var _pendingOverride = null; // { employeeId, dayIndex }
+  var _weekSheetName        = null;
+  var _weekGrid             = null;
+  var _employeeList         = null;
+  var _staffingRequirements = null;
+  var _currentDept          = null;
+  var _currentMonday        = null;
+  var _pendingOverride      = null; // { employeeId, dayIndex }
 
   function onShow() {
     // Refresh dept dropdown in case departments were added since startup
@@ -269,9 +270,10 @@ var Schedule = (function() {
     _currentMonday = monday;
 
     UI.callServer('generateSchedule', [dept, monday], function(data) {
-      _weekSheetName = data.weekSheetName;
-      _weekGrid      = data.weekGrid;
-      _employeeList  = data.employeeList;
+      _weekSheetName        = data.weekSheetName;
+      _weekGrid             = data.weekGrid;
+      _employeeList         = data.employeeList;
+      _staffingRequirements = data.staffingRequirements || {};
       renderScheduleGrid();
 
       // Warn about employees who ended up with all non-SHIFT days — likely
@@ -339,10 +341,11 @@ var Schedule = (function() {
           '<div class="p-3 text-comet-muted small">No schedule data for this week.</div>';
         return;
       }
-      _weekSheetName = data.weekSheetName;
-      _weekGrid      = data.weekGrid;
-      _employeeList  = data.employeeList;
-      _currentMonday = mondayDate;
+      _weekSheetName        = data.weekSheetName;
+      _weekGrid             = data.weekGrid;
+      _employeeList         = data.employeeList;
+      _staffingRequirements = data.staffingRequirements || {};
+      _currentMonday        = mondayDate;
       renderScheduleGrid(true); // true = render into #scheduleGridInner
     });
   }
@@ -398,13 +401,31 @@ var Schedule = (function() {
       html += '</tr>';
     });
 
-    // Coverage row
+    // Coverage row — respects staffingRequirements mode (Count vs Hours)
     html += '<tr class="schedule-coverage-row table-light">';
     html += '<td class="schedule-cell"><small class="text-comet-muted">Coverage</small></td>';
+    var dayNames = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
     for (var di = 0; di < 7; di++) {
-      var count = 0;
-      _weekGrid.forEach(function(row) { if (row[di].type === 'SHIFT') count++; });
-      html += '<td class="schedule-cell text-center"><small>' + count + '</small></td>';
+      var dayReq = _staffingRequirements[dayNames[di]] || {};
+      var mode = dayReq.mode || 'Count';
+      var target = dayReq.value || 0;
+
+      if (mode === 'Hours') {
+        // Sum paidHours for all SHIFT cells in this day
+        var totalHours = 0;
+        _weekGrid.forEach(function(row) {
+          if (row[di].type === 'SHIFT') totalHours += (row[di].paidHours || 0);
+        });
+        var label = totalHours.toFixed(1) + 'h';
+        var okClass = totalHours >= target ? '' : 'text-danger fw-semibold';
+        html += '<td class="schedule-cell text-center"><small class="' + okClass + '">' + label + '</small></td>';
+      } else {
+        // Count mode (default)
+        var count = 0;
+        _weekGrid.forEach(function(row) { if (row[di].type === 'SHIFT') count++; });
+        var okClass = count >= target ? '' : 'text-danger fw-semibold';
+        html += '<td class="schedule-cell text-center"><small class="' + okClass + '">' + count + '</small></td>';
+      }
     }
     html += '<td></td></tr>';
 
@@ -423,17 +444,32 @@ var Schedule = (function() {
                     + ' | ' + cn.daysUntilExpiry + ' days left');
       badge = '<span class="cn-badge ' + badgeClass + '" title="' + title + '">&#9679;</span>';
     }
+
+    // Weekly hours indicator — red if under minimum, muted gray if okay
+    var hoursClass = emp.underHours ? 'text-danger' : 'text-comet-muted';
+    var hoursLabel = '<span class="' + hoursClass + '" style="font-size:0.68rem;">'
+      + (emp.weeklyHours || 0).toFixed(1) + 'h</span>';
+
     return '<span class="fw-semibold">' + esc(emp.name) + '</span>' + badge
-         + '<br><span class="schedule-cell-role">' + esc(emp.primaryRole || '') + '</span>';
+         + '<br><span class="schedule-cell-role">' + esc(emp.primaryRole || '') + '</span>'
+         + ' ' + hoursLabel;
   }
 
   function buildCellHtml(cell, isFt) {
-    if (cell.type === 'VAC')  return '<span class="schedule-cell-vac">VAC</span>';
-    if (cell.type === 'RDO')  return '<span class="schedule-cell-rdo">RDO</span>';
+    if (cell.type === 'VAC')  {
+      var vacHtml = '<span class="schedule-cell-vac">VAC</span>';
+      return cell.locked ? '<span style="position:relative;">' + vacHtml + '<span class="lock-badge">🔒</span></span>' : vacHtml;
+    }
+    if (cell.type === 'RDO')  {
+      var rdoHtml = '<span class="schedule-cell-rdo">RDO</span>';
+      return cell.locked ? '<span style="position:relative;">' + rdoHtml + '<span class="lock-badge">🔒</span></span>' : rdoHtml;
+    }
     if (cell.type === 'OFF')  return '<span class="schedule-cell-off">OFF</span>';
     // SHIFT
     var cls = isFt ? 'schedule-cell-ft' : 'schedule-cell-pt';
-    return '<span class="' + cls + '">' + esc(cell.displayText || cell.shiftName || 'SHIFT') + '</span>';
+    var shiftHtml = '<span class="' + cls + '">' + esc(cell.displayText || cell.shiftName || 'SHIFT') + '</span>';
+    // Add lock indicator if this shift is locked (manager override)
+    return cell.locked ? '<span style="position:relative;" title="Manager override">' + shiftHtml + '<span class="lock-badge">🔒</span></span>' : shiftHtml;
   }
 
   function _onCellClick(tdEl) {
@@ -447,18 +483,111 @@ var Schedule = (function() {
     var title = (emp ? esc(emp.name) : '') + ' — ' + (days[dayIndex] || '');
     document.getElementById('cellOverrideModalTitle').textContent = title;
 
+    // Populate the shift dropdown for this department
+    populateShiftSelectForModal(_currentDept);
+
     openModal('cellOverrideModal');
+  }
+
+  function populateShiftSelectForModal(deptName) {
+    var selectEl = document.getElementById('overrideShiftSelect');
+    // Clear existing options except the placeholder
+    while (selectEl.options.length > 1) {
+      selectEl.remove(1);
+    }
+
+    // Fetch shifts from getDeptSettings
+    UI.callServer('getDeptSettings', [deptName], function(data) {
+      if (!data.shifts || data.shifts.length === 0) {
+        UI.showToast('No shifts found for this department.', 'warning');
+        return;
+      }
+
+      // Populate dropdown with unique shift names
+      var seen = {};
+      data.shifts.forEach(function(shift) {
+        if (!seen[shift.name]) {
+          var option = document.createElement('option');
+          option.value = shift.name;
+          option.textContent = shift.name;
+          selectEl.appendChild(option);
+          seen[shift.name] = true;
+        }
+      });
+
+      // Add custom option
+      var customOption = document.createElement('option');
+      customOption.value = '__CUSTOM__';
+      customOption.textContent = 'Custom...';
+      selectEl.appendChild(customOption);
+
+      // Add event listener to show/hide custom shift inputs
+      selectEl.onchange = function() {
+        var customGroup = document.getElementById('customShiftGroup');
+        if (this.value === '__CUSTOM__') {
+          customGroup.style.display = 'block';
+        } else {
+          customGroup.style.display = 'none';
+        }
+      };
+    });
   }
 
   function handleCellOverride(newType) {
     if (!_pendingOverride || !_weekSheetName) return;
+
+    var shiftName = null;
+    var customDisplayText = null;
+    var customPaidHours = null;
+
+    if (newType === 'SHIFT') {
+      var selectEl = document.getElementById('overrideShiftSelect');
+      shiftName = selectEl.value;
+
+      if (!shiftName || shiftName === 'Choose a shift...') {
+        UI.showToast('Please select a shift.', 'warning');
+        return;
+      }
+
+      if (shiftName === '__CUSTOM__') {
+        // Validate custom shift inputs
+        var startTime = document.getElementById('customShiftStart').value;
+        var endTime = document.getElementById('customShiftEnd').value;
+        var hoursInput = document.getElementById('customShiftHours').value;
+
+        if (!startTime || !endTime || !hoursInput) {
+          UI.showToast('Please enter start time, end time, and paid hours.', 'warning');
+          return;
+        }
+
+        var hours = parseFloat(hoursInput);
+        if (isNaN(hours) || hours <= 0 || hours > 24) {
+          UI.showToast('Paid hours must be between 0 and 24.', 'warning');
+          return;
+        }
+
+        // Format display text as "10:00 AM - 3:00 PM"
+        customDisplayText = formatTimeRange(startTime, endTime);
+        customPaidHours = hours;
+      }
+    }
+
     closeModal('cellOverrideModal');
 
-    UI.callServer('updateCellOverride',
-      [_weekSheetName, _pendingOverride.employeeId, _pendingOverride.dayIndex, newType],
+    var args = [_weekSheetName, _pendingOverride.employeeId, _pendingOverride.dayIndex, newType];
+    if (shiftName) {
+      args.push(shiftName);
+    }
+    if (customDisplayText) {
+      args.push(customDisplayText);
+      args.push(customPaidHours);
+    }
+
+    UI.callServer('updateCellOverride', args,
       function(data) {
-        _weekGrid     = data.weekGrid;
-        _employeeList = data.employeeList;
+        _weekGrid             = data.weekGrid;
+        _employeeList         = data.employeeList;
+        _staffingRequirements = data.staffingRequirements || {};
         renderScheduleGrid();
         UI.showToast('Cell updated.', 'success');
       }
@@ -466,8 +595,23 @@ var Schedule = (function() {
     _pendingOverride = null;
   }
 
-  // Expose click handlers for inline onclick attributes
-  return { onShow, _onCellClick, _onWeekTabClick };
+  // Helper to format time inputs (HH:MM) to display format (H:MM AM/PM - H:MM AM/PM)
+  function formatTimeRange(startTime, endTime) {
+    function formatTime(timeStr) {
+      if (!timeStr) return '';
+      var parts = timeStr.split(':');
+      var hours = parseInt(parts[0], 10);
+      var minutes = parseInt(parts[1], 10);
+      var period = hours >= 12 ? 'PM' : 'AM';
+      var displayHours = hours % 12 || 12;
+      var minStr = minutes < 10 ? '0' + minutes : minutes;
+      return displayHours + ':' + minStr + ' ' + period;
+    }
+    return formatTime(startTime) + ' - ' + formatTime(endTime);
+  }
+
+  // Expose click handlers and utilities for inline onclick attributes and modal population
+  return { onShow, _onCellClick, _onWeekTabClick, _getCurrentDept: function() { return _currentDept; } };
 })();
 
 
@@ -490,7 +634,7 @@ var Absences = (function() {
     document.getElementById('btnSaveAbsence').onclick = handleSaveAbsence;
 
     // Autofill when employee name is selected
-    document.getElementById('absenceName').onchange = handleEmployeeNameChange;
+    document.getElementById('absenceName').oninput = handleEmployeeNameChange;
   }
 
   function handleEmployeeNameChange() {
@@ -580,7 +724,45 @@ var Absences = (function() {
     });
   }
 
-  return { onShow, sendRow };
+  /**
+   * Sets the employee data and populates both the name datalist and
+   * the internal _employeeMap used by autofill. Called from Admin.loadEmployeeList().
+   * @param {Array} employees - List of employee objects from backend
+   */
+  function setEmployees(employees) {
+    _employeeMap = {};
+    var dl = document.getElementById('absenceEmployeeList');
+    var deptDl = document.getElementById('absenceDeptList');
+    if (dl) dl.innerHTML = '';
+    var depts = {};
+
+    employees.forEach(function(emp) {
+      if (emp.status !== 'Active') return;
+      if (dl) {
+        var opt = document.createElement('option');
+        opt.value = emp.name;
+        dl.appendChild(opt);
+      }
+      if (emp.department) depts[emp.department] = true;
+
+      // Store employee data for autofill lookup
+      _employeeMap[emp.name] = {
+        id: emp.id || '',
+        department: emp.department || '',
+      };
+    });
+
+    if (deptDl) {
+      deptDl.innerHTML = '';
+      Object.keys(depts).sort().forEach(function(dept) {
+        var opt = document.createElement('option');
+        opt.value = dept;
+        deptDl.appendChild(opt);
+      });
+    }
+  }
+
+  return { onShow, sendRow, setEmployees };
 })();
 
 
@@ -730,7 +912,7 @@ var Admin = (function() {
     UI.callServer('getEmployeeList', undefined, function(data) {
       _allEmployees = data.employees || [];
       renderEmployeeList(_allEmployees);
-      _buildAbsenceEmployeeDatalist(_allEmployees);
+      Absences.setEmployees(_allEmployees);
     });
   }
 
@@ -1011,36 +1193,10 @@ var Admin = (function() {
     });
   }
 
+  // Datalist population moved to Absences.setEmployees()
   function _buildAbsenceEmployeeDatalist(employees) {
-    var dl = document.getElementById('absenceEmployeeList');
-    if (!dl) return;
-    dl.innerHTML = '';
-    var deptDl = document.getElementById('absenceDeptList');
-    var depts  = {};
-
-    // Build both datalist and employee map for autofill
-    _employeeMap = {};
-    employees.forEach(function(emp) {
-      if (emp.status !== 'Active') return;
-      var opt = document.createElement('option');
-      opt.value = emp.name;
-      dl.appendChild(opt);
-      if (emp.department) depts[emp.department] = true;
-
-      // Store employee data for autofill lookup
-      _employeeMap[emp.name] = {
-        id: emp.id || '',
-        department: emp.department || '',
-      };
-    });
-    if (deptDl) {
-      deptDl.innerHTML = '';
-      Object.keys(depts).sort().forEach(function(dept) {
-        var opt = document.createElement('option');
-        opt.value = dept;
-        deptDl.appendChild(opt);
-      });
-    }
+    // DEPRECATED: Use Absences.setEmployees() instead.
+    Absences.setEmployees(employees);
   }
 
   return { onShow, loadEmployeeList, openEmployeeEditModal, toggleStatus, openAttendanceSheet };

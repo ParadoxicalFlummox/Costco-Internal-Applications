@@ -14,7 +14,7 @@
   <nav class="navbar comet-navbar">
     <div class="container-fluid">
       <span class="comet-brand navbar-brand mb-0">
-        <span class="comet-logo-icon">&#9733;</span>COMET
+        <span class="comet-logo-icon">&#9732;</span>COMET
       </span>
       <ul class="navbar-nav flex-row ms-3">
         <li class="nav-item">
@@ -369,18 +369,21 @@
             <input type="text" id="absenceScheduledShift" class="form-control form-control-sm" list="absenceScheduledShiftList">
             <datalist id="absenceScheduledShiftList"></datalist>
           </div>
-          <div class="mb-2 d-flex gap-3">
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="absenceIsCallout">
-              <label class="form-check-label small" for="absenceIsCallout">Call-Out</label>
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="absenceIsFmla">
-              <label class="form-check-label small" for="absenceIsFmla">FMLA</label>
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="absenceIsNoShow">
-              <label class="form-check-label small" for="absenceIsNoShow">No Show</label>
+          <div class="mb-2">
+            <label class="form-label small">Type</label>
+            <div class="d-flex gap-3 border rounded p-2">
+              <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="absenceIsCallout">
+                <label class="form-check-label small" for="absenceIsCallout">Call-Out</label>
+              </div>
+              <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="absenceIsFmla">
+                <label class="form-check-label small" for="absenceIsFmla">FMLA</label>
+              </div>
+              <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="absenceIsNoShow">
+                <label class="form-check-label small" for="absenceIsNoShow">No Show</label>
+              </div>
             </div>
           </div>
           <div class="mb-2">
@@ -486,9 +489,27 @@
           <button type="button" class="btn-close" onclick="closeModal('cellOverrideModal')"></button>
         </div>
         <div class="modal-body d-flex flex-column gap-2">
-          <button class="btn btn-primary btn-sm" data-override-type="SHIFT">Assign Shift</button>
-          <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC">Mark Vacation</button>
-          <button class="btn btn-secondary btn-sm" data-override-type="RDO">Mark RDO</button>
+          <!-- Shift selector -->
+          <div id="shiftSelectorGroup">
+            <label for="overrideShiftSelect" class="form-label mb-1">Select a shift:</label>
+            <select id="overrideShiftSelect" class="form-select form-select-sm">
+              <option disabled selected>Choose a shift...</option>
+            </select>
+          </div>
+
+          <!-- Custom shift inputs (hidden by default) -->
+          <div id="customShiftGroup" style="display:none;">
+            <label for="customShiftStart" class="form-label mb-1">Start time:</label>
+            <input type="time" id="customShiftStart" class="form-control form-control-sm">
+            <label for="customShiftEnd" class="form-label mb-1 mt-2">End time:</label>
+            <input type="time" id="customShiftEnd" class="form-control form-control-sm">
+            <label for="customShiftHours" class="form-label mb-1 mt-2">Paid hours:</label>
+            <input type="number" id="customShiftHours" class="form-control form-control-sm" min="1" max="12" step="0.5">
+          </div>
+
+          <button class="btn btn-primary btn-sm" data-override-type="SHIFT" onclick="handleCellOverride('SHIFT')">Assign Shift</button>
+          <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC" onclick="handleCellOverride('VAC')">Mark Vacation</button>
+          <button class="btn btn-secondary btn-sm" data-override-type="RDO" onclick="handleCellOverride('RDO')">Mark RDO</button>
         </div>
       </div>
     </div>

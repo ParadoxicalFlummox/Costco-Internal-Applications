@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.2.3
+ * VERSION: 0.2.5
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -8,6 +8,7 @@
  *   - generateWeeklySchedule() accepts a deptName parameter.
  *   - normalizeDeptName_() is defined here (was implicit in the original).
  *   - All four phases, coverage map functions, and utility functions are unchanged.
+ *   - PERF: Added profiling wrappers to each phase for performance monitoring
  *
  * THE FOUR PHASES:
  *   Phase 0 — Bootstrap: Load roster for dept, initialize grid, stamp vacation locks.
@@ -40,10 +41,22 @@ function generateWeeklySchedule_(deptName, weekStartDate) {
 
   const weekGrid = initializeWeekGrid_(employeeList, weekStartDate);
 
-  runPhaseOnePreferenceAssignment_(weekGrid, employeeList, shiftTimingMap, staffingRequirements, weekStartDate);
-  runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap);
-  runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, staffingRequirements);
-  runPhaseFourRoleAssignment_(weekGrid, employeeList, deptName);
+  // PERF: Wrap each phase with execution time logging
+  logExecutionTime_('Phase 1: Preference Assignment (' + employeeList.length + ' employees)', function() {
+    runPhaseOnePreferenceAssignment_(weekGrid, employeeList, shiftTimingMap, staffingRequirements, weekStartDate);
+  });
+
+  logExecutionTime_('Phase 2: Minimum Hour Enforcement', function() {
+    runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap);
+  });
+
+  logExecutionTime_('Phase 3: Gap Resolution', function() {
+    runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, staffingRequirements);
+  });
+
+  logExecutionTime_('Phase 4: Role Assignment', function() {
+    runPhaseFourRoleAssignment_(weekGrid, employeeList, deptName);
+  });
 
   return {
     weekSheetName: generateWeekSheetName_(weekStartDate, deptName),
@@ -208,7 +221,10 @@ function grantRequestedDaysOff_(weekGrid, employeeList, staffingRequirements) {
 function assignPreferredShifts_(weekGrid, employeeList, shiftTimingMap) {
   employeeList.forEach(function(employee, ei) {
     DAY_NAMES_IN_ORDER.forEach(function(_dayName, dayIndex) {
-      if (weekGrid[ei][dayIndex].type !== 'OFF') return;
+      const cell = weekGrid[ei][dayIndex];
+      if (cell.type !== 'OFF') return;
+      // Skip if this cell is locked (manager override via updateCellOverride).
+      if (cell.locked) return;
       const shiftDef = resolveShiftForEmployee_(employee, shiftTimingMap);
       if (!shiftDef) return;
       weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, shiftDef.displayText);
@@ -254,7 +270,10 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap) {
     if (!shiftDef) return;
     DAY_NAMES_IN_ORDER.forEach(function(_dayName, dayIndex) {
       if (currentHours >= weeklyMin) return;
-      if (weekGrid[ei][dayIndex].type !== 'OFF') return;
+      const cell = weekGrid[ei][dayIndex];
+      if (cell.type !== 'OFF') return;
+      // Skip if this cell is locked (manager override via updateCellOverride).
+      if (cell.locked) return;
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) return;
       if (currentHours + shiftDef.paidHours > weeklyMax) return;
       weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, shiftDef.displayText);
@@ -277,9 +296,21 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
     let dayCoverage = buildDayCoverage_(weekGrid, employeeList, dayIndex, shiftTimingMap, -1);
     if (!hasCoverageGaps_(dayCoverage, windowStartSlot, windowEndSlot)) return;
 
+    // Pre-compute shift definitions for all qualified shift + status combos to reduce repeated lookups
+    const shiftDefCache_ = {};
+    employeeList.forEach(function(emp) {
+      emp.qualifiedShifts.forEach(function(shiftName) {
+        const key = shiftName + '|' + emp.status;
+        if (!shiftDefCache_[key]) shiftDefCache_[key] = shiftTimingMap[key];
+      });
+    });
+
     // Cascade A — reassign working employees to better shifts
     for (let ei = employeeList.length - 1; ei >= 0; ei--) {
-      if (weekGrid[ei][dayIndex].type !== 'SHIFT') continue;
+      const cell = weekGrid[ei][dayIndex];
+      if (cell.type !== 'SHIFT') continue;
+      // Skip if this cell is locked (manager override via updateCellOverride).
+      if (cell.locked) continue;
       const employee = employeeList[ei];
       const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
       const currentHours = getWeeklyHours_(weekGrid, ei);
@@ -300,7 +331,10 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
 
     // Cascade B — pull in employees who are off
     for (let ei = employeeList.length - 1; ei >= 0; ei--) {
-      if (weekGrid[ei][dayIndex].type !== 'OFF') continue;
+      const cell = weekGrid[ei][dayIndex];
+      if (cell.type !== 'OFF') continue;
+      // Skip if this cell is locked (manager override via updateCellOverride).
+      if (cell.locked) continue;
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) continue;
       const employee = employeeList[ei];
       const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
@@ -430,12 +464,16 @@ function serializeWeekGrid_(weekGrid, employeeList) {
 
 /**
  * Strips non-serializable fields from an employee list for return to the frontend.
+ * Also calculates and includes weekly hours and under-hours status.
  *
  * @param {Array} employeeList
+ * @param {Array} weekGrid — Week schedule grid (used to calculate weeklyHours)
  * @returns {Array}
  */
-function serializeEmployeeList_(employeeList) {
-  return employeeList.map(function(emp) {
+function serializeEmployeeList_(employeeList, weekGrid) {
+  return employeeList.map(function(emp, i) {
+    var weeklyHours = getWeeklyHours_(weekGrid, i);
+    var minHours = emp.status === 'FT' ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN;
     return {
       name:           emp.name,
       employeeId:     emp.employeeId,
@@ -443,6 +481,8 @@ function serializeEmployeeList_(employeeList) {
       department:     emp.department,
       seniorityRank:  emp.seniorityRank,
       primaryRole:    emp.primaryRole || '',
+      weeklyHours:    weeklyHours,
+      underHours:     weeklyHours < minHours,
     };
   });
 }
@@ -561,14 +601,24 @@ function readCheckboxStateFromSheet_(weekSheet, employeeCount) {
   for (let ei = 0; ei < employeeCount; ei++) {
     state[ei] = [];
     const baseRow = WEEK_SHEET.DATA_START_ROW + (ei * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-    const rows = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_VAC, WEEK_SHEET.COL_MONDAY, 2, WEEK_SHEET.DAYS_IN_WEEK).getValues();
+    // Read VAC, RDO, SHIFT, and LOCK rows to fully reconstruct grid state.
+    const vacRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_VAC, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+    const rdoRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_RDO, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+    const shiftRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+    const lockRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_LOCK, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+
     for (let di = 0; di < WEEK_SHEET.DAYS_IN_WEEK; di++) {
-      if (rows[0][di] === true) {
+      const isLocked = lockRow[di] === true;
+      if (vacRow[di] === true) {
         state[ei][di] = createDayAssignment_('VAC', null, 0, true);
-      } else if (rows[1][di] === true) {
+      } else if (rdoRow[di] === true) {
         state[ei][di] = createDayAssignment_('RDO', null, 0, false);
+      } else if (shiftRow[di] && shiftRow[di] !== 'OFF' && shiftRow[di] !== '') {
+        // This is a SHIFT cell — reconstruct it from the display text.
+        // shiftName is null; displayText is the cell content.
+        state[ei][di] = createDayAssignment_('SHIFT', null, 0, isLocked, String(shiftRow[di]));
       } else {
-        state[ei][di] = createDayAssignment_('OFF', null, 0, false);
+        state[ei][di] = createDayAssignment_('OFF', null, 0, isLocked);
       }
     }
   }

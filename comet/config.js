@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.2.5
+ * VERSION: 0.2.7
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -14,6 +14,7 @@
  *   5. Infraction / CN System
  *   6. Absence Log (Call Log)
  *   7. Notification Recipients
+ *   8. Performance Tuning
  */
 
 
@@ -129,13 +130,15 @@ const SHIFT_TABLE_COLUMN = {
 /**
  * Row and column positions for generated Week_MM_DD_YY_[Dept] schedule sheets.
  *
- * Each employee occupies a block of four consecutive rows:
+ * Each employee occupies a block of five consecutive rows:
  *   Row 0 of block (VAC):   vacation checkboxes
  *   Row 1 of block (RDO):   requested-day-off checkboxes
  *   Row 2 of block (SHIFT): assigned shift text (e.g. "8:00 AM - 4:30 PM") or "OFF"
  *   Row 3 of block (ROLE):  employee role name on working days (e.g. "Cashier")
+ *   Row 4 of block (LOCK):  cell lock flags (hidden checkboxes indicating manager overrides)
  *
  * The ROLE row was added for COMET vs. the original three-row layout.
+ * The LOCK row stores override flags to prevent phase re-calculation from overwriting manager decisions.
  */
 const WEEK_SHEET = {
   HEADER_ROW:         1,  // Merged week label ("Week of April 7 – 13, 2026")
@@ -145,8 +148,8 @@ const WEEK_SHEET = {
   DATA_START_ROW:     6,  // First row of employee data blocks
 
   // Column positions (1-indexed)
-  COL_ROW_LABEL:      1,  // A — "VAC", "RDO", "SHIFT", "ROLE" label
-  COL_EMPLOYEE_NAME:  2,  // B — Employee name (merged across all 4 rows)
+  COL_ROW_LABEL:      1,  // A — "VAC", "RDO", "SHIFT", "ROLE", "LOCK" label
+  COL_EMPLOYEE_NAME:  2,  // B — Employee name (merged across all 5 rows)
   COL_MONDAY:         3,  // C
   COL_TUESDAY:        4,  // D
   COL_WEDNESDAY:      5,  // E
@@ -156,11 +159,12 @@ const WEEK_SHEET = {
   COL_SUNDAY:         9,  // I
   COL_TOTAL_HOURS:    10, // J — Weekly paid hours total
 
-  ROWS_PER_EMPLOYEE:  4,  // VAC + RDO + SHIFT + ROLE
+  ROWS_PER_EMPLOYEE:  5,  // VAC + RDO + SHIFT + ROLE + LOCK
   ROW_OFFSET_VAC:     0,
   ROW_OFFSET_RDO:     1,
   ROW_OFFSET_SHIFT:   2,
   ROW_OFFSET_ROLE:    3,
+  ROW_OFFSET_LOCK:    4,
 
   DAYS_IN_WEEK:       7,  // Monday through Sunday
 };
@@ -503,3 +507,33 @@ const FALLBACK_EMAIL = 'gm@example.com';
 const PAYROLL_RECIPIENTS = [
   'payroll.clerk@example.com',
 ];
+
+
+// ---------------------------------------------------------------------------
+// Performance Tuning
+// ---------------------------------------------------------------------------
+
+/**
+ * Enable verbose profiling output in the console. Set to true to measure
+ * execution times and debug performance bottlenecks. Should be false in production.
+ */
+const PROFILING_ENABLED = true;
+
+/**
+ * Batch size for sheet operations. When writing large blocks of data,
+ * batching in groups of this size reduces API overhead.
+ */
+const BATCH_SIZE_SHEET_WRITE = 50;
+
+/**
+ * Cache time-to-live in minutes. Cached values (e.g., shift definitions,
+ * attendance grids) expire after this interval.
+ */
+const CACHE_TTL_MINUTES = 30;
+
+/**
+ * Maximum execution time in milliseconds before the API layer should warn
+ * or abort an operation. Default 4.5 minutes (270,000 ms), leaving a
+ * 1.5-minute buffer before the GAS 6-minute hard timeout.
+ */
+const MAX_SAFE_EXECUTION_MS = 270000;

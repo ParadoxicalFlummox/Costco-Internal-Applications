@@ -1,7 +1,3 @@
-# Project-specific
-CLAUDE.md
-test_ukg_sample.csv
-
 # macOS
 .DS_Store
 .AppleDouble
@@ -72,3 +68,5 @@ coverage/
 # Local testing artifacts
 test-output.json
 test-results.html
+test_ukg_sample.csv
+.claude/*

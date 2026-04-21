@@ -1,7 +1,7 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.2.4
- * 
+ * VERSION: 0.3.1
+ *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
  * appropriate backend module, and returns a plain serializable object.
@@ -11,6 +11,9 @@
  *   collects all of those entry points in one place so the rest of the backend
  *   can use private (_-suffixed) functions freely without accidentally exposing
  *   them to the web.
+ *
+ * PERF: Each public function logs its execution time and checks for timeout risk.
+ * Long operations (>4.5 min) will log warnings to help identify bottlenecks.
  *
  * RETURN CONTRACT:
  *   Every function returns a plain object: { ok: true, data: ... } on success
@@ -71,14 +74,16 @@ function getScheduleForWeek(deptName, mondayDate) {
     const weekStartDate = new Date(mondayDate + 'T00:00:00');
     const result = readExistingWeekSchedule_(deptName, weekStartDate); // scheduleEngine.js
     if (!result) {
-      return { ok: true, data: { weekSheetName: null, weekGrid: null, employeeList: [] } };
+      return { ok: true, data: { weekSheetName: null, weekGrid: null, employeeList: [], staffingRequirements: {} } };
     }
+    const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
     return {
       ok: true,
       data: {
         weekSheetName: result.weekSheetName,
         weekGrid: serializeWeekGrid_(result.weekGrid, result.employeeList),
-        employeeList: serializeEmployeeList_(result.employeeList),
+        employeeList: serializeEmployeeList_(result.employeeList, result.weekGrid),
+        staffingRequirements: staffingRequirements,
       },
     };
   } catch (error) {
@@ -91,33 +96,68 @@ function getScheduleForWeek(deptName, mondayDate) {
  * Generates a new schedule for the given department and week, writes it to
  * the workbook, and returns the grid for display in the browser.
  *
+ * If re-generating an existing week, respects existing cell locks so manager
+ * overrides are not overwritten by the algorithm.
+ *
  * @param {string} deptName
  * @param {string} mondayDate — ISO date string "YYYY-MM-DD".
  * @returns {{ ok: boolean, data?: object, error?: string }}
  */
 function generateSchedule(deptName, mondayDate) {
+  const scriptStart = Date.now();
   try {
     if (!deptName || !mondayDate) throw new Error('deptName and mondayDate are required.');
     const weekStartDate = new Date(mondayDate + 'T00:00:00');
-    const result = generateWeeklySchedule_(deptName, weekStartDate); // scheduleEngine.js
+
+    const { result } = logExecutionTime_('generateWeeklySchedule_', function() {
+      return generateWeeklySchedule_(deptName, weekStartDate); // scheduleEngine.js
+    });
 
     // Write to sheet via formatter.
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
     let sheet = workbook.getSheetByName(result.weekSheetName);
+    const isFirstTimeGeneration = !sheet;
     if (!sheet) sheet = workbook.insertSheet(result.weekSheetName);
+
+    // If this is a re-generation of an existing week, read the lock row from the sheet
+    // and apply locks to the freshly generated grid. This preserves manager overrides.
+    if (!isFirstTimeGeneration) {
+      logExecutionTime_('Apply existing locks', function() {
+        for (let ei = 0; ei < result.employeeList.length; ei++) {
+          const baseRow = WEEK_SHEET.DATA_START_ROW + (ei * WEEK_SHEET.ROWS_PER_EMPLOYEE);
+          const lockRow = sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_LOCK, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+          for (let di = 0; di < WEEK_SHEET.DAYS_IN_WEEK; di++) {
+            if (lockRow[di] === true && result.weekGrid[ei][di].type === 'SHIFT') {
+              // This cell is locked — mark it as locked so phases skip it.
+              result.weekGrid[ei][di].locked = true;
+            }
+          }
+        }
+      });
+    }
+
     const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
     writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName); // formatter.js
 
     // Sort workbook tabs and clean up stale Week sheets.
-    cleanupWeekSheets_();
-    sortWorkbookSheets_();
+    logExecutionTime_('Cleanup and sort sheets', function() {
+      cleanupWeekSheets_();
+      sortWorkbookSheets_();
+    });
+
+    const elapsed = Date.now() - scriptStart;
+    console.log('[API] generateSchedule completed in ' + elapsed + 'ms');
+    if (elapsed > MAX_SAFE_EXECUTION_MS) {
+      console.warn('[TIMEOUT_RISK] generateSchedule took ' + elapsed + 'ms (limit is ' + MAX_SAFE_EXECUTION_MS + 'ms)');
+    }
 
     return {
       ok: true,
       data: {
         weekSheetName: result.weekSheetName,
         weekGrid: serializeWeekGrid_(result.weekGrid, result.employeeList),
-        employeeList: serializeEmployeeList_(result.employeeList),
+        employeeList: serializeEmployeeList_(result.employeeList, result.weekGrid),
+        staffingRequirements: staffingRequirements,
       },
     };
   } catch (error) {
@@ -163,15 +203,22 @@ function saveDeptSettings(deptName, data) {
 
 /**
  * Overrides a single cell in an existing Week sheet (VAC, RDO, or SHIFT),
- * then re-runs just the SHIFT assignment phase and returns the updated grid.
+ * marks it as locked so re-generations don't overwrite it, and returns the updated grid.
+ *
+ * For SHIFT overrides, writes directly without re-running phases. VAC/RDO overrides
+ * are written as before and do NOT prevent phase re-runs on subsequent generations.
  *
  * @param {string} weekSheetName — Name of the existing Week sheet tab.
  * @param {string} employeeId    — Employee ID whose row to update.
  * @param {number} dayIndex      — 0 = Monday … 6 = Sunday.
  * @param {string} newType       — 'VAC', 'RDO', or 'SHIFT'.
- * @returns {{ ok: boolean, data?: { weekGrid, employeeList }, error?: string }}
+ * @param {string} shiftName     — Required if newType='SHIFT'; ignored otherwise.
+ *                                 Name of shift (must exist in dept settings) or '__CUSTOM__'.
+ * @param {string} customDisplayText — Required if shiftName='__CUSTOM__'; display text like "10:00 AM - 3:00 PM".
+ * @param {number} customPaidHours   — Required if shiftName='__CUSTOM__'; paid hours for the custom shift.
+ * @returns {{ ok: boolean, data?: { weekGrid, employeeList, staffingRequirements }, error?: string }}
  */
-function updateCellOverride(weekSheetName, employeeId, dayIndex, newType) {
+function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftName, customDisplayText, customPaidHours) {
   try {
     if (!weekSheetName || !employeeId || dayIndex == null || !newType) {
       throw new Error('weekSheetName, employeeId, dayIndex, and newType are all required.');
@@ -196,40 +243,72 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType) {
     const employeeIndex = employeeList.findIndex(e => String(e.employeeId) === String(employeeId));
     if (employeeIndex === -1) throw new Error('Employee ' + employeeId + ' not found in ' + deptName + ' roster.');
 
-    // Write the override into the checkbox row of the existing sheet so re-reads are consistent.
     const checkboxCol = WEEK_SHEET.COL_MONDAY + dayIndex;
     const baseRow = WEEK_SHEET.DATA_START_ROW + (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
 
-    // Clear the VAC and RDO checkbox rows for this employee+day, then mark the override.
+    // Clear VAC/RDO for this cell, then apply the override.
     sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_VAC, checkboxCol).setValue(false);
     sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_RDO, checkboxCol).setValue(false);
-    sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, checkboxCol).setValue('');
 
     if (newType === 'VAC') {
       sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_VAC, checkboxCol).setValue(true);
+      sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_LOCK, checkboxCol).setValue(true);
     } else if (newType === 'RDO') {
       sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_RDO, checkboxCol).setValue(true);
+      sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_LOCK, checkboxCol).setValue(true);
+    } else if (newType === 'SHIFT') {
+      // For SHIFT: look up shift definition, write directly, and lock.
+      if (!shiftName) throw new Error('shiftName is required when newType is "SHIFT".');
+
+      let displayText = '';
+      let paidHours = 0;
+
+      if (shiftName === '__CUSTOM__') {
+        // Custom shift: use provided display text and hours.
+        if (!customDisplayText) throw new Error('customDisplayText is required for custom shifts.');
+        if (customPaidHours == null) throw new Error('customPaidHours is required for custom shifts.');
+        displayText = customDisplayText;
+        paidHours = Number(customPaidHours);
+      } else {
+        // Standard shift: look up from settings.
+        const employee = employeeList[employeeIndex];
+        const shiftKey = shiftName + '|' + employee.status; // FT or PT qualifier
+
+        // Find the shift definition matching both name and FT/PT status.
+        const shiftTimingMap = buildShiftTimingMap(deptName); // settingsManager.js
+        const shiftDef = shiftTimingMap[shiftKey];
+
+        if (!shiftDef) {
+          throw new Error('Shift "' + shiftName + '" not found for ' + employee.status + ' employees in ' + deptName + '.');
+        }
+
+        displayText = shiftDef.displayText;
+        paidHours = shiftDef.paidHours;
+      }
+
+      // Write the shift display text and lock the cell.
+      sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, checkboxCol).setValue(displayText);
+      sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_LOCK, checkboxCol).setValue(true);
     }
-    // SHIFT type: leave blanks — re-generation will fill it in.
 
-    // Rebuild the full grid from the updated sheet state, then re-run SHIFT phase.
+    // Re-read the grid from the updated sheet. readCheckboxStateFromSheet_ now reconstructs
+    // SHIFT cells from the SHIFT row and applies lock status from the LOCK row.
     const weekGrid = readCheckboxStateFromSheet_(sheet, employeeList.length); // scheduleEngine.js
-    const shiftTimingMap = buildShiftTimingMap(deptName);                           // settingsManager.js
-    const staffingReqs = loadStaffingRequirements(deptName);                      // settingsManager.js
+    const staffingReqs = loadStaffingRequirements(deptName); // settingsManager.js
 
-    runPhaseOnePreferenceAssignment_(weekGrid, employeeList, shiftTimingMap, staffingReqs, null);
-    runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap);
-    runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, staffingReqs);
+    // Do NOT re-run phases. The override is now in place and locked, so phases will skip it.
+    // Just run Phase 4 to assign roles to any SHIFT cells.
     runPhaseFourRoleAssignment_(weekGrid, employeeList, deptName);
 
-    // Flush updated grid back to the sheet so it stays in sync.
+    // Flush updated grid back to the sheet to reflect the role assignments.
     writeAndFormatSchedule(sheet, employeeList, weekGrid, staffingReqs, weekStartDate, deptName); // formatter.js
 
     return {
       ok: true,
       data: {
         weekGrid: serializeWeekGrid_(weekGrid, employeeList),
-        employeeList: serializeEmployeeList_(employeeList),
+        employeeList: serializeEmployeeList_(employeeList, weekGrid),
+        staffingRequirements: staffingReqs,
       },
     };
   } catch (error) {

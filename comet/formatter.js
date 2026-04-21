@@ -1,10 +1,14 @@
 /**
  * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION: 0.2.4
+ * VERSION: 0.2.6
  *
  * This file is the only place in the codebase that writes to a Week schedule sheet.
  * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
  * This file translates that data structure into what the manager actually sees on screen.
+ *
+ * PERF: Optimized to batch write operations—all SHIFT row values across all employees
+ * are written in one API call, not per-employee. Shift colors and role colors are
+ * similarly batched via setBackgrounds() for each row type.
  *
  * SEPARATION OF CONCERNS:
  * Every visual concern is its own function:
@@ -44,10 +48,21 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
   // Interleaving content writes and formatting calls would slow down rendering
   // because GAS batches API calls — writing all values first then formatting is faster.
 
-  writeWeekHeader(scheduleSheet, weekStartDate, departmentName);
-  writeColumnHeaders(scheduleSheet);
-  writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid);
-  writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements);
+  logExecutionTime_('Write Week Header', function() {
+    writeWeekHeader(scheduleSheet, weekStartDate, departmentName);
+  });
+
+  logExecutionTime_('Write Column Headers', function() {
+    writeColumnHeaders(scheduleSheet);
+  });
+
+  logExecutionTime_('Write Employee Blocks (' + employeeList.length + ' employees)', function() {
+    writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid);
+  });
+
+  logExecutionTime_('Write Staffing Summary', function() {
+    writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements);
+  });
 
   // Flush all pending content writes before starting formatting.
   // This ensures GAS does not hold too many deferred operations in memory,
@@ -55,11 +70,25 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
   SpreadsheetApp.flush();
 
   // Apply visual formatting after all content is written.
-  applyShiftColors(scheduleSheet, employeeList, weekGrid);
-  applyRoleRowColors(scheduleSheet, employeeList, weekGrid);
-  applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid);
-  applyStatusRowConditionalFormat(scheduleSheet, employeeList.length);
-  applyStructuralFormatting(scheduleSheet, employeeList.length);
+  logExecutionTime_('Apply Shift Colors', function() {
+    applyShiftColors(scheduleSheet, employeeList, weekGrid);
+  });
+
+  logExecutionTime_('Apply Role Row Colors', function() {
+    applyRoleRowColors(scheduleSheet, employeeList, weekGrid);
+  });
+
+  logExecutionTime_('Apply Under-Hours Highlight', function() {
+    applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid);
+  });
+
+  logExecutionTime_('Apply Status Row Conditional Format', function() {
+    applyStatusRowConditionalFormat(scheduleSheet, employeeList.length);
+  });
+
+  logExecutionTime_('Apply Structural Formatting', function() {
+    applyStructuralFormatting(scheduleSheet, employeeList.length);
+  });
 }
 
 
@@ -163,19 +192,20 @@ function writeColumnHeaders(scheduleSheet) {
 
 
 /**
- * Writes all employee data blocks (VAC row, RDO row, SHIFT row, ROLE row) to the schedule sheet.
+ * Writes all employee data blocks (VAC row, RDO row, SHIFT row, ROLE row, LOCK row) to the schedule sheet.
  *
- * Each employee occupies four consecutive rows:
+ * Each employee occupies five consecutive rows:
  *   Row 1 of block (VAC):   "VAC" label | employee name | checkboxes for Mon–Sun
  *   Row 2 of block (RDO):   "RDO" label | (name merged from VAC row) | checkboxes for Mon–Sun
  *   Row 3 of block (SHIFT): "SHIFT" label | (name merged) | shift text for Mon–Sun | total hours
  *   Row 4 of block (ROLE):  "ROLE" label | (name merged) | role name for working days, "—" otherwise
+ *   Row 5 of block (LOCK):  "LOCK" label | (name merged) | hidden lock checkboxes for Mon–Sun
  *
- * The employee name cell is merged across all four rows in the block and vertically centered.
+ * The employee name cell is merged across all five rows in the block and vertically centered.
  * This makes it visually clear which rows belong to one employee.
  *
  * RE-GENERATION NOTE: On re-generation (when a manager edits a checkbox), this function
- * writes only the SHIFT and ROLE row values. The VAC and RDO checkboxes are not touched
+ * writes only the SHIFT and ROLE row values. The VAC, RDO, and LOCK checkboxes are not touched
  * because they represent the manager's explicit decisions. The checkboxes are only cleared
  * and re-inserted on the first generation of a new week sheet.
  *
@@ -197,17 +227,18 @@ function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid) {
     const requestedDayOffRow = baseRow + WEEK_SHEET.ROW_OFFSET_RDO;
     const shiftRow           = baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT;
     const roleRow            = baseRow + WEEK_SHEET.ROW_OFFSET_ROLE;
+    const lockRow            = baseRow + WEEK_SHEET.ROW_OFFSET_LOCK;
 
     if (isFirstTimeGeneration) {
-      // --- First-time generation: write all four rows from scratch ---
+      // --- First-time generation: write all five rows from scratch ---
 
-      // Row label column (A): "VAC", "RDO", "SHIFT", "ROLE" — one batch write for all four labels.
+      // Row label column (A): "VAC", "RDO", "SHIFT", "ROLE", "LOCK" — one batch write for all five labels.
       scheduleSheet
         .getRange(vacationRow, WEEK_SHEET.COL_ROW_LABEL, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1)
-        .setValues([["VAC"], ["RDO"], ["SHIFT"], ["ROLE"]]);
+        .setValues([["VAC"], ["RDO"], ["SHIFT"], ["ROLE"], ["LOCK"]]);
 
-      // Employee name cell (B): merged across all 4 rows, vertically centered.
-      // WEEK_SHEET.ROWS_PER_EMPLOYEE is 4, so this merges the correct block height.
+      // Employee name cell (B): merged across all 5 rows, vertically centered.
+      // WEEK_SHEET.ROWS_PER_EMPLOYEE is 5, so this merges the correct block height.
       const nameMergeRange = scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_EMPLOYEE_NAME, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1);
       nameMergeRange.merge();
       nameMergeRange.setValue(employee.name);
@@ -228,7 +259,22 @@ function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid) {
       rdoDayRange.setValues([weekGrid[employeeIndex].map(function(cell) {
         return cell.type === "RDO";
       })]);
+
+      // LOCK row (C–I): hidden checkboxes indicating manager cell overrides.
+      // Initially all false (no locks on fresh generation). These are populated when
+      // updateCellOverride() is called.
+      const lockDayRange = scheduleSheet.getRange(lockRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK);
+      lockDayRange.insertCheckboxes();
+      lockDayRange.setValues([weekGrid[employeeIndex].map(function(_cell) {
+        return false; // Fresh generation has no locks
+      })]);
+
+      // Hide the LOCK row by setting its height to 1 pixel and matching background color to the SHIFT row.
+      scheduleSheet.setRowHeight(lockRow, 1);
+      const lockDayRangeBackground = scheduleSheet.getRange(lockRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK);
+      // Will be colored the same as the SHIFT row in applyShiftColors()
     }
+
 
     // --- SHIFT row (C–I and J): always written (first time or re-generation) ---
     // Build the 7-day values array in one pass, then write the whole row in one API call.
