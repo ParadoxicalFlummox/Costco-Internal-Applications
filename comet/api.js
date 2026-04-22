@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.3.1
+ * VERSION: 0.4.0
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -31,6 +31,7 @@
  *   Schedule:
  *     getScheduleForWeek(deptName, mondayDate)                              → { weekSheetName, weekGrid, employeeList }
  *     generateSchedule(deptName, mondayDate)                                → { weekSheetName, weekGrid, employeeList }
+ *     getCrossDeptHoursForWeek(employeeId, mondayDate)                      → { crossDeptAssignments, totalHours }
  *     getDeptSettings(deptName)                                             → { shifts, staffingReqs }
  *     saveDeptSettings(deptName, data)                                      → { saved }
  *     updateCellOverride(weekSheetName, employeeId, dayIndex, newType)      → { weekGrid, employeeList }
@@ -167,6 +168,84 @@ function generateSchedule(deptName, mondayDate) {
 }
 
 /**
+ * Returns hours already scheduled for an employee across all departments for a given week.
+ * Used for cross-department (split-shift) scheduling to show managers what hours are
+ * already allocated in other departments.
+ *
+ * @param {string} employeeId  — Employee ID.
+ * @param {string} mondayDate  — ISO date string "YYYY-MM-DD" for the Monday of the week.
+ * @returns {{ ok: boolean, data?: { totalHours: number, assignments: Array }, error?: string }}
+ *   assignments: Array of { deptName, hoursAssigned } for depts where employee is scheduled
+ */
+function getCrossDeptHoursForWeek(employeeId, mondayDate) {
+  try {
+    if (!employeeId || !mondayDate) throw new Error('employeeId and mondayDate are required.');
+    const weekStartDate = new Date(mondayDate + 'T00:00:00');
+
+    // Get employee data to look up their name and details
+    const employees = getActiveEmployees_(); // ukgImport.js
+    const employee = employees.find(e => String(e.id) === String(employeeId));
+    if (!employee) {
+      return { ok: true, data: { totalHours: 0, assignments: [] } };
+    }
+
+    // Scan all Week sheets for this week to find hours scheduled across departments
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const sheetNames = workbook.getSheetNames();
+    const month = String(weekStartDate.getMonth() + 1).padStart(2, '0');
+    const day   = String(weekStartDate.getDate()).padStart(2, '0');
+    const year  = String(weekStartDate.getFullYear()).slice(-2);
+    const weekBaseName = 'Week_' + month + '_' + day + '_' + year;
+
+    const assignments = [];
+    let totalHours = 0;
+
+    sheetNames.forEach(function(sheetName) {
+      if (!sheetName.startsWith(weekBaseName)) return;
+
+      const prefix = weekBaseName + '_';
+      if (!sheetName.startsWith(prefix)) return;
+      const deptName = sheetName.substring(prefix.length);
+
+      const sheet = workbook.getSheetByName(sheetName);
+      if (!sheet) return;
+
+      const data = sheet.getDataRange().getValues();
+      if (!data || data.length < WEEK_SHEET.DATA_START_ROW) return;
+
+      // Find the employee's SHIFT row and sum hours
+      for (let rowIndex = WEEK_SHEET.DATA_START_ROW - 1; rowIndex < data.length; rowIndex++) {
+        const row = data[rowIndex];
+        const rowLabel = row[WEEK_SHEET.COL_ROW_LABEL - 1];
+
+        if (rowLabel !== 'SHIFT') continue;
+
+        const empName = row[WEEK_SHEET.COL_EMPLOYEE_NAME - 1];
+        if (!empName || empName.toString().trim() !== employee.name.toString().trim()) continue;
+
+        // Found the employee in this dept. Get total hours from column J (COL_TOTAL_HOURS)
+        const totalHoursCell = row[WEEK_SHEET.COL_TOTAL_HOURS - 1];
+        let hoursInDept = 0;
+        if (totalHoursCell && !isNaN(parseFloat(totalHoursCell))) {
+          hoursInDept = parseFloat(totalHoursCell);
+        }
+
+        if (hoursInDept > 0) {
+          assignments.push({ deptName: deptName, hoursAssigned: hoursInDept });
+          totalHours += hoursInDept;
+        }
+        break;
+      }
+    });
+
+    return { ok: true, data: { totalHours: totalHours, assignments: assignments } };
+  } catch (error) {
+    console.error('api: getCrossDeptHoursForWeek failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
  * Returns the shift definitions and staffing requirements for a department.
  *
  * @param {string} deptName
@@ -239,7 +318,7 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
     const yy = parts[3];
     const weekStartDate = new Date('20' + yy + '-' + mm + '-' + dd + 'T00:00:00');
 
-    const employeeList = loadRosterSortedBySeniority_(deptName); // scheduleEngine.js
+    const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate); // scheduleEngine.js
     const employeeIndex = employeeList.findIndex(e => String(e.employeeId) === String(employeeId));
     if (employeeIndex === -1) throw new Error('Employee ' + employeeId + ' not found in ' + deptName + ' roster.');
 
@@ -570,6 +649,55 @@ function getEmployeeList() {
     return { ok: true, data: { employees } };
   } catch (error) {
     console.error('api: getEmployeeList failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Returns the age of the employee roster (how many days since UKG import last ran).
+ * Reads the ukgImportLastRan timestamp from the COMET Config sheet.
+ *
+ * @returns {{ ok: boolean, data?: { ageInDays, lastModified }, error?: string }}
+ */
+function getEmployeeSheetAge() {
+  try {
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
+    if (!configSheet) throw new Error('COMET Config sheet not found.');
+
+    // Search the config sheet for the "ukgImportLastRan" entry (rows 3+)
+    const lastRow = configSheet.getLastRow();
+    let lastImportTimestamp = null;
+
+    if (lastRow >= 3) {
+      const configData = configSheet.getRange(3, 1, lastRow - 2, 2).getValues();
+      for (let i = 0; i < configData.length; i++) {
+        if (String(configData[i][0] || '').trim() === 'ukgImportLastRan') {
+          lastImportTimestamp = String(configData[i][1] || '').trim();
+          break;
+        }
+      }
+    }
+
+    // If no import timestamp found, return a large age (assume very stale)
+    if (!lastImportTimestamp) {
+      return { ok: true, data: { ageInDays: 999, lastModified: 'Never' } };
+    }
+
+    // Parse the ISO timestamp and calculate days since
+    const lastUpdated = new Date(lastImportTimestamp);
+    if (isNaN(lastUpdated.getTime())) {
+      // Invalid date format
+      return { ok: true, data: { ageInDays: 999, lastModified: 'Invalid timestamp' } };
+    }
+
+    const now = new Date();
+    const ageInMs = now - lastUpdated;
+    const ageInDays = Math.floor(ageInMs / (1000 * 60 * 60 * 24));
+
+    return { ok: true, data: { ageInDays, lastModified: lastImportTimestamp } };
+  } catch (error) {
+    console.error('api: getEmployeeSheetAge failed —', error);
     return { ok: false, error: error.message };
   }
 }

@@ -467,6 +467,11 @@
               <input type="text" id="editVacationDates" class="form-control form-control-sm"
                 placeholder="Comma-separated, e.g. 2026-07-04, 07/05">
             </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Secondary Departments</label>
+              <input type="text" id="editSecondaryDepartments" class="form-control form-control-sm"
+                placeholder="Comma-separated dept names for cross-dept scheduling, e.g. Front End, Receiving">
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -510,6 +515,38 @@
           <button class="btn btn-primary btn-sm" data-override-type="SHIFT" onclick="handleCellOverride('SHIFT')">Assign Shift</button>
           <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC" onclick="handleCellOverride('VAC')">Mark Vacation</button>
           <button class="btn btn-secondary btn-sm" data-override-type="RDO" onclick="handleCellOverride('RDO')">Mark RDO</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pre-generation modal: edit staffing requirements before generating -->
+  <div id="preGenModal" class="modal" tabindex="-1" style="display:none;">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="preGenModalTitle">Generate Schedule</h5>
+          <button type="button" class="btn-close" onclick="closeModal('preGenModal')"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted mb-2">Review and adjust staffing requirements below, then click Generate.</p>
+          <div style="overflow-x:auto;">
+            <table class="table table-sm table-bordered mb-0" id="preGenTable">
+              <thead class="table-light">
+                <tr>
+                  <th>Day</th>
+                  <th>Current Value</th>
+                  <th>Mode</th>
+                </tr>
+              </thead>
+              <tbody id="preGenTableBody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer gap-2">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('preGenModal')">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="Schedule._handlePreGenerate()">Generate</button>
         </div>
       </div>
     </div>

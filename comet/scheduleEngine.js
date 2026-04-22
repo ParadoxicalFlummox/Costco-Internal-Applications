@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.2.5
+ * VERSION: 0.3.0
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -9,11 +9,13 @@
  *   - normalizeDeptName_() is defined here (was implicit in the original).
  *   - All four phases, coverage map functions, and utility functions are unchanged.
  *   - PERF: Added profiling wrappers to each phase for performance monitoring
+ *   - SPLIT_SHIFT: Integrated multi-department scheduling; Phase 0 loads cross-dept hours,
+ *     Phase 2 enforces reduced hour budgets based on hours already scheduled elsewhere.
  *
  * THE FOUR PHASES:
- *   Phase 0 — Bootstrap: Load roster for dept, initialize grid, stamp vacation locks.
+ *   Phase 0 — Bootstrap: Load roster for dept, initialize grid, load cross-dept hours, stamp vacation locks.
  *   Phase 1 — Preference Assignment: Honor day-off prefs and shift prefs, seniority order.
- *   Phase 2 — Minimum Hour Enforcement: Add shifts until weekly minimum is met.
+ *   Phase 2 — Minimum Hour Enforcement: Add shifts until weekly minimum is met (respecting cross-dept budgets).
  *   Phase 3 — Gap Resolution: Fill uncovered time slots by reassigning or adding employees.
  *   Phase 4 — Role Assignment: Stamp primaryRole onto SHIFT cells.
  */
@@ -34,7 +36,7 @@ function generateWeeklySchedule_(deptName, weekStartDate) {
   const shiftTimingMap      = buildShiftTimingMap(deptName);      // settingsManager.js
   const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
 
-  const employeeList = loadRosterSortedBySeniority_(deptName);
+  const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate);
   if (employeeList.length === 0) {
     throw new Error('No active employees found for department "' + deptName + '".');
   }
@@ -79,7 +81,7 @@ function readExistingWeekSchedule_(deptName, weekStartDate) {
   const sheet = workbook.getSheetByName(sheetName);
   if (!sheet) return null;
 
-  const employeeList = loadRosterSortedBySeniority_(deptName);
+  const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate);
   if (employeeList.length === 0) return null;
 
   // Read checkbox state and rebuild a grid representation.
@@ -117,19 +119,26 @@ function readExistingWeekSchedule_(deptName, weekStartDate) {
  * Reads active employees for the given department from the Employees sheet
  * and returns them sorted by seniority (descending).
  *
- * Maps COMET Employees sheet columns (A–M) to the engine's EmployeeRecord shape.
+ * Maps COMET Employees sheet columns (A–N) to the engine's EmployeeRecord shape.
+ * Also loads cross-department hours for employees with secondary departments.
  *
- * @param {string} deptName
+ * @param {string} deptName       — Department name
+ * @param {Date}   weekStartDate  — The Monday of the week (for cross-dept lookups)
  * @returns {Array<EmployeeRecord>}
  */
-function loadRosterSortedBySeniority_(deptName) {
+function loadRosterSortedBySeniority_(deptName, weekStartDate) {
   const normalizedTarget = normalizeDeptName_(deptName);
 
   const employees = getActiveEmployees_(); // ukgImport.js — Active employees only
 
+  // Get the Employees sheet to read secondary departments (column N)
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const employeesSheet = workbook.getSheetByName(EMPLOYEES_SHEET_NAME);
+  const employeesData = employeesSheet ? employeesSheet.getDataRange().getValues() : [];
+
   const deptEmployees = employees
     .filter(emp => normalizeDeptName_(emp.department) === normalizedTarget)
-    .map(emp => {
+    .map(function(emp, _index) {
       const qualifiedShiftList = parseQualifiedShiftList_(
         emp.qualifiedShifts, emp.preferredShift
       );
@@ -142,19 +151,49 @@ function loadRosterSortedBySeniority_(deptName) {
         if (!isNaN(parsed.getTime())) hireDate = parsed;
       }
 
+      // Load secondary departments from Employees sheet column N
+      let secondaryDepartments = [];
+      let crossDeptHoursAlreadyScheduled = 0;
+      if (employeesData && employeesData.length > 0) {
+        // Find the row for this employee (match by name or ID)
+        for (let rowIdx = EMPLOYEES_DATA_START_ROW - 1; rowIdx < employeesData.length; rowIdx++) {
+          const sheetRow = employeesData[rowIdx];
+          const sheetEmpId = sheetRow[EMPLOYEE_COLUMN.ID - 1];
+          if (sheetEmpId && sheetEmpId.toString().trim() === emp.id.toString().trim()) {
+            // Found the employee's row. Read secondary departments from column N
+            const secondaryDeptString = sheetRow[EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS - 1] || '';
+            if (secondaryDeptString && secondaryDeptString.toString().trim()) {
+              secondaryDepartments = secondaryDeptString
+                .toString()
+                .split(',')
+                .map(function(d) { return normalizeDeptName_(d); })
+                .filter(Boolean);
+            }
+            break;
+          }
+        }
+
+        // If the employee has secondary departments, query for cross-dept hours
+        if (secondaryDepartments.length > 0 && weekStartDate) {
+          crossDeptHoursAlreadyScheduled = getCrossDeptHoursForWeek_(emp, weekStartDate, deptName);
+        }
+      }
+
       return {
-        name:               emp.name,
-        employeeId:         emp.id,
-        hireDate:           hireDate,
-        status:             emp.ftpt || 'PT',           // FT or PT (col F)
-        dayOffPreferenceOne: emp.dayOffPrefOne || '',
-        dayOffPreferenceTwo: emp.dayOffPrefTwo || '',
-        preferredShift:     emp.preferredShift  || '',
-        qualifiedShifts:    qualifiedShiftList,
-        vacationDateStrings:vacationDateStrings,
-        seniorityRank:      Number(emp.seniorityRank || 0),
-        department:         normalizeDeptName_(emp.department),
-        primaryRole:        emp.role || '',
+        name:                            emp.name,
+        employeeId:                      emp.id,
+        hireDate:                        hireDate,
+        status:                          emp.ftpt || 'PT',           // FT or PT (col F)
+        dayOffPreferenceOne:             emp.dayOffPrefOne || '',
+        dayOffPreferenceTwo:             emp.dayOffPrefTwo || '',
+        preferredShift:                  emp.preferredShift  || '',
+        qualifiedShifts:                 qualifiedShiftList,
+        vacationDateStrings:             vacationDateStrings,
+        seniorityRank:                   Number(emp.seniorityRank || 0),
+        department:                      normalizeDeptName_(emp.department),
+        primaryRole:                     emp.role || '',
+        secondaryDepartments:            secondaryDepartments,
+        crossDeptHoursAlreadyScheduled:  crossDeptHoursAlreadyScheduled,
       };
     });
 
@@ -185,6 +224,82 @@ function applyVacationLocksForEmployee_(weekGrid, employeeIndex, employee, weekS
     if (dayIndex === -1) return;
     weekGrid[employeeIndex][dayIndex] = createDayAssignment_('VAC', null, 0, true);
   });
+}
+
+/**
+ * Scans existing Week schedules for other departments to find hours already assigned
+ * to an employee in the given week. Used for cross-dept scheduling (split-shift).
+ *
+ * @param {object}  employee        — Employee object with id and name fields
+ * @param {Date}    weekStartDate   — The Monday of the week
+ * @param {string}  excludeDept     — Department to exclude from scan (e.g., current dept)
+ * @returns {number} Total hours already scheduled in other departments
+ */
+function getCrossDeptHoursForWeek_(employee, weekStartDate, excludeDept) {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetNames = workbook.getSheetNames();
+  const normalizedExcludeDept = normalizeDeptName_(excludeDept);
+  const month = String(weekStartDate.getMonth() + 1).padStart(2, '0');
+  const day   = String(weekStartDate.getDate()).padStart(2, '0');
+  const year  = String(weekStartDate.getFullYear()).slice(-2);
+  const weekBaseName = 'Week_' + month + '_' + day + '_' + year;
+
+  let totalCrossDeptHours = 0;
+
+  sheetNames.forEach(function(sheetName) {
+    // Match sheets like "Week_MM_DD_YY_DeptName"
+    if (!sheetName.startsWith(weekBaseName)) return;
+
+    // Extract department name (everything after "Week_MM_DD_YY_")
+    const prefix = weekBaseName + '_';
+    if (!sheetName.startsWith(prefix)) return;
+    const deptName = sheetName.substring(prefix.length);
+    const normalizedDeptName = normalizeDeptName_(deptName);
+
+    // Skip the department we're currently generating for
+    if (normalizedDeptName === normalizedExcludeDept) return;
+
+    const sheet = workbook.getSheetByName(sheetName);
+    if (!sheet) return;
+
+    // Read all data from the sheet
+    const data = sheet.getDataRange().getValues();
+    if (!data || data.length < WEEK_SHEET.DATA_START_ROW) return;
+
+    // Scan for employee rows. Each employee has ROWS_PER_EMPLOYEE (5) rows.
+    // Look for SHIFT rows (row offset 2 within each employee block).
+    for (let rowIndex = WEEK_SHEET.DATA_START_ROW - 1; rowIndex < data.length; rowIndex++) {
+      const row = data[rowIndex];
+      const rowLabel = row[WEEK_SHEET.COL_ROW_LABEL - 1];
+
+      // Only look at SHIFT rows
+      if (rowLabel !== 'SHIFT') continue;
+
+      // Get employee name from column B (COL_EMPLOYEE_NAME - 1 = 1)
+      const empName = row[WEEK_SHEET.COL_EMPLOYEE_NAME - 1];
+      if (!empName || empName.toString().trim() !== employee.name.toString().trim()) continue;
+
+      // Found the employee's SHIFT row in this dept. Sum hours from Mon-Sun (columns C-I).
+      // Column C is COL_MONDAY = 3, so 0-indexed it's column 2
+      let hoursInDept = 0;
+      for (let dayCol = WEEK_SHEET.COL_MONDAY - 1; dayCol < WEEK_SHEET.COL_MONDAY - 1 + WEEK_SHEET.DAYS_IN_WEEK; dayCol++) {
+        const cellValue = row[dayCol];
+        // Extract hours from shift text like "8:00 AM - 4:30 PM" or from paidHours if numeric
+        // For now, trust that the total is in the J column (COL_TOTAL_HOURS)
+      }
+
+      // Use the total hours cell (column J = COL_TOTAL_HOURS, 0-indexed is 9)
+      const totalHoursCell = row[WEEK_SHEET.COL_TOTAL_HOURS - 1];
+      if (totalHoursCell && !isNaN(parseFloat(totalHoursCell))) {
+        hoursInDept = parseFloat(totalHoursCell);
+      }
+
+      totalCrossDeptHours += hoursInDept;
+      break; // Found this employee in this dept, move to next dept
+    }
+  });
+
+  return totalCrossDeptHours;
 }
 
 
@@ -264,6 +379,8 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap) {
   employeeList.forEach(function(employee, ei) {
     const weeklyMin = employee.status === 'FT' ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN; // config.js
     const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+    // Reduce effective max by hours already scheduled in other departments (split-shift)
+    const effectiveMax = weeklyMax - (employee.crossDeptHoursAlreadyScheduled || 0);
     let currentHours = getWeeklyHours_(weekGrid, ei);
     if (currentHours >= weeklyMin) return;
     const shiftDef = resolveShiftForEmployee_(employee, shiftTimingMap);
@@ -275,7 +392,7 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap) {
       // Skip if this cell is locked (manager override via updateCellOverride).
       if (cell.locked) return;
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) return;
-      if (currentHours + shiftDef.paidHours > weeklyMax) return;
+      if (currentHours + shiftDef.paidHours > effectiveMax) return;
       weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, shiftDef.displayText);
       currentHours += shiftDef.paidHours;
     });
@@ -313,6 +430,7 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
       if (cell.locked) continue;
       const employee = employeeList[ei];
       const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+      const effectiveMax = weeklyMax - (employee.crossDeptHoursAlreadyScheduled || 0);
       const currentHours = getWeeklyHours_(weekGrid, ei);
       const coverageWithout = buildDayCoverage_(weekGrid, employeeList, dayIndex, shiftTimingMap, ei);
       const best = selectBestCoverageShift_(employee.qualifiedShifts, employee.status, coverageWithout, shiftTimingMap);
@@ -321,7 +439,7 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
       const currentDef = shiftTimingMap[current.shiftName + '|' + employee.status];
       const currentScore = currentDef ? scoreCoverageForShift_(currentDef, coverageWithout) : 0;
       if (scoreCoverageForShift_(best, coverageWithout) <= currentScore) continue;
-      if (currentHours + (best.paidHours - current.paidHours) > weeklyMax) continue;
+      if (currentHours + (best.paidHours - current.paidHours) > effectiveMax) continue;
       weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', best.name, best.paidHours, false, best.displayText);
       dayCoverage = buildDayCoverage_(weekGrid, employeeList, dayIndex, shiftTimingMap, -1);
       if (!hasCoverageGaps_(dayCoverage, windowStartSlot, windowEndSlot)) break;
@@ -338,10 +456,11 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) continue;
       const employee = employeeList[ei];
       const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+      const effectiveMax = weeklyMax - (employee.crossDeptHoursAlreadyScheduled || 0);
       const currentHours = getWeeklyHours_(weekGrid, ei);
       const best = selectBestCoverageShift_(employee.qualifiedShifts, employee.status, dayCoverage, shiftTimingMap);
       if (!best) continue;
-      if (currentHours + best.paidHours > weeklyMax) continue;
+      if (currentHours + best.paidHours > effectiveMax) continue;
       weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', best.name, best.paidHours, false, best.displayText);
       dayCoverage = buildDayCoverage_(weekGrid, employeeList, dayIndex, shiftTimingMap, -1);
       if (!hasCoverageGaps_(dayCoverage, windowStartSlot, windowEndSlot)) break;

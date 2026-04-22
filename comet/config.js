@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.2.7
+ * VERSION: 0.3.0
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -10,11 +10,12 @@
  *   1. App Identity
  *   2. Employees Sheet
  *   3. Schedule Engine (shift settings, week sheet layout, hour rules, coverage)
- *   4. Colors and Role Colors
- *   5. Infraction / CN System
- *   6. Absence Log (Call Log)
- *   7. Notification Recipients
- *   8. Performance Tuning
+ *   4. Split-Shift (Multi-Department) Scheduling
+ *   5. Colors and Role Colors
+ *   6. Infraction / CN System
+ *   7. Absence Log (Call Log)
+ *   8. Notification Recipients
+ *   9. Performance Tuning
  */
 
 
@@ -39,11 +40,14 @@ const EMPLOYEES_SHEET_NAME = 'Employees';
 /** Row number where employee data begins (row 1 is the header). */
 const EMPLOYEES_DATA_START_ROW = 2;
 
+/** Number of days before the Employees sheet is considered stale. */
+const EMPLOYEE_SHEET_STALENESS_THRESHOLD_DAYS = 7;
+
 /**
  * Column positions (1-indexed) for every field in the Employees sheet.
  *
  * Columns A–E are populated by UKG import.
- * Columns F–M are schedule-specific fields, editable via the Admin employee modal.
+ * Columns F–N are schedule-specific fields, editable via the Admin employee modal.
  *
  *   A — Name (Last, First)
  *   B — Employee ID
@@ -58,21 +62,23 @@ const EMPLOYEES_DATA_START_ROW = 2;
  *   K — Vacation Dates    (comma-separated dates, YYYY-MM-DD or MM/DD)
  *   L — Role              (e.g. "Cashier", "Maintenance Associate")
  *   M — Seniority Rank    (calculated; do not edit manually)
+ *   N — Secondary Depts   (comma-separated dept names; cross-dept scheduling)
  */
 const EMPLOYEE_COLUMN = {
-  NAME:               1,  // A
-  ID:                 2,  // B
-  HIRE_DATE:          3,  // C
-  DEPARTMENT:         4,  // D
-  STATUS:             5,  // E
-  FTPT:               6,  // F
-  DAY_OFF_PREF_ONE:   7,  // G
-  DAY_OFF_PREF_TWO:   8,  // H
-  PREFERRED_SHIFT:    9,  // I
-  QUALIFIED_SHIFTS:   10, // J
-  VACATION_DATES:     11, // K
-  ROLE:               12, // L
-  SENIORITY_RANK:     13, // M
+  NAME:                  1,  // A
+  ID:                    2,  // B
+  HIRE_DATE:             3,  // C
+  DEPARTMENT:            4,  // D
+  STATUS:                5,  // E
+  FTPT:                  6,  // F
+  DAY_OFF_PREF_ONE:      7,  // G
+  DAY_OFF_PREF_TWO:      8,  // H
+  PREFERRED_SHIFT:       9,  // I
+  QUALIFIED_SHIFTS:      10, // J
+  VACATION_DATES:        11, // K
+  ROLE:                  12, // L
+  SENIORITY_RANK:        13, // M
+  SECONDARY_DEPARTMENTS: 14, // N
 };
 
 
@@ -211,6 +217,38 @@ const HOUR_RULES = {
  */
 const SCHEDULE_RULES = {
   MIN_DAYS_OFF: 2,
+};
+
+
+// ---------------------------------------------------------------------------
+// Split-Shift (Multi-Department) Scheduling
+// ---------------------------------------------------------------------------
+
+/**
+ * Configuration for cross-department employee scheduling.
+ *
+ * STORAGE_FORMAT: "simple_list"
+ *   Secondary departments are stored as comma-separated strings in EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS.
+ *   Format: "Front End,Receiving" (no spaces around commas; normalized department names).
+ *   No target hours are specified; allocation is dynamic.
+ *
+ * ALLOCATION_STRATEGY: "dynamic"
+ *   When generating a schedule for a department, the system queries all other departments
+ *   (those listed in the employee's secondary departments) to find hours already assigned.
+ *   Available budget = HOUR_RULES[status] - crossDeptHoursAlreadyScheduled
+ *   This is enforced in Phase 2 (Minimum Hour Enforcement).
+ *
+ * VACATION_COORDINATION: "shared"
+ *   Vacation dates are stored once per employee (EMPLOYEE_COLUMN.VACATION_DATES).
+ *   All department schedules see the same vacation dates, so an employee's VAC day
+ *   blocks work in all departments simultaneously.
+ *   When a manager updates a VAC/RDO cell via updateCellOverride, the change is
+ *   persisted to the Employees sheet (column K) so it's visible cross-dept.
+ */
+const SPLIT_SHIFT_CONFIG = {
+  STORAGE_FORMAT: 'simple_list',
+  ALLOCATION_STRATEGY: 'dynamic',
+  VACATION_COORDINATION: 'shared',
 };
 
 

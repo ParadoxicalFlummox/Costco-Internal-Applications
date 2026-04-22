@@ -94,6 +94,9 @@ function importEmployeesFromUkg_(rows) {
 
   SpreadsheetApp.flush();
 
+  // Record the timestamp of this import to the COMET Config sheet
+  recordUkgImportTimestamp_(workbook);
+
   return { added: newRows.length, updated, skipped };
 }
 
@@ -311,4 +314,56 @@ function readEmployeeIndex_(sheet) {
   });
 
   return index;
+}
+
+
+// ---------------------------------------------------------------------------
+// Config Recording
+// ---------------------------------------------------------------------------
+
+/**
+ * Records the timestamp of the UKG import to the COMET Config sheet.
+ * This allows the Schedule view to warn if the employee roster is stale.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} workbook
+ */
+function recordUkgImportTimestamp_(workbook) {
+  try {
+    const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME); // config.js
+    if (!configSheet) return; // Config sheet not created yet (shouldn't happen in normal use)
+
+    // Find or create the "ukgImportLastRan" row in the config sheet
+    const lastRow = configSheet.getLastRow();
+    let configRowFound = false;
+    let configRow = 0;
+
+    // Search rows 3+ for the key "ukgImportLastRan"
+    if (lastRow >= 3) {
+      const configData = configSheet.getRange(3, 1, lastRow - 2, 2).getValues();
+      for (let i = 0; i < configData.length; i++) {
+        if (String(configData[i][0] || '').trim() === 'ukgImportLastRan') {
+          configRow = 3 + i; // Convert back to 1-indexed sheet row
+          configRowFound = true;
+          break;
+        }
+      }
+    }
+
+    // If not found, append a new row
+    if (!configRowFound) {
+      configRow = lastRow + 1;
+    }
+
+    // Record the current timestamp in ISO format
+    const now = new Date();
+    const timestamp = now.toISOString();
+
+    configSheet.getRange(configRow, 1).setValue('ukgImportLastRan');
+    configSheet.getRange(configRow, 2).setValue(timestamp);
+
+    SpreadsheetApp.flush();
+  } catch (error) {
+    // Log the error but don't fail the import — the import itself succeeded
+    console.warn('ukgImport: Failed to record import timestamp:', error);
+  }
 }

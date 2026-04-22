@@ -242,12 +242,18 @@ var Schedule = (function() {
   var _currentDept          = null;
   var _currentMonday        = null;
   var _pendingOverride      = null; // { employeeId, dayIndex }
+  var _lastChangedCell      = null; // { employeeId, dayIndex } — used for change highlighting
+  var _lastSheetAgeWarningTime = null; // Memoization to prevent duplicate toasts
+  var _crossDeptHoursCache  = {}; // Cached cross-dept hours: { empId: { totalHours, assignments } }
 
   function onShow() {
     // Refresh dept dropdown in case departments were added since startup
     UI.callServer('getDepartments', undefined, function(data) {
       _populateAllDeptSelects(data.departments || []);
     });
+
+    // Check if Employees sheet is stale and show warning toast if needed
+    _checkAndShowSheetAgeWarning();
 
     document.getElementById('btnGenerate').onclick = handleGenerate;
     document.getElementById('btnLoadExisting').onclick = handleLoadExisting;
@@ -260,6 +266,30 @@ var Schedule = (function() {
     });
   }
 
+  function _checkAndShowSheetAgeWarning() {
+    // Memoization: only show the warning once per session or if last show was > 1 hour ago
+    var now = Date.now();
+    if (_lastSheetAgeWarningTime && (now - _lastSheetAgeWarningTime) < (60 * 60 * 1000)) {
+      return; // Already showed warning recently, skip
+    }
+
+    UI.callServer('getEmployeeSheetAge', undefined,
+      function(data) {
+        var ageInDays = data.ageInDays || 0;
+        var threshold = 7; // This should match EMPLOYEE_SHEET_STALENESS_THRESHOLD_DAYS from config
+
+        if (ageInDays >= threshold) {
+          var lastModDate = new Date(data.lastModified);
+          var dateStr = lastModDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          var msg = 'Employee sheet is ' + ageInDays + ' days old (last updated ' + dateStr
+                  + '). Consider refreshing from UKG to catch recent hires/departures.';
+          UI.showToast(msg, 'info');
+          _lastSheetAgeWarningTime = now; // Memoize the show time
+        }
+      }
+    );
+  }
+
   function handleGenerate() {
     var dept   = document.getElementById('scheduleDept').value;
     var monday = document.getElementById('scheduleWeek').value;
@@ -269,30 +299,107 @@ var Schedule = (function() {
     _currentDept   = dept;
     _currentMonday = monday;
 
-    UI.callServer('generateSchedule', [dept, monday], function(data) {
-      _weekSheetName        = data.weekSheetName;
-      _weekGrid             = data.weekGrid;
-      _employeeList         = data.employeeList;
-      _staffingRequirements = data.staffingRequirements || {};
-      renderScheduleGrid();
+    openPreGenModal(dept, monday);
+  }
 
-      // Warn about employees who ended up with all non-SHIFT days — likely
-      // missing shift config or FT/PT not set in the Employees sheet.
-      var unscheduled = (_employeeList || []).filter(function(emp, ei) {
-        return (_weekGrid[ei] || []).every(function(cell) {
-          return cell.type !== 'SHIFT';
-        });
+  function openPreGenModal(deptName, mondayDate) {
+    // Fetch current dept settings to display in the modal
+    UI.callServer('getDeptSettings', [deptName], function(data) {
+      // Build the modal table body
+      var dayNames = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+      var currentReqs = data.staffingRequirements || {};
+      var html = '';
+
+      dayNames.forEach(function(day, idx) {
+        var req = currentReqs[day] || {};
+        var mode = req.mode || 'Count';
+        var value = req.value || 0;
+
+        html += '<tr>'
+          + '<td><strong>' + day.substring(0, 3) + '</strong></td>'
+          + '<td><input type="number" class="form-control form-control-sm" '
+            + 'data-day="' + day + '" '
+            + 'data-role="value" '
+            + 'value="' + value + '" min="0" max="999"></td>'
+          + '<td><select class="form-select form-select-sm" '
+            + 'data-day="' + day + '" '
+            + 'data-role="mode">'
+            + '<option value="Count"' + (mode === 'Count' ? ' selected' : '') + '>Count</option>'
+            + '<option value="Hours"' + (mode === 'Hours' ? ' selected' : '') + '>Hours</option>'
+            + '</select></td>'
+          + '</tr>';
       });
-      if (unscheduled.length > 0) {
-        UI.showToast(
-          unscheduled.length + ' employee(s) could not be scheduled — check their FT/PT and Qualified Shifts in Admin → Employee List: '
-          + unscheduled.map(function(e) { return e.name; }).join(', '),
-          'error'
-        );
-      } else {
-        UI.showToast('Schedule generated.', 'success');
+
+      document.getElementById('preGenTableBody').innerHTML = html;
+
+      // Update modal title with dept and week
+      var d = new Date(mondayDate + 'T00:00:00');
+      var sunDate = new Date(d);
+      sunDate.setDate(sunDate.getDate() + 6);
+      var dateRange = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                    + ' – '
+                    + sunDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      document.getElementById('preGenModalTitle').textContent = 'Generate Schedule for ' + deptName + ' — Week of ' + dateRange;
+
+      openModal('preGenModal');
+    });
+  }
+
+  function _handlePreGenerate() {
+    // Collect the edits from the table
+    var staffingRequirements = {};
+    var dayNames = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+
+    dayNames.forEach(function(day) {
+      var valueInput = document.querySelector('input[data-day="' + day + '"][data-role="value"]');
+      var modeSelect = document.querySelector('select[data-day="' + day + '"][data-role="mode"]');
+
+      if (valueInput && modeSelect) {
+        staffingRequirements[day] = {
+          value: parseInt(valueInput.value, 10) || 0,
+          mode: modeSelect.value
+        };
       }
     });
+
+    // Also collect shift definitions from the admin panel to avoid wiping them out
+    // Use collectDeptSettingsFromDom() which gets both staffingReqs and shifts
+    var allSettings = collectDeptSettingsFromDom();
+
+    // Save the staffing requirements along with the current shift definitions, then generate
+    closeModal('preGenModal');
+
+    UI.callServer('saveDeptSettings', [_currentDept, {
+      staffingRequirements: staffingRequirements,
+      shifts: allSettings.shifts
+    }],
+      function() {
+        // Now generate the schedule with the new settings
+        UI.callServer('generateSchedule', [_currentDept, _currentMonday], function(data) {
+          _weekSheetName        = data.weekSheetName;
+          _weekGrid             = data.weekGrid;
+          _employeeList         = data.employeeList;
+          _staffingRequirements = data.staffingRequirements || {};
+          renderScheduleGrid();
+
+          // Warn about employees who ended up with all non-SHIFT days
+          var unscheduled = (_employeeList || []).filter(function(emp, ei) {
+            return (_weekGrid[ei] || []).every(function(cell) {
+              return cell.type !== 'SHIFT';
+            });
+          });
+          if (unscheduled.length > 0) {
+            UI.showToast(
+              unscheduled.length + ' employee(s) could not be scheduled — check their FT/PT and Qualified Shifts in Admin → Employee List: '
+              + unscheduled.map(function(e) { return e.name; }).join(', '),
+              'error'
+            );
+          } else {
+            UI.showToast('Schedule generated.', 'success');
+          }
+        });
+      }
+    );
   }
 
   function handleLoadExisting() {
@@ -368,6 +475,19 @@ var Schedule = (function() {
       return;
     }
 
+    // Clear cross-dept hours cache and repopulate it for all employees
+    _crossDeptHoursCache = {};
+    if (_currentMonday) {
+      var mondayString = _currentMonday.toISOString().split('T')[0];
+      _employeeList.forEach(function(emp) {
+        UI.callServer('getCrossDeptHoursForWeek', [emp.employeeId, mondayString], function(data) {
+          if (data.totalHours > 0 || (data.assignments && data.assignments.length > 0)) {
+            _crossDeptHoursCache[emp.employeeId] = data;
+          }
+        });
+      });
+    }
+
     var html = '<table class="table table-bordered comet-schedule-table mb-0">';
 
     // Header row
@@ -431,6 +551,19 @@ var Schedule = (function() {
 
     html += '</tbody></table>';
     container.innerHTML = html;
+
+    // Apply change highlighting if a cell was just changed
+    if (_lastChangedCell) {
+      var empId = _lastChangedCell.employeeId;
+      var dayIdx = _lastChangedCell.dayIndex;
+      var cellElement = document.querySelector(
+        'td[data-emp-id="' + esc(empId) + '"][data-day-index="' + dayIdx + '"]'
+      );
+      if (cellElement) {
+        cellElement.classList.add('schedule-cell-changed');
+      }
+      _lastChangedCell = null; // Clear after applying
+    }
   }
 
   function buildNameCellHtml(emp) {
@@ -445,12 +578,29 @@ var Schedule = (function() {
       badge = '<span class="cn-badge ' + badgeClass + '" title="' + title + '">&#9679;</span>';
     }
 
+    // Cross-department hours badge (split-shift)
+    var crossDeptBadge = '';
+    var crossDeptData = _crossDeptHoursCache[emp.employeeId];
+    if (crossDeptData && crossDeptData.totalHours > 0 && crossDeptData.assignments && crossDeptData.assignments.length > 0) {
+      // Build tooltip showing dept names and hours
+      var tooltipLines = [];
+      crossDeptData.assignments.forEach(function(assign) {
+        tooltipLines.push(assign.hoursAssigned.toFixed(1) + 'h ' + esc(assign.deptName));
+      });
+      var tooltipText = tooltipLines.join(', ');
+      var deptName = crossDeptData.assignments.length > 0 ? crossDeptData.assignments[0].deptName : '';
+      var deptAbbrev = deptName.split(' ').map(function(w) { return w[0]; }).join('').toUpperCase() || 'X';
+      crossDeptBadge = '<span class="cross-dept-badge" title="' + esc(tooltipText) + '">'
+                     + crossDeptData.totalHours.toFixed(1) + 'h ' + esc(deptAbbrev)
+                     + '</span>';
+    }
+
     // Weekly hours indicator — red if under minimum, muted gray if okay
     var hoursClass = emp.underHours ? 'text-danger' : 'text-comet-muted';
     var hoursLabel = '<span class="' + hoursClass + '" style="font-size:0.68rem;">'
       + (emp.weeklyHours || 0).toFixed(1) + 'h</span>';
 
-    return '<span class="fw-semibold">' + esc(emp.name) + '</span>' + badge
+    return '<span class="fw-semibold">' + esc(emp.name) + '</span>' + badge + ' ' + crossDeptBadge
          + '<br><span class="schedule-cell-role">' + esc(emp.primaryRole || '') + '</span>'
          + ' ' + hoursLabel;
   }
@@ -468,8 +618,20 @@ var Schedule = (function() {
     // SHIFT
     var cls = isFt ? 'schedule-cell-ft' : 'schedule-cell-pt';
     var shiftHtml = '<span class="' + cls + '">' + esc(cell.displayText || cell.shiftName || 'SHIFT') + '</span>';
-    // Add lock indicator if this shift is locked (manager override)
-    return cell.locked ? '<span style="position:relative;" title="Manager override">' + shiftHtml + '<span class="lock-badge">🔒</span></span>' : shiftHtml;
+
+    // Add role-colored badge if role is present
+    var roleBadge = '';
+    if (cell.role) {
+      var roleColorClass = 'role-badge-' + cell.role.toLowerCase().replace(/\s+/g, '-');
+      roleBadge = '<span class="role-badge ' + roleColorClass + '" title="' + esc(cell.role) + '"></span>';
+    }
+
+    // Wrap with role badge, positioned relatively
+    var content = shiftHtml + roleBadge;
+    if (cell.locked) {
+      return '<span style="position:relative;" title="Manager override">' + content + '<span class="lock-badge">🔒</span></span>';
+    }
+    return '<span style="position:relative;">' + content + '</span>';
   }
 
   function _onCellClick(tdEl) {
@@ -588,6 +750,13 @@ var Schedule = (function() {
         _weekGrid             = data.weekGrid;
         _employeeList         = data.employeeList;
         _staffingRequirements = data.staffingRequirements || {};
+
+        // Track the changed cell for highlighting
+        _lastChangedCell = {
+          employeeId: _pendingOverride.employeeId,
+          dayIndex: _pendingOverride.dayIndex
+        };
+
         renderScheduleGrid();
         UI.showToast('Cell updated.', 'success');
       }
@@ -611,7 +780,13 @@ var Schedule = (function() {
   }
 
   // Expose click handlers and utilities for inline onclick attributes and modal population
-  return { onShow, _onCellClick, _onWeekTabClick, _getCurrentDept: function() { return _currentDept; } };
+  return {
+    onShow,
+    _onCellClick,
+    _onWeekTabClick,
+    _handlePreGenerate,
+    _getCurrentDept: function() { return _currentDept; }
+  };
 })();
 
 
@@ -965,6 +1140,7 @@ var Admin = (function() {
     document.getElementById('editPreferredShift').value      = emp.preferredShift || '';
     document.getElementById('editQualifiedShifts').value     = emp.qualifiedShifts || '';
     document.getElementById('editVacationDates').value       = emp.vacationDates || '';
+    document.getElementById('editSecondaryDepartments').value = emp.secondaryDepartments || '';
 
     // Populate shift datalist for the employee's department
     if (emp.department) {
@@ -997,6 +1173,7 @@ var Admin = (function() {
       preferredShift:  document.getElementById('editPreferredShift').value.trim(),
       qualifiedShifts: document.getElementById('editQualifiedShifts').value.trim(),
       vacationDates:   document.getElementById('editVacationDates').value.trim(),
+      secondaryDepartments: document.getElementById('editSecondaryDepartments').value.trim(),
     };
     UI.callServer('updateEmployeeScheduleFields', [id, fields], function() {
       closeModal('employeeEditModal');
