@@ -346,7 +346,7 @@ var Schedule = (function() {
   }
 
   function _handlePreGenerate() {
-    // Collect the edits from the table
+    // Collect the edits from the pre-gen modal table
     var staffingRequirements = {};
     var dayNames = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 
@@ -362,16 +362,12 @@ var Schedule = (function() {
       }
     });
 
-    // Also collect shift definitions from the admin panel to avoid wiping them out
-    // Use collectDeptSettingsFromDom() which gets both staffingReqs and shifts
-    var allSettings = collectDeptSettingsFromDom();
-
-    // Save the staffing requirements along with the current shift definitions, then generate
+    // Save the updated staffing requirements. Only save staffing reqs, not shifts
+    // (this is just a pre-gen adjustment modal; full settings editing happens in Admin)
     closeModal('preGenModal');
 
     UI.callServer('saveDeptSettings', [_currentDept, {
-      staffingRequirements: staffingRequirements,
-      shifts: allSettings.shifts
+      staffingRequirements: staffingRequirements
     }],
       function() {
         // Now generate the schedule with the new settings

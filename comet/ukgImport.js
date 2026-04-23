@@ -1,6 +1,6 @@
 /**
  * ukgImport.js — UKG employee data import for COMET.
- * VERSION: 0.2.3
+ * VERSION: 0.2.4
  *
  * This file owns the server-side logic for upserting employee rows into the
  * Employees sheet from a parsed UKG CSV export.
@@ -211,7 +211,7 @@ function writeEmployeesSheetHeader_(sheet) {
   const headers = [
     'Name (Last, First)', 'Employee ID', 'Hire Date', 'Department', 'Status',
     'FT/PT', 'Day Off Pref 1', 'Day Off Pref 2', 'Preferred Shift',
-    'Qualified Shifts', 'Vacation Dates', 'Role', 'Seniority Rank',
+    'Qualified Shifts', 'Vacation Dates', 'Role', 'Seniority Rank', 'Secondary Departments',
   ];
   const headerRange = sheet.getRange(1, 1, 1, headers.length);
 
@@ -234,6 +234,7 @@ function writeEmployeesSheetHeader_(sheet) {
   sheet.setColumnWidth(11, 180); // Vacation Dates
   sheet.setColumnWidth(12, 160); // Role
   sheet.setColumnWidth(13, 110); // Seniority Rank
+  sheet.setColumnWidth(14, 200); // Secondary Departments
 
   sheet.setFrozenRows(1);
 }
@@ -244,7 +245,7 @@ function writeEmployeesSheetHeader_(sheet) {
 // ---------------------------------------------------------------------------
 
 /**
- * Writes schedule-specific fields (columns F–M) for a single employee.
+ * Writes schedule-specific fields (columns F–N) for a single employee.
  *
  * Only fields present in the `fields` object are written; omitted keys are
  * left unchanged so partial updates are safe.
@@ -258,6 +259,7 @@ function writeEmployeesSheetHeader_(sheet) {
  *   qualifiedShifts?: string,
  *   vacationDates?: string,
  *   role?: string,
+ *   secondaryDepartments?: string,
  * }} fields
  * @returns {boolean} true if the employee was found and updated.
  */
@@ -270,13 +272,14 @@ function updateEmployeeScheduleFields_(id, fields) {
 
   const sheetRow = index.get(String(id));
   const writes = [
-    [EMPLOYEE_COLUMN.FTPT,              'ftpt'],
-    [EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE,  'dayOffPrefOne'],
-    [EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO,  'dayOffPrefTwo'],
-    [EMPLOYEE_COLUMN.PREFERRED_SHIFT,   'preferredShift'],
-    [EMPLOYEE_COLUMN.QUALIFIED_SHIFTS,  'qualifiedShifts'],
-    [EMPLOYEE_COLUMN.VACATION_DATES,    'vacationDates'],
-    [EMPLOYEE_COLUMN.ROLE,              'role'],
+    [EMPLOYEE_COLUMN.FTPT,                   'ftpt'],
+    [EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE,       'dayOffPrefOne'],
+    [EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO,       'dayOffPrefTwo'],
+    [EMPLOYEE_COLUMN.PREFERRED_SHIFT,        'preferredShift'],
+    [EMPLOYEE_COLUMN.QUALIFIED_SHIFTS,       'qualifiedShifts'],
+    [EMPLOYEE_COLUMN.VACATION_DATES,         'vacationDates'],
+    [EMPLOYEE_COLUMN.ROLE,                   'role'],
+    [EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS,  'secondaryDepartments'],
   ];
 
   writes.forEach(([col, key]) => {
