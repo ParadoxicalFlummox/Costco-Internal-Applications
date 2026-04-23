@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.3.0
+ * VERSION: 0.4.0
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -10,12 +10,15 @@
  *   1. App Identity
  *   2. Employees Sheet
  *   3. Schedule Engine (shift settings, week sheet layout, hour rules, coverage)
- *   4. Split-Shift (Multi-Department) Scheduling
- *   5. Colors and Role Colors
- *   6. Infraction / CN System
- *   7. Absence Log (Call Log)
- *   8. Notification Recipients
- *   9. Performance Tuning
+ *   4. Schedule Rules & Supervisor Scheduling
+ *   5. Split-Shift (Multi-Department) Scheduling
+ *   6. Seniority Rank Formula Constants
+ *   7. Coverage Slot Map Constants
+ *   8. Colors and Role Colors
+ *   9. Infraction / CN System
+ *   10. Absence Log (Call Log)
+ *   11. Notification Recipients
+ *   12. Performance Tuning
  */
 
 
@@ -217,6 +220,43 @@ const HOUR_RULES = {
  */
 const SCHEDULE_RULES = {
   MIN_DAYS_OFF: 2,
+};
+
+
+// ---------------------------------------------------------------------------
+// Supervisor Scheduling
+// ---------------------------------------------------------------------------
+
+/**
+ * Configuration for supervisor peak traffic scheduling.
+ *
+ * supervisorRole: Employee role identifier for supervisors (column L)
+ * peakThreshold: Traffic intensity (0-1) above which a window is considered "peak"
+ * minCountPerPeak: Minimum supervisors required during peak windows
+ * minCountPerValley: Minimum supervisors required during non-peak hours (usually 0)
+ * defaultPeakProfile: Default daily peak traffic profile (24 hourly values, 0-1 scale)
+ *                      Used as fallback if no per-dept config exists in COMET Config sheet.
+ *
+ * Peak profiles are stored dynamically in the COMET Config sheet as:
+ *   Key: SUPERVISOR_PEAK_WINDOWS_{DEPARTMENT}
+ *   Value: JSON { department, peakProfile, minCountPerPeak, minCountPerValley, peakThreshold, lastUpdated }
+ *
+ * Each element in peakProfile represents hourly traffic intensity (0 = no traffic, 1 = max traffic).
+ */
+const SUPERVISOR_RULES = {
+  supervisorRole: 'Supervisor',
+  peakThreshold: 0.7,
+  minCountPerPeak: 1,
+  minCountPerValley: 0,
+  defaultPeakProfile: {
+    'Monday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Tuesday':   [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Wednesday': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Thursday':  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Friday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
+    'Saturday':  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
+    'Sunday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
+  },
 };
 
 

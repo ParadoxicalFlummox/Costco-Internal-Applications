@@ -229,6 +229,31 @@
                 <button id="btnAddShift" class="btn btn-outline-secondary btn-sm mb-2">+ Add Shift</button>
                 <br>
                 <button id="btnSaveDeptSettings" class="btn btn-primary btn-sm">Save Settings</button>
+
+                <!-- Supervisor Peak Windows -->
+                <div id="supervisorPeakArea" style="display:none; margin-top: 2rem; border-top: 1px solid #e9ecef; padding-top: 1rem;">
+                  <p class="small fw-semibold mb-2">Supervisor Peak Windows</p>
+                  <p class="small text-muted mb-2">Drag the curves to set peak traffic hours for each day. Higher values = higher traffic intensity.</p>
+
+                  <div class="supervisor-peak-controls mb-2" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+                    <div>
+                      <label class="form-label small mb-1" for="peakThresholdSlider">Peak Threshold</label>
+                      <input type="range" id="peakThresholdSlider" class="form-range" min="0.3" max="1.0" step="0.1" value="0.7" style="width: 150px;">
+                      <span id="peakThresholdValue" class="small ms-2">0.7</span>
+                    </div>
+                    <div>
+                      <label class="form-label small mb-1" for="minCountPeakInput">Min Supervisors (Peak)</label>
+                      <input type="number" id="minCountPeakInput" class="form-control form-control-sm" min="0" value="1" style="width: 80px;">
+                    </div>
+                  </div>
+
+                  <div id="supervisorPeakCanvases" style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
+                    <!-- Canvases will be generated here -->
+                  </div>
+
+                  <button id="btnResetPeakProfile" class="btn btn-outline-secondary btn-sm mt-2">Reset to Default</button>
+                  <button id="btnSaveSupervisorPeak" class="btn btn-primary btn-sm mt-2">Save Peak Config</button>
+                </div>
               </div>
             </div>
           </div>

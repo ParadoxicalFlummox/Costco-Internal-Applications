@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Builds shift timing maps and staffing requirements for the schedule engine.
- * VERSION: 0.2.3
+ * VERSION: 0.3.0
  *
  * In the original autoScheduleGenerator this file read directly from a Settings sheet.
  * In COMET, settings are owned by scheduleSettings.js and stored in Settings_[Dept] sheets.
@@ -110,6 +110,81 @@ function readShiftNamesForDept_(deptName) {
     if (name) seen.add(name);
   });
   return Array.from(seen);
+}
+
+
+/**
+ * Reads supervisor peak traffic configuration for a department from the COMET Config sheet.
+ * Returns null if no config exists (caller should use defaults from config.js).
+ *
+ * @param {string} deptName
+ * @returns {Object|null} { department, peakProfile, minCountPerPeak, minCountPerValley, peakThreshold, lastUpdated }
+ */
+function readSupervisorPeakConfig_(deptName) {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
+  if (!configSheet) return null;
+
+  const configKey = 'SUPERVISOR_PEAK_WINDOWS_' + (deptName || '').toUpperCase().replace(/\s+/g, '_');
+  const configData = configSheet.getDataRange().getValues();
+
+  for (let rowIdx = 0; rowIdx < configData.length; rowIdx++) {
+    const row = configData[rowIdx];
+    if (row[0] === configKey && row[1]) {
+      try {
+        return JSON.parse(row[1].toString());
+      } catch (e) {
+        logConsole_('WARNING: Failed to parse supervisor peak config for ' + deptName);
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Writes supervisor peak traffic configuration for a department to the COMET Config sheet.
+ *
+ * @param {string} deptName
+ * @param {Object} peakConfig — { peakProfile, minCountPerPeak, minCountPerValley, peakThreshold, ... }
+ */
+function saveSupervisorPeakConfig_(deptName, peakConfig) {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  let configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
+  if (!configSheet) {
+    configSheet = workbook.insertSheet(COMET_CONFIG_SHEET_NAME);
+  }
+
+  const configKey = 'SUPERVISOR_PEAK_WINDOWS_' + (deptName || '').toUpperCase().replace(/\s+/g, '_');
+  const configValue = JSON.stringify({
+    department: deptName,
+    peakProfile: peakConfig.peakProfile,
+    minCountPerPeak: peakConfig.minCountPerPeak || SUPERVISOR_RULES.minCountPerPeak,
+    minCountPerValley: peakConfig.minCountPerValley || SUPERVISOR_RULES.minCountPerValley,
+    peakThreshold: peakConfig.peakThreshold || SUPERVISOR_RULES.peakThreshold,
+    lastUpdated: new Date().toISOString(),
+  });
+
+  const configData = configSheet.getDataRange().getValues();
+  let foundRow = -1;
+
+  for (let rowIdx = 0; rowIdx < configData.length; rowIdx++) {
+    if (configData[rowIdx][0] === configKey) {
+      foundRow = rowIdx + 1; // 1-indexed
+      break;
+    }
+  }
+
+  if (foundRow > 0) {
+    // Update existing row
+    configSheet.getRange(foundRow, 2).setValue(configValue);
+  } else {
+    // Append new row
+    const nextRow = configData.length + 1;
+    configSheet.getRange(nextRow, 1).setValue(configKey);
+    configSheet.getRange(nextRow, 2).setValue(configValue);
+  }
 }
 
 

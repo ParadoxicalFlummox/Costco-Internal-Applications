@@ -34,6 +34,8 @@
  *     getCrossDeptHoursForWeek(employeeId, mondayDate)                      → { crossDeptAssignments, totalHours }
  *     getDeptSettings(deptName)                                             → { shifts, staffingReqs }
  *     saveDeptSettings(deptName, data)                                      → { saved }
+ *     getSupervisorPeakConfig(deptName)                                     → { peakProfile, minCountPerPeak, ... }
+ *     saveSupervisorPeakConfig(deptName, config)                            → { saved }
  *     updateCellOverride(weekSheetName, employeeId, dayIndex, newType)      → { weekGrid, employeeList }
  *     updateEmployeeScheduleFields(id, fields)                              → { updated }
  *
@@ -276,6 +278,52 @@ function saveDeptSettings(deptName, data) {
     return { ok: true, data: { saved: true } };
   } catch (error) {
     console.error('api: saveDeptSettings failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Returns supervisor peak traffic configuration for a department.
+ * If no config exists, returns default values from config.js.
+ *
+ * @param {string} deptName — Department name
+ * @returns {{ ok: boolean, data?: object, error?: string }}
+ */
+function getSupervisorPeakConfig(deptName) {
+  try {
+    if (!deptName) throw new Error('deptName is required.');
+    let config = readSupervisorPeakConfig_(deptName); // settingsManager.js
+    if (!config) {
+      // Return default config from config.js
+      config = {
+        department: deptName,
+        peakProfile: SUPERVISOR_RULES.defaultPeakProfile,
+        minCountPerPeak: SUPERVISOR_RULES.minCountPerPeak,
+        minCountPerValley: SUPERVISOR_RULES.minCountPerValley,
+        peakThreshold: SUPERVISOR_RULES.peakThreshold,
+      };
+    }
+    return { ok: true, data: config };
+  } catch (error) {
+    console.error('api: getSupervisorPeakConfig failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Saves supervisor peak traffic configuration for a department.
+ *
+ * @param {string} deptName — Department name
+ * @param {Object} config — { peakProfile, minCountPerPeak, minCountPerValley, peakThreshold }
+ * @returns {{ ok: boolean, data?: { saved: boolean }, error?: string }}
+ */
+function saveSupervisorPeakConfig(deptName, config) {
+  try {
+    if (!deptName || !config) throw new Error('deptName and config are required.');
+    saveSupervisorPeakConfig_(deptName, config); // settingsManager.js
+    return { ok: true, data: { saved: true } };
+  } catch (error) {
+    console.error('api: saveSupervisorPeakConfig failed —', error);
     return { ok: false, error: error.message };
   }
 }

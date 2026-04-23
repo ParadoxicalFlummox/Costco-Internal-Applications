@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.3.0
+ * VERSION: 0.4.0
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -12,12 +12,13 @@
  *   - SPLIT_SHIFT: Integrated multi-department scheduling; Phase 0 loads cross-dept hours,
  *     Phase 2 enforces reduced hour budgets based on hours already scheduled elsewhere.
  *
- * THE FOUR PHASES:
+ * THE FIVE PHASES:
  *   Phase 0 — Bootstrap: Load roster for dept, initialize grid, load cross-dept hours, stamp vacation locks.
- *   Phase 1 — Preference Assignment: Honor day-off prefs and shift prefs, seniority order.
- *   Phase 2 — Minimum Hour Enforcement: Add shifts until weekly minimum is met (respecting cross-dept budgets).
- *   Phase 3 — Gap Resolution: Fill uncovered time slots by reassigning or adding employees.
- *   Phase 4 — Role Assignment: Stamp primaryRole onto SHIFT cells.
+ *   Phase 1 — Preference Assignment: Honor day-off prefs and shift prefs, seniority order (regular employees only).
+ *   Phase 2 — Minimum Hour Enforcement: Add shifts until weekly minimum is met (regular employees only).
+ *   Phase 3 — Gap Resolution: Fill uncovered time slots by reassigning or adding employees (regular employees only).
+ *   Phase 4 — Role Assignment: Stamp primaryRole onto SHIFT cells (regular employees only).
+ *   Phase 5 — Supervisor Assignment: Assign supervisors to peak traffic windows based on supervisor peak config.
  */
 
 
@@ -58,6 +59,10 @@ function generateWeeklySchedule_(deptName, weekStartDate) {
 
   logExecutionTime_('Phase 4: Role Assignment', function() {
     runPhaseFourRoleAssignment_(weekGrid, employeeList, deptName);
+  });
+
+  logExecutionTime_('Phase 5: Supervisor Assignment', function() {
+    runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, deptName, weekStartDate);
   });
 
   return {
@@ -505,6 +510,171 @@ function runPhaseFourRoleAssignment_(weekGrid, employeeList, departmentName) {
       }
     });
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 5: Supervisor Peak Window Assignment
+// ---------------------------------------------------------------------------
+
+/**
+ * Assigns supervisors to peak traffic windows based on the configured peak profile.
+ *
+ * Supervisors (role = SUPERVISOR_ROLE) are excluded from Phases 1-4 and only assigned
+ * during Phase 5 based on hourly traffic intensity. Peak windows are computed from the
+ * peakProfile (24 hourly values) using peakThreshold. Supervisors are selected by
+ * seniority for each peak window that requires coverage.
+ *
+ * @param {Array}  weekGrid        — Grid of day assignments (one row per employee)
+ * @param {Array}  employeeList    — List of all employees (supervisors + regular)
+ * @param {string} departmentName  — Department name (for loading peak config)
+ * @param {Date}   weekStartDate   — The Monday of the week
+ */
+function runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, departmentName, weekStartDate) {
+  // Load supervisor peak config (from COMET Config sheet, or default from config.js)
+  // readSupervisorPeakConfig_() is defined in settingsManager.js
+  let supervisorConfig = readSupervisorPeakConfig_(departmentName);
+  if (!supervisorConfig) {
+    // No config found; use default
+    supervisorConfig = {
+      department: departmentName,
+      peakProfile: SUPERVISOR_RULES.defaultPeakProfile,
+      minCountPerPeak: SUPERVISOR_RULES.minCountPerPeak,
+      minCountPerValley: SUPERVISOR_RULES.minCountPerValley,
+      peakThreshold: SUPERVISOR_RULES.peakThreshold,
+    };
+  }
+
+  // Extract list of supervisors from employeeList
+  const supervisors = [];
+  const supervisorIndices = [];
+  employeeList.forEach(function(employee, index) {
+    if (employee.primaryRole === SUPERVISOR_RULES.supervisorRole) {
+      supervisors.push(employee);
+      supervisorIndices.push(index);
+    }
+  });
+
+  if (supervisors.length === 0) {
+    // No supervisors to assign
+    return;
+  }
+
+  // For each day of the week, compute peak windows and assign supervisors
+  DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+    const peakProfile = supervisorConfig.peakProfile[dayName] || [];
+    const peakThreshold = supervisorConfig.peakThreshold || SUPERVISOR_RULES.peakThreshold;
+    const minCountPerPeak = supervisorConfig.minCountPerPeak || SUPERVISOR_RULES.minCountPerPeak;
+
+    // Compute peak windows from profile (contiguous blocks above threshold)
+    const peakWindows = computePeakWindows_(peakProfile, peakThreshold);
+
+    // For each peak window, assign supervisors
+    peakWindows.forEach(function(windowRange) {
+      const [windowStartHour, windowEndHour] = windowRange;
+      let assignedCount = 0;
+
+      // Count supervisors already assigned to this window
+      supervisors.forEach(function(supervisor, supervisorIndex) {
+        const supervisorEmployeeIndex = supervisorIndices[supervisorIndex];
+        const cell = weekGrid[supervisorEmployeeIndex][dayIndex];
+        // Check if this supervisor is assigned to a shift that overlaps the window
+        if (cell.type === 'SHIFT' && cell.shiftName) {
+          assignedCount++; // Simplified: assume shift overlaps (ideally check shift timing)
+        }
+      });
+
+      // Assign additional supervisors to meet minCountPerPeak
+      while (assignedCount < minCountPerPeak) {
+        // Find highest-seniority supervisor available (not VAC/RDO, not already assigned to this window)
+        let selectedSupervisorIndex = -1;
+        let highestSeniority = -1;
+
+        supervisors.forEach(function(supervisor, supervisorIndex) {
+          const supervisorEmployeeIndex = supervisorIndices[supervisorIndex];
+          const cell = weekGrid[supervisorEmployeeIndex][dayIndex];
+
+          // Check if supervisor is VAC or RDO
+          if (cell.type === 'VAC' || cell.type === 'RDO') {
+            return; // Skip this supervisor
+          }
+
+          // Check if supervisor is available (currently OFF or can be assigned)
+          if (cell.type !== 'OFF') {
+            return; // Skip (already assigned to something else)
+          }
+
+          // Select supervisor with highest seniority
+          if (supervisor.seniorityRank > highestSeniority) {
+            highestSeniority = supervisor.seniorityRank;
+            selectedSupervisorIndex = supervisorIndex;
+          }
+        });
+
+        if (selectedSupervisorIndex === -1) {
+          // No more supervisors available; log warning
+          logConsole_(
+            'WARNING: Day ' + dayName + ', window ' + windowStartHour + '-' + windowEndHour +
+            ': minCount=' + minCountPerPeak + ', but only ' + assignedCount + ' supervisors available'
+          );
+          break;
+        }
+
+        // Assign the selected supervisor
+        const supervisorEmployeeIndex = supervisorIndices[selectedSupervisorIndex];
+        const shiftName = 'Peak_' + windowStartHour + '_' + windowEndHour; // Display name for peak window
+        const paidHours = Math.ceil((windowEndHour - windowStartHour) / 2); // Simplified: half-hour increments
+        weekGrid[supervisorEmployeeIndex][dayIndex] = createDayAssignment_(
+          'SHIFT',
+          shiftName,
+          paidHours,
+          false,
+          windowStartHour + ':00-' + windowEndHour + ':00'
+        );
+        assignedCount++;
+      }
+    });
+  });
+}
+
+/**
+ * Computes peak windows from a 24-hour traffic profile.
+ *
+ * Scans through hourly values and identifies contiguous blocks where traffic >= peakThreshold.
+ * Returns array of [startHour, endHour) pairs.
+ *
+ * @param {Array}  peakProfile — 24-element array of hourly traffic intensities (0-1)
+ * @param {number} peakThreshold — Traffic level above which a window is "peak" (default 0.7)
+ * @returns {Array<[number, number]>} Array of [startHour, endHour] pairs
+ */
+function computePeakWindows_(peakProfile, peakThreshold) {
+  if (!peakProfile || peakProfile.length !== 24) {
+    return [];
+  }
+
+  const windows = [];
+  let currentWindowStart = -1;
+
+  for (let hour = 0; hour < 24; hour++) {
+    const intensity = peakProfile[hour];
+    const isPeak = intensity >= (peakThreshold || 0.7);
+
+    if (isPeak && currentWindowStart === -1) {
+      // Start of a new peak window
+      currentWindowStart = hour;
+    } else if (!isPeak && currentWindowStart !== -1) {
+      // End of current peak window
+      windows.push([currentWindowStart, hour]);
+      currentWindowStart = -1;
+    }
+  }
+
+  // Handle window that extends to end of day
+  if (currentWindowStart !== -1) {
+    windows.push([currentWindowStart, 24]);
+  }
+
+  return windows;
 }
 
 

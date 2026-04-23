@@ -1,7 +1,7 @@
 <script>
 /* ============================================================
    javascript.html — COMET Frontend JavaScript
-   VERSION: 0.2.8
+   VERSION: 0.2.9
 
    Loaded via <?!= include('javascript') ?> at the bottom of
    index.html. All modules are plain-object namespaces; no
@@ -1025,13 +1025,35 @@ var Admin = (function() {
       var dept = this.value;
       if (dept) {
         loadDeptSettings(dept);
+        loadSupervisorPeakConfig(dept);
       } else {
         document.getElementById('deptSettingsArea').style.display = 'none';
+        document.getElementById('supervisorPeakArea').style.display = 'none';
       }
     };
 
     // Save dept settings
     document.getElementById('btnSaveDeptSettings').onclick = handleSaveDeptSettings;
+
+    // Supervisor peak config handlers
+    document.getElementById('peakThresholdSlider').oninput = function() {
+      var val = parseFloat(this.value).toFixed(1);
+      document.getElementById('peakThresholdValue').textContent = val;
+      if (_currentSupervisorPeakConfig) {
+        _currentSupervisorPeakConfig.peakThreshold = parseFloat(val);
+        redrawAllPeakCanvases();
+      }
+    };
+
+    document.getElementById('btnResetPeakProfile').onclick = function() {
+      // Reset to default from config.js (use hard-coded defaults or prompt user)
+      if (_currentSupervisorPeakConfig) {
+        _currentSupervisorPeakConfig.peakProfile = JSON.parse(JSON.stringify(SUPERVISOR_RULES_DEFAULT.peakProfile || {}));
+        renderSupervisorPeakConfig(_currentSupervisorPeakConfig);
+      }
+    };
+
+    document.getElementById('btnSaveSupervisorPeak').onclick = handleSaveSupervisorPeak;
 
     // Add shift row
     document.getElementById('btnAddShift').onclick = function() {
@@ -1397,6 +1419,238 @@ function _populateAllDeptSelects(departments) {
     });
     // Restore previous selection if it still exists
     if (current && departments.indexOf(current) !== -1) sel.value = current;
+  });
+}
+
+// ============================================================================
+// Supervisor Peak Configuration UI
+// ============================================================================
+
+var _currentSupervisorPeakConfig = null;
+var _supervisorCanvasStates = {};  // { dayName: { isDragging: bool, dragOffset: num } }
+var _dayNamesInOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+var SUPERVISOR_RULES_DEFAULT = {
+  peakProfile: {
+    'Monday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Tuesday':   [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Wednesday': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Thursday':  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    'Friday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
+    'Saturday':  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
+    'Sunday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
+  },
+  minCountPerPeak: 1,
+  minCountPerValley: 0,
+  peakThreshold: 0.7,
+};
+
+function loadSupervisorPeakConfig(deptName) {
+  UI.callServer('getSupervisorPeakConfig', [deptName], function(config) {
+    _currentSupervisorPeakConfig = config;
+    renderSupervisorPeakConfig(config);
+  });
+}
+
+function renderSupervisorPeakConfig(config) {
+  var area = document.getElementById('supervisorPeakArea');
+  if (!area) return;
+  area.style.display = '';
+
+  // Set threshold slider and input
+  var threshold = config.peakThreshold || 0.7;
+  document.getElementById('peakThresholdSlider').value = threshold;
+  document.getElementById('peakThresholdValue').textContent = threshold.toFixed(1);
+  document.getElementById('minCountPeakInput').value = config.minCountPerPeak || 1;
+
+  // Render canvases for each day
+  var canvasContainer = document.getElementById('supervisorPeakCanvases');
+  canvasContainer.innerHTML = '';
+
+  _dayNamesInOrder.forEach(function(dayName) {
+    var dayDiv = document.createElement('div');
+    dayDiv.className = 'supervisor-day-canvas';
+    dayDiv.style.display = 'flex';
+    dayDiv.style.flexDirection = 'column';
+    dayDiv.style.alignItems = 'flex-start';
+
+    var label = document.createElement('label');
+    label.className = 'small fw-semibold mb-1';
+    label.textContent = dayName;
+
+    var canvas = document.createElement('canvas');
+    canvas.id = 'canvas_' + dayName;
+    canvas.width = 600;
+    canvas.height = 150;
+    canvas.style.border = '1px solid #ddd';
+    canvas.style.borderRadius = '4px';
+    canvas.style.cursor = 'crosshair';
+
+    dayDiv.appendChild(label);
+    dayDiv.appendChild(canvas);
+    canvasContainer.appendChild(dayDiv);
+
+    // Initialize canvas state
+    _supervisorCanvasStates[dayName] = { isDragging: false, dragOffset: 0 };
+
+    // Wire up mouse events
+    canvas.addEventListener('mousedown', function(e) {
+      _supervisorCanvasStates[dayName].isDragging = true;
+      handleCanvasDrag(canvas, dayName, e);
+    });
+
+    canvas.addEventListener('mousemove', function(e) {
+      if (_supervisorCanvasStates[dayName].isDragging) {
+        handleCanvasDrag(canvas, dayName, e);
+      }
+    });
+
+    canvas.addEventListener('mouseup', function(e) {
+      _supervisorCanvasStates[dayName].isDragging = false;
+    });
+
+    canvas.addEventListener('mouseleave', function(e) {
+      _supervisorCanvasStates[dayName].isDragging = false;
+    });
+  });
+
+  redrawAllPeakCanvases();
+}
+
+function handleCanvasDrag(canvas, dayName, event) {
+  if (!_currentSupervisorPeakConfig) return;
+
+  var rect = canvas.getBoundingClientRect();
+  var x = event.clientX - rect.left;
+  var y = event.clientY - rect.top;
+
+  // Map pixel coordinates to hour (0-24)
+  var hour = Math.floor((x / canvas.width) * 24);
+  var intensity = 1.0 - (y / canvas.height); // Inverted Y-axis
+
+  if (hour >= 0 && hour < 24 && intensity >= 0 && intensity <= 1) {
+    _currentSupervisorPeakConfig.peakProfile[dayName][hour] = parseFloat(intensity.toFixed(2));
+
+    // Smooth interpolation: blend with neighbors
+    if (hour > 0) {
+      _currentSupervisorPeakConfig.peakProfile[dayName][hour - 1] =
+        parseFloat(((_currentSupervisorPeakConfig.peakProfile[dayName][hour - 1] + intensity) / 2).toFixed(2));
+    }
+    if (hour < 23) {
+      _currentSupervisorPeakConfig.peakProfile[dayName][hour + 1] =
+        parseFloat(((_currentSupervisorPeakConfig.peakProfile[dayName][hour + 1] + intensity) / 2).toFixed(2));
+    }
+
+    redrawPeakCanvas(canvas, dayName);
+  }
+}
+
+function redrawAllPeakCanvases() {
+  _dayNamesInOrder.forEach(function(dayName) {
+    var canvas = document.getElementById('canvas_' + dayName);
+    if (canvas) redrawPeakCanvas(canvas, dayName);
+  });
+}
+
+function redrawPeakCanvas(canvas, dayName) {
+  if (!_currentSupervisorPeakConfig || !_currentSupervisorPeakConfig.peakProfile[dayName]) return;
+
+  var ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  var profile = _currentSupervisorPeakConfig.peakProfile[dayName];
+  var threshold = _currentSupervisorPeakConfig.peakThreshold || 0.7;
+  var hourWidth = canvas.width / 24;
+  var baselineY = canvas.height;
+
+  // Draw threshold line
+  ctx.strokeStyle = '#999';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  var thresholdY = baselineY - (threshold * canvas.height);
+  ctx.beginPath();
+  ctx.moveTo(0, thresholdY);
+  ctx.lineTo(canvas.width, thresholdY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw peak region (above threshold)
+  ctx.fillStyle = 'rgba(52, 168, 224, 0.1)'; // Light blue
+  ctx.beginPath();
+  ctx.moveTo(0, baselineY);
+  for (var h = 0; h < 24; h++) {
+    var intensity = profile[h] || 0;
+    var x = (h + 0.5) * hourWidth;
+    var y = baselineY - (intensity * canvas.height);
+    if (h === 0) {
+      ctx.lineTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.lineTo(canvas.width, baselineY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Draw traffic curve
+  ctx.strokeStyle = '#34a8e0';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var h = 0; h < 24; h++) {
+    var intensity = profile[h] || 0;
+    var x = (h + 0.5) * hourWidth;
+    var y = baselineY - (intensity * canvas.height);
+    if (h === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+
+  // Draw control points
+  ctx.fillStyle = '#34a8e0';
+  for (var h = 0; h < 24; h++) {
+    var intensity = profile[h] || 0;
+    var x = (h + 0.5) * hourWidth;
+    var y = baselineY - (intensity * canvas.height);
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  // Draw hour labels on bottom
+  ctx.fillStyle = '#666';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (var h = 0; h < 24; h += 4) {
+    var x = (h + 0.5) * hourWidth;
+    var labelText = h + ':00';
+    ctx.fillText(labelText, x, canvas.height - 15);
+  }
+}
+
+function handleSaveSupervisorPeak() {
+  if (!_currentSupervisorPeakConfig) {
+    UI.showToast('No supervisor peak config loaded.', 'error');
+    return;
+  }
+
+  // Update min count from input
+  _currentSupervisorPeakConfig.minCountPerPeak = parseInt(document.getElementById('minCountPeakInput').value || 1, 10);
+
+  var dept = document.getElementById('settingsDept').value;
+  if (!dept) {
+    UI.showToast('Select a department first.', 'error');
+    return;
+  }
+
+  UI.callServer('saveSupervisorPeakConfig', [dept, _currentSupervisorPeakConfig], function(resp) {
+    if (resp.ok) {
+      UI.showToast('Supervisor peak config saved.', 'success');
+    } else {
+      UI.showToast('Failed to save supervisor peak config: ' + resp.error, 'error');
+    }
   });
 }
 
