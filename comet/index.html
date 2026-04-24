@@ -48,30 +48,128 @@
          ------------------------------------------------------------------- -->
     <div id="view-schedule" class="comet-view" style="display:none;">
       <div class="comet-view-header d-flex align-items-center justify-content-between">
-        <h1 class="comet-view-title">Schedule Generator</h1>
+        <h1 class="comet-view-title">Schedule Management</h1>
       </div>
 
-      <!-- Controls row -->
-      <div class="row g-2 mb-3 align-items-end">
-        <div class="col-auto">
-          <label class="form-label mb-1 small fw-semibold" for="scheduleDept">Department</label>
-          <select id="scheduleDept" class="form-select form-select-sm" style="min-width:180px;">
-            <option value="">— select —</option>
-          </select>
-        </div>
-        <div class="col-auto">
-          <label class="form-label mb-1 small fw-semibold" for="scheduleWeek">Week of (Monday)</label>
-          <input type="date" id="scheduleWeek" class="form-control form-control-sm">
-        </div>
-        <div class="col-auto">
-          <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
-          <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
-        </div>
+      <!-- Department selector -->
+      <div class="mb-3">
+        <label class="form-label small fw-semibold mb-1" for="scheduleDept">Department</label>
+        <select id="scheduleDept" class="form-select form-select-sm" style="max-width:250px;">
+          <option value="">— select —</option>
+        </select>
       </div>
 
-      <!-- Schedule table output -->
-      <div id="scheduleTableContainer" class="comet-table-container">
-        <div class="p-3 text-comet-muted small">Select a department and week, then click Generate.</div>
+      <!-- Tabs (shown only when dept is selected) -->
+      <div id="scheduleTabsContainer" style="display:none;">
+        <ul class="nav nav-tabs mb-3" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="tab-schedule-gen-btn" data-bs-toggle="tab" data-bs-target="#tab-schedule-gen" type="button" role="tab">
+              Schedule Generator
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-staffing-req-btn" data-bs-toggle="tab" data-bs-target="#tab-staffing-req" type="button" role="tab">
+              Staffing Requirements
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-shift-defs-btn" data-bs-toggle="tab" data-bs-target="#tab-shift-defs" type="button" role="tab">
+              Shift Definitions
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-supervisor-btn" data-bs-toggle="tab" data-bs-target="#tab-supervisor" type="button" role="tab">
+              Supervisor Scheduling
+            </button>
+          </li>
+        </ul>
+
+        <!-- Tab Content -->
+        <div class="tab-content">
+          <!-- Tab 1: Schedule Generator -->
+          <div class="tab-pane fade show active" id="tab-schedule-gen" role="tabpanel">
+            <div class="row g-2 mb-3 align-items-end">
+              <div class="col-auto">
+                <label class="form-label mb-1 small fw-semibold" for="scheduleWeek">Week of (Monday)</label>
+                <input type="date" id="scheduleWeek" class="form-control form-control-sm">
+              </div>
+              <div class="col-auto">
+                <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
+                <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
+              </div>
+            </div>
+            <div id="scheduleTableContainer" class="comet-table-container">
+              <div class="p-3 text-comet-muted small">Select a week and click Generate.</div>
+            </div>
+          </div>
+
+          <!-- Tab 2: Staffing Requirements -->
+          <div class="tab-pane fade" id="tab-staffing-req" role="tabpanel">
+            <p class="small text-muted mb-2">Set daily staffing targets for this department.</p>
+            <table class="table table-sm mb-2" id="staffingReqsTable">
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Count</th>
+                  <th>Mode</th>
+                </tr>
+              </thead>
+              <tbody id="staffingReqsBody"></tbody>
+            </table>
+            <button id="btnSaveStaffingReqs" class="btn btn-primary btn-sm">Save Staffing Requirements</button>
+          </div>
+
+          <!-- Tab 3: Shift Definitions -->
+          <div class="tab-pane fade" id="tab-shift-defs" role="tabpanel">
+            <p class="small text-muted mb-2">Configure shift templates for this department.</p>
+            <table class="table table-sm mb-2" id="shiftDefsTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>FT/PT</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Paid Hrs</th>
+                  <th>Lunch</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="shiftDefsBody"></tbody>
+            </table>
+            <button id="btnAddShift" class="btn btn-outline-secondary btn-sm mb-2">+ Add Shift</button>
+            <br>
+            <button id="btnSaveShiftDefs" class="btn btn-primary btn-sm">Save Shift Definitions</button>
+          </div>
+
+          <!-- Tab 4: Supervisor Scheduling -->
+          <div class="tab-pane fade" id="tab-supervisor" role="tabpanel">
+            <p class="small text-muted mb-2">Configure expected member foot traffic and supervisor ratios for this department.</p>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" id="supervisorSchedulingEnabled">
+              <label class="form-check-label small fw-semibold" for="supervisorSchedulingEnabled">
+                Enable Supervisor Scheduling
+              </label>
+            </div>
+
+            <div id="supervisorPeakConfigControls" style="display:none;">
+              <div class="supervisor-peak-controls mb-3" style="display: flex; gap: 1rem; align-items: center;">
+                <div>
+                  <label class="form-label small mb-1" for="membersPerSupervisorSlider">Members per Supervisor</label>
+                  <input type="range" id="membersPerSupervisorSlider" class="form-range" min="25" max="200" step="5" value="75" style="width: 150px;">
+                  <span id="membersPerSupervisorValue" class="small ms-2">75</span>
+                </div>
+              </div>
+            </div>
+
+            <div id="supervisorPeakCanvases" style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
+              <!-- Canvases will be generated here -->
+            </div>
+
+            <button id="btnResetPeakProfile" class="btn btn-outline-secondary btn-sm mt-2">Reset to Default</button>
+            <button id="btnSaveSupervisorConfig" class="btn btn-primary btn-sm mt-2">Save Supervisor Configuration</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -188,76 +286,6 @@
           </div>
         </div>
 
-        <!-- Schedule Settings -->
-        <div class="col-12 col-md-6">
-          <div class="card h-100">
-            <div class="card-header fw-semibold">Schedule Settings</div>
-            <div class="card-body">
-              <div class="mb-2">
-                <label class="form-label small fw-semibold mb-1" for="settingsDept">Department</label>
-                <select id="settingsDept" class="form-select form-select-sm" data-dept-select>
-                  <option value="">— select —</option>
-                </select>
-              </div>
-              <div id="deptSettingsArea" style="display:none;">
-                <p class="small fw-semibold mt-3 mb-1">Staffing Requirements</p>
-                <table class="table table-sm mb-2" id="staffingReqsTable">
-                  <thead>
-                    <tr>
-                      <th>Day</th>
-                      <th>Count</th>
-                      <th>Mode</th>
-                    </tr>
-                  </thead>
-                  <tbody id="staffingReqsBody"></tbody>
-                </table>
-                <p class="small fw-semibold mt-3 mb-1">Shift Definitions</p>
-                <table class="table table-sm mb-2" id="shiftDefsTable">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>FT/PT</th>
-                      <th>Start</th>
-                      <th>End</th>
-                      <th>Paid Hrs</th>
-                      <th>Lunch</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody id="shiftDefsBody"></tbody>
-                </table>
-                <button id="btnAddShift" class="btn btn-outline-secondary btn-sm mb-2">+ Add Shift</button>
-                <br>
-                <button id="btnSaveDeptSettings" class="btn btn-primary btn-sm">Save Settings</button>
-
-                <!-- Supervisor Peak Windows -->
-                <div id="supervisorPeakArea" style="display:none; margin-top: 2rem; border-top: 1px solid #e9ecef; padding-top: 1rem;">
-                  <p class="small fw-semibold mb-2">Supervisor Peak Windows</p>
-                  <p class="small text-muted mb-2">Drag the curves to set peak traffic hours for each day. Higher values = higher traffic intensity.</p>
-
-                  <div class="supervisor-peak-controls mb-2" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
-                    <div>
-                      <label class="form-label small mb-1" for="peakThresholdSlider">Peak Threshold</label>
-                      <input type="range" id="peakThresholdSlider" class="form-range" min="0.3" max="1.0" step="0.1" value="0.7" style="width: 150px;">
-                      <span id="peakThresholdValue" class="small ms-2">0.7</span>
-                    </div>
-                    <div>
-                      <label class="form-label small mb-1" for="minCountPeakInput">Min Supervisors (Peak)</label>
-                      <input type="number" id="minCountPeakInput" class="form-control form-control-sm" min="0" value="1" style="width: 80px;">
-                    </div>
-                  </div>
-
-                  <div id="supervisorPeakCanvases" style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
-                    <!-- Canvases will be generated here -->
-                  </div>
-
-                  <button id="btnResetPeakProfile" class="btn btn-outline-secondary btn-sm mt-2">Reset to Default</button>
-                  <button id="btnSaveSupervisorPeak" class="btn btn-primary btn-sm mt-2">Save Peak Config</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
 
         <!-- Employee List -->
         <div class="col-12">

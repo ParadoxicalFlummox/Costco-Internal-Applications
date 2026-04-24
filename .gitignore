@@ -70,3 +70,4 @@ test-output.json
 test-results.html
 test_ukg_sample.csv
 .claude/*
+comet/HANDOFF.md

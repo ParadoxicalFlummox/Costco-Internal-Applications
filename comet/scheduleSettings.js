@@ -1,19 +1,22 @@
 /**
  * scheduleSettings.js — Per-department schedule settings read/write for COMET.
- * VERSION: 0.2.3
+ * VERSION: 0.5.0
  *
  * Each department has its own Settings sheet tab named "Settings_[DeptName]"
  * (e.g., "Settings_Maintenance"). This file owns all reads and writes to those sheets.
  *
  * SHEET LAYOUT (Settings_[Dept]):
  *   A2:C8   — Staffing requirements: Day | Count | Mode ("Count" or "Hours")
- *   D2:I50  — Shift definitions: Name | FT/PT | StartTime | EndTime | PaidHours | HasLunch
+ *   E2:M50  — Shift definitions:
+ *             E: Name | F: FT/PT | G: StartTime | H: EndTime | I: PaidHours | J: HasLunch |
+ *             K: FlexEnabled | L: FlexWindowEarliest | M: FlexWindowLatest
  *
  * RETURN SHAPES:
  *   getDeptSettings_() returns:
  *   {
  *     staffingReqs: [{ day, count, mode }],     // 7 entries, Mon–Sun
- *     shifts:       [{ name, ftpt, startTime, endTime, paidHours, hasLunch }],
+ *     shifts:       [{ name, ftpt, startTime, endTime, paidHours, hasLunch,
+ *                      flexEnabled, flexWindowEarliest, flexWindowLatest }],
  *   }
  *
  *   Time values in the shifts array are stored as "HH:MM" strings (24-hour)
@@ -99,20 +102,23 @@ function writeDefaultDeptSettings_(sheet, deptName) {
   ]]);
   headerRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
 
-  // Add "Has Lunch" header separately (column I / index 9)
-  sheet.getRange(1, 10).setValue('Has Lunch').setFontWeight('bold')
-    .setBackground('#005DAA').setFontColor('#FFFFFF');
+  // Add shift-related headers in columns J–M
+  const shiftHeadersRange = sheet.getRange(1, 10, 1, 4);  // J1:M1
+  shiftHeadersRange.setValues([[
+    'Has Lunch', 'Flex Enabled', 'Flex Earliest', 'Flex Latest',
+  ]]).setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
 
   // --- Default staffing requirements (A2:C8) ---
   const defaultStaffing = DAY_NAMES_IN_ORDER.map(day => [day, DEFAULT_STAFFING_COUNT, STAFFING_MODE.COUNT]); // config.js
   sheet.getRange(2, 1, defaultStaffing.length, 3).setValues(defaultStaffing);
 
-  // --- Default shift definitions (D2:I3) — two example rows ---
+  // --- Default shift definitions (E2:M3) — two example rows ---
+  // Include flex window fields: [Name, FT/PT, StartTime, EndTime, PaidHours, HasLunch, FlexEnabled, FlexEarliest, FlexLatest]
   const defaultShifts = [
-    ['Morning', 'FT', '08:00', '16:30', 8, true],
-    ['Morning', 'PT', '08:00', '13:00', 5, false],
+    ['Morning', 'FT', '08:00', '16:30', 8, true, true, '07:30', '09:00'],
+    ['Morning', 'PT', '08:00', '13:00', 5, false, true, '07:30', '09:00'],
   ];
-  sheet.getRange(2, 5, defaultShifts.length, 6).setValues(defaultShifts);
+  sheet.getRange(2, 5, defaultShifts.length, 9).setValues(defaultShifts);
 
   sheet.setTabColor('#005DAA');
   sheet.setFrozenRows(1);
@@ -128,6 +134,9 @@ function writeDefaultDeptSettings_(sheet, deptName) {
   sheet.setColumnWidth(8, 90);   // End Time
   sheet.setColumnWidth(9, 90);   // Paid Hours
   sheet.setColumnWidth(10, 90);  // Has Lunch
+  sheet.setColumnWidth(11, 100); // Flex Enabled
+  sheet.setColumnWidth(12, 110); // Flex Earliest
+  sheet.setColumnWidth(13, 110); // Flex Latest
 }
 
 
@@ -166,28 +175,35 @@ function readStaffingRequirements_(sheet) {
 }
 
 /**
- * Reads the shift definitions table from D2:I50.
+ * Reads the shift definitions table from E2:M50 (extended to include flex window fields).
  * Times are returned as "HH:MM" strings (safe for google.script.run serialization).
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @returns {Array<{ name, ftpt, startTime, endTime, paidHours, hasLunch }>}
+ * @returns {Array<{ name, ftpt, startTime, endTime, paidHours, hasLunch, flexEnabled, flexWindowEarliest, flexWindowLatest }>}
  */
 function readShiftDefinitions_(sheet) {
-  const rows = sheet.getRange(SETTINGS_RANGE.SHIFT_DEFINITIONS_TABLE).getValues(); // config.js
+  // Note: We need to read M50 to capture all flex columns. Update the range.
+  const rows = sheet.getRange('E2:M50').getValues();
   const timeZone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
 
   return rows
-    .filter(row => row[SHIFT_TABLE_COLUMN.NAME] && row[SHIFT_TABLE_COLUMN.STATUS]) // config.js
+    .filter(row => row[SHIFT_TABLE_COLUMN.NAME] && row[SHIFT_TABLE_COLUMN.STATUS])
     .map(row => {
       const startRaw = row[SHIFT_TABLE_COLUMN.START_TIME];
       const endRaw   = row[SHIFT_TABLE_COLUMN.END_TIME];
+      const flexEarliestRaw = row[SHIFT_TABLE_FLEX_COLUMNS.FLEX_WINDOW_EARLIEST];
+      const flexLatestRaw = row[SHIFT_TABLE_FLEX_COLUMNS.FLEX_WINDOW_LATEST];
+
       return {
-        name:      String(row[SHIFT_TABLE_COLUMN.NAME]      || '').trim(),
-        ftpt:      String(row[SHIFT_TABLE_COLUMN.STATUS]     || '').trim(),
-        startTime: formatGasTimeToString_(startRaw, timeZone),
-        endTime:   formatGasTimeToString_(endRaw,   timeZone),
-        paidHours: Number(row[SHIFT_TABLE_COLUMN.PAID_HOURS] || 0),
-        hasLunch:  row[SHIFT_TABLE_COLUMN.HAS_LUNCH] === true,
+        name:               String(row[SHIFT_TABLE_COLUMN.NAME]      || '').trim(),
+        ftpt:               String(row[SHIFT_TABLE_COLUMN.STATUS]     || '').trim(),
+        startTime:          formatGasTimeToString_(startRaw, timeZone),
+        endTime:            formatGasTimeToString_(endRaw,   timeZone),
+        paidHours:          Number(row[SHIFT_TABLE_COLUMN.PAID_HOURS] || 0),
+        hasLunch:           row[SHIFT_TABLE_COLUMN.HAS_LUNCH] === true,
+        flexEnabled:        row[SHIFT_TABLE_FLEX_COLUMNS.FLEX_ENABLED] !== false,  // Default true if not explicitly false
+        flexWindowEarliest: formatGasTimeToString_(flexEarliestRaw, timeZone) || '',
+        flexWindowLatest:   formatGasTimeToString_(flexLatestRaw, timeZone) || '',
       };
     });
 }
@@ -223,28 +239,31 @@ function writeStaffingRequirements_(sheet, staffingReqs) {
 }
 
 /**
- * Writes the shift definitions table starting at D2.
+ * Writes the shift definitions table starting at E2 through M50 (includes flex fields).
  * Clears old rows below the new data to avoid stale entries.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @param {Array<{ name, ftpt, startTime, endTime, paidHours, hasLunch }>} shifts
+ * @param {Array<{ name, ftpt, startTime, endTime, paidHours, hasLunch, flexEnabled, flexWindowEarliest, flexWindowLatest }>} shifts
  */
 function writeShiftDefinitions_(sheet, shifts) {
-  // Clear the entire shift table area first
-  sheet.getRange('E2:J50').clearContent();
+  // Clear the entire shift table area first (E2:M50)
+  sheet.getRange('E2:M50').clearContent();
 
   if (shifts.length === 0) return;
 
   const rows = shifts.map(s => [
     s.name,
     s.ftpt,
-    s.startTime,  // written as "HH:MM" string; sheet displays it as text
+    s.startTime,          // written as "HH:MM" string; sheet displays it as text
     s.endTime,
     Number(s.paidHours || 0),
     s.hasLunch === true,
+    s.flexEnabled !== false,  // Default true if not explicitly false
+    s.flexWindowEarliest || '',
+    s.flexWindowLatest   || '',
   ]);
 
-  sheet.getRange(2, 5, rows.length, 6).setValues(rows);
+  sheet.getRange(2, 5, rows.length, 9).setValues(rows);  // E2 onwards, 9 columns
 }
 
 

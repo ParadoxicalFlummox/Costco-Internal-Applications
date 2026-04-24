@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.4.0
+ * VERSION: 0.5.0
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -231,32 +231,108 @@ const SCHEDULE_RULES = {
  * Configuration for supervisor peak traffic scheduling.
  *
  * supervisorRole: Employee role identifier for supervisors (column L)
- * peakThreshold: Traffic intensity (0-1) above which a window is considered "peak"
- * minCountPerPeak: Minimum supervisors required during peak windows
- * minCountPerValley: Minimum supervisors required during non-peak hours (usually 0)
- * defaultPeakProfile: Default daily peak traffic profile (24 hourly values, 0-1 scale)
- *                      Used as fallback if no per-dept config exists in COMET Config sheet.
+ * enabled: Whether supervisor scheduling is enabled (default false)
+ * membersPerSupervisor: Ratio used to calculate required supervisors (e.g., 75 = 1 supervisor per 75 members)
+ * maxDoorCount: Maximum door count on the Y-axis of the visualizer (soft ceiling; values can exceed but display clips)
+ * defaultPeakProfile: Default daily peak traffic profile (8 elements, one per 3 hours: 0, 3, 6, 9, 12, 15, 18, 21)
+ *                      Each element is a door count (members per hour), used as fallback if no per-dept config exists.
  *
  * Peak profiles are stored dynamically in the COMET Config sheet as:
  *   Key: SUPERVISOR_PEAK_WINDOWS_{DEPARTMENT}
- *   Value: JSON { department, peakProfile, minCountPerPeak, minCountPerValley, peakThreshold, lastUpdated }
+ *   Value: JSON { department, peakProfile, enabled, membersPerSupervisor, maxDoorCount, lastUpdated }
  *
- * Each element in peakProfile represents hourly traffic intensity (0 = no traffic, 1 = max traffic).
+ * Each element in peakProfile[dayName] is an integer representing expected member foot traffic at that time slot.
+ */
+/**
+ * DEPRECATED: Supervisor rules are now integrated into the Traffic Heatmap system.
+ * This constant is kept for backwards compatibility during migration but should be
+ * removed once all Phase 5 code is consolidated.
  */
 const SUPERVISOR_RULES = {
   supervisorRole: 'Supervisor',
-  peakThreshold: 0.7,
-  minCountPerPeak: 1,
-  minCountPerValley: 0,
+  enabled: false,
+  membersPerSupervisor: 75,
+  maxDoorCount: 500,
   defaultPeakProfile: {
-    'Monday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    'Tuesday':   [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    'Wednesday': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    'Thursday':  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.6, 0.7, 0.6, 0.5, 0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    'Friday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
-    'Saturday':  [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
-    'Sunday':    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.1, 0.0],
+    'Monday':    [0, 0, 0, 50, 150, 200, 175, 100],
+    'Tuesday':   [0, 0, 0, 50, 150, 200, 175, 100],
+    'Wednesday': [0, 0, 0, 50, 150, 200, 175, 100],
+    'Thursday':  [0, 0, 0, 50, 150, 200, 175, 100],
+    'Friday':    [0, 0, 0, 75, 200, 350, 400, 250],
+    'Saturday':  [0, 0, 0, 75, 250, 400, 450, 300],
+    'Sunday':    [0, 0, 0, 50, 200, 375, 400, 250],
   },
+};
+
+
+// ---------------------------------------------------------------------------
+// Traffic Heatmap & Peak Coverage Scheduling
+// ---------------------------------------------------------------------------
+
+/**
+ * Store closing times by day of week (used to enforce hard constraints on closer shifts).
+ * Format: 24-hour time as "HH:MM" string.
+ *
+ * Closers' shift end times must not exceed these times:
+ * - Weekday (Mon–Fri): 11:30 PM (23:30)
+ * - Saturday: 10:00 PM (22:00)
+ * - Sunday: 9:00 PM (21:00)
+ *
+ * Used in buildStaggeredStartMap_() to cap flexWindowLatest for closer shifts.
+ */
+const STORE_CLOSING_TIMES = {
+  weekday: '23:30',  // Mon–Fri
+  saturday: '22:00',
+  sunday: '21:00',
+};
+
+/**
+ * Default traffic heatmap configuration for a new department.
+ * Managers can override these via the UI.
+ */
+const HEATMAP_DEFAULTS = {
+  enabled: false,
+  thresholds: {
+    low: 100,
+    high: 300,
+  },
+  staggerIncrement: 15,  // Minutes between staggered start times (15 or 30)
+  levelMultipliers: {
+    'Low': 0.75,
+    'Moderate': 1.0,
+    'High': 1.25,
+  },
+  poolSchedulingCounts: {
+    'Low': 1,
+    'Moderate': 3,
+    'High': 5,
+  },
+  // Default traffic curves for new departments (can be overridden per week)
+  defaultTrafficCurves: {
+    'Monday':    [0,0,0,10,30,80,120,180,200,190,160,140,100,80,60,40,20,10,0,0,0,0,0,0],
+    'Tuesday':   [0,0,0,5,20,60,100,150,160,140,120,100,80,60,40,20,10,5,0,0,0,0,0,0],
+    'Wednesday': [0,0,0,8,25,70,110,170,190,160,140,110,90,70,50,30,15,8,0,0,0,0,0,0],
+    'Thursday':  [0,0,0,10,30,80,120,180,200,190,160,140,100,80,60,40,20,10,0,0,0,0,0,0],
+    'Friday':    [0,0,0,20,60,150,300,420,480,460,400,350,300,260,200,180,140,80,30,10,0,0,0,0],
+    'Saturday':  [0,0,0,0,20,80,200,380,500,480,440,400,350,300,250,200,150,80,30,0,0,0,0,0],
+    'Sunday':    [0,0,0,0,10,60,150,250,280,260,220,180,140,100,60,30,15,5,0,0,0,0,0,0],
+  },
+};
+
+/**
+ * Extended shift definition column offsets for flex windows.
+ * These columns are added to SHIFT_DEFINITIONS_TABLE (E2:J50) starting at column K (index 6).
+ *
+ *   K — flexEnabled         (boolean; if false, shift is fixed and stagger does not apply)
+ *   L — flexWindowEarliest  (string "HH:MM"; earliest valid start time)
+ *   M — flexWindowLatest    (string "HH:MM"; latest valid start time)
+ *
+ * Extended offsets (0-indexed, relative to E2:J50 range):
+ */
+const SHIFT_TABLE_FLEX_COLUMNS = {
+  FLEX_ENABLED:        6,  // K
+  FLEX_WINDOW_EARLIEST: 7,  // L
+  FLEX_WINDOW_LATEST:   8,  // M
 };
 
 

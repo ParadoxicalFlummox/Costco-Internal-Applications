@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.4.0
+ * VERSION: 0.4.1
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -532,17 +532,21 @@ function runPhaseFourRoleAssignment_(weekGrid, employeeList, departmentName) {
  */
 function runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, departmentName, weekStartDate) {
   // Load supervisor peak config (from COMET Config sheet, or default from config.js)
-  // readSupervisorPeakConfig_() is defined in settingsManager.js
   let supervisorConfig = readSupervisorPeakConfig_(departmentName);
   if (!supervisorConfig) {
     // No config found; use default
     supervisorConfig = {
       department: departmentName,
       peakProfile: SUPERVISOR_RULES.defaultPeakProfile,
-      minCountPerPeak: SUPERVISOR_RULES.minCountPerPeak,
-      minCountPerValley: SUPERVISOR_RULES.minCountPerValley,
-      peakThreshold: SUPERVISOR_RULES.peakThreshold,
+      enabled: SUPERVISOR_RULES.enabled || false,
+      membersPerSupervisor: SUPERVISOR_RULES.membersPerSupervisor || 75,
+      maxDoorCount: SUPERVISOR_RULES.maxDoorCount || 500,
     };
+  }
+
+  // Check if supervisor scheduling is enabled for this department
+  if (!supervisorConfig.enabled) {
+    return;
   }
 
   // Extract list of supervisors from employeeList
@@ -556,41 +560,40 @@ function runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, departmentNam
   });
 
   if (supervisors.length === 0) {
-    // No supervisors to assign
-    return;
+    return; // No supervisors to assign
   }
 
-  // For each day of the week, compute peak windows and assign supervisors
+  const membersPerSupervisor = supervisorConfig.membersPerSupervisor || 75;
+
+  // For each day of the week, assign supervisors based on door count
   DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
     const peakProfile = supervisorConfig.peakProfile[dayName] || [];
-    const peakThreshold = supervisorConfig.peakThreshold || SUPERVISOR_RULES.peakThreshold;
-    const minCountPerPeak = supervisorConfig.minCountPerPeak || SUPERVISOR_RULES.minCountPerPeak;
 
-    // Compute peak windows from profile (contiguous blocks above threshold)
-    const peakWindows = computePeakWindows_(peakProfile, peakThreshold);
+    // peakProfile is an 8-element array (one per 3 hours: 0, 3, 6, 9, 12, 15, 18, 21)
+    for (var pointIndex = 0; pointIndex < peakProfile.length; pointIndex++) {
+      var doorCount = peakProfile[pointIndex] || 0;
 
-    // For each peak window, assign supervisors
-    peakWindows.forEach(function(windowRange) {
-      const [windowStartHour, windowEndHour] = windowRange;
-      let assignedCount = 0;
+      // Calculate how many supervisors are needed at this time slot
+      var supervisorsNeeded = Math.ceil(doorCount / membersPerSupervisor);
 
-      // Count supervisors already assigned to this window
-      supervisors.forEach(function(supervisor, supervisorIndex) {
-        const supervisorEmployeeIndex = supervisorIndices[supervisorIndex];
-        const cell = weekGrid[supervisorEmployeeIndex][dayIndex];
-        // Check if this supervisor is assigned to a shift that overlaps the window
-        if (cell.type === 'SHIFT' && cell.shiftName) {
-          assignedCount++; // Simplified: assume shift overlaps (ideally check shift timing)
-        }
-      });
+      if (supervisorsNeeded === 0) {
+        continue; // No supervisors needed for this time slot
+      }
 
-      // Assign additional supervisors to meet minCountPerPeak
-      while (assignedCount < minCountPerPeak) {
-        // Find highest-seniority supervisor available (not VAC/RDO, not already assigned to this window)
+      // Try to assign supervisorsNeeded supervisors to this time slot
+      var assignedCount = 0;
+      var attemptedIndices = new Set();
+
+      while (assignedCount < supervisorsNeeded && attemptedIndices.size < supervisors.length) {
+        // Find highest-seniority supervisor available (not VAC/RDO, not already assigned)
         let selectedSupervisorIndex = -1;
         let highestSeniority = -1;
 
         supervisors.forEach(function(supervisor, supervisorIndex) {
+          if (attemptedIndices.has(supervisorIndex)) {
+            return; // Already tried this supervisor
+          }
+
           const supervisorEmployeeIndex = supervisorIndices[supervisorIndex];
           const cell = weekGrid[supervisorEmployeeIndex][dayIndex];
 
@@ -599,7 +602,7 @@ function runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, departmentNam
             return; // Skip this supervisor
           }
 
-          // Check if supervisor is available (currently OFF or can be assigned)
+          // Check if supervisor is available (currently OFF)
           if (cell.type !== 'OFF') {
             return; // Skip (already assigned to something else)
           }
@@ -612,28 +615,34 @@ function runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, departmentNam
         });
 
         if (selectedSupervisorIndex === -1) {
-          // No more supervisors available; log warning
-          logConsole_(
-            'WARNING: Day ' + dayName + ', window ' + windowStartHour + '-' + windowEndHour +
-            ': minCount=' + minCountPerPeak + ', but only ' + assignedCount + ' supervisors available'
-          );
+          // No more supervisors available for this time slot
           break;
         }
 
         // Assign the selected supervisor
         const supervisorEmployeeIndex = supervisorIndices[selectedSupervisorIndex];
-        const shiftName = 'Peak_' + windowStartHour + '_' + windowEndHour; // Display name for peak window
-        const paidHours = Math.ceil((windowEndHour - windowStartHour) / 2); // Simplified: half-hour increments
+        const timeLabels = ['12am', '3am', '6am', '9am', '12pm', '3pm', '6pm', '9pm'];
+        const displayText = 'Peak (' + timeLabels[pointIndex] + ')';
+
         weekGrid[supervisorEmployeeIndex][dayIndex] = createDayAssignment_(
           'SHIFT',
-          shiftName,
-          paidHours,
+          'Peak',
+          3,  // Rough estimate: 3-hour block
           false,
-          windowStartHour + ':00-' + windowEndHour + ':00'
+          displayText
         );
+
         assignedCount++;
+        attemptedIndices.add(selectedSupervisorIndex);
       }
-    });
+
+      if (assignedCount < supervisorsNeeded) {
+        logConsole_(
+          'WARNING: Day ' + dayName + ' at ' + ['12am', '3am', '6am', '9am', '12pm', '3pm', '6pm', '9pm'][pointIndex] +
+          ' (' + doorCount + ' members): needed ' + supervisorsNeeded + ' supervisors, but only ' + assignedCount + ' available'
+        );
+      }
+    }
   });
 }
 
