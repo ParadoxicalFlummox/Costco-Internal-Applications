@@ -260,15 +260,44 @@ function getDeptSettings(deptName) {
     const settings = getDeptSettings_(deptName); // scheduleSettings.js
     console.log('getDeptSettings: received settings — staffingReqs: ' + (settings.staffingReqs ? settings.staffingReqs.length : 0) + ' rows, shifts: ' + (settings.shifts ? settings.shifts.length : 0) + ' rows');
 
-    // Explicitly build clean response object
+    // Build response with explicitly typed arrays
+    const staffingReqsArray = [];
+    if (settings.staffingReqs && Array.isArray(settings.staffingReqs)) {
+      for (let i = 0; i < settings.staffingReqs.length; i++) {
+        staffingReqsArray.push({
+          day: String(settings.staffingReqs[i].day || ''),
+          count: Number(settings.staffingReqs[i].count || 0),
+          mode: String(settings.staffingReqs[i].mode || '')
+        });
+      }
+    }
+
+    const shiftsArray = [];
+    if (settings.shifts && Array.isArray(settings.shifts)) {
+      for (let i = 0; i < settings.shifts.length; i++) {
+        const s = settings.shifts[i];
+        shiftsArray.push({
+          name: String(s.name || ''),
+          ftpt: String(s.ftpt || ''),
+          startTime: String(s.startTime || ''),
+          endTime: String(s.endTime || ''),
+          paidHours: Number(s.paidHours || 0),
+          hasLunch: Boolean(s.hasLunch),
+          flexEnabled: Boolean(s.flexEnabled !== false),
+          flexWindowEarliest: String(s.flexWindowEarliest || ''),
+          flexWindowLatest: String(s.flexWindowLatest || '')
+        });
+      }
+    }
+
     const response = {
       ok: true,
       data: {
-        staffingReqs: settings.staffingReqs || [],
-        shifts: settings.shifts || []
+        staffingReqs: staffingReqsArray,
+        shifts: shiftsArray
       }
     };
-    console.log('getDeptSettings: returning response with ok=true');
+    console.log('getDeptSettings: returning response with ok=true, data has ' + staffingReqsArray.length + ' reqs and ' + shiftsArray.length + ' shifts');
     return response;
   } catch (error) {
     const errorMsg = 'api: getDeptSettings failed — ' + (error.message || error.toString());

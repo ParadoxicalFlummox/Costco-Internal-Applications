@@ -52,8 +52,8 @@
  */
 function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingRequirements, weekStartDate, departmentName, poolMemberIds) {
   // Partition employees into pool and regular based on poolMemberIds
-  const poolMembers = [];
-  const regularEmployees = [];
+  let poolMembers = [];
+  let regularEmployees = [];
 
   if (poolMemberIds && poolMemberIds.size > 0) {
     employeeList.forEach(function(emp) {

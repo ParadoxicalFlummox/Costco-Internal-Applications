@@ -438,13 +438,19 @@
       UI.callServer('getDeptSettings', [deptName], function (data) {
         // Build the modal table body
         var dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-        var currentReqs = data.staffingRequirements || {};
+
+        // Convert staffingReqs array to object keyed by day for easy lookup
+        var currentReqs = {};
+        (data.staffingReqs || []).forEach(function (req) {
+          currentReqs[req.day] = req;
+        });
+
         var html = '';
 
         dayNames.forEach(function (day, idx) {
           var req = currentReqs[day] || {};
           var mode = req.mode || 'Count';
-          var value = req.value || 0;
+          var value = req.count || 0;
 
           html += '<tr>'
             + '<td><strong>' + day.substring(0, 3) + '</strong></td>'
@@ -478,7 +484,7 @@
 
     function _handlePreGenerate() {
       // Collect the edits from the pre-gen modal table
-      var staffingRequirements = {};
+      var staffingReqs = [];
       var dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
       dayNames.forEach(function (day) {
@@ -486,10 +492,11 @@
         var modeSelect = document.querySelector('select[data-day="' + day + '"][data-role="mode"]');
 
         if (valueInput && modeSelect) {
-          staffingRequirements[day] = {
-            value: parseInt(valueInput.value, 10) || 0,
+          staffingReqs.push({
+            day: day,
+            count: parseInt(valueInput.value, 10) || 0,
             mode: modeSelect.value
-          };
+          });
         }
       });
 
@@ -498,7 +505,7 @@
       closeModal('preGenModal');
 
       UI.callServer('saveDeptSettings', [_currentDept, {
-        staffingRequirements: staffingRequirements
+        staffingReqs: staffingReqs
       }],
         function () {
           // Now generate the schedule with the new settings
