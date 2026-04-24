@@ -1,6 +1,6 @@
 /**
  * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION: 0.2.6
+ * VERSION: 0.5.0
  *
  * This file is the only place in the codebase that writes to a Week schedule sheet.
  * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
@@ -36,14 +36,38 @@
  * This function is an orchestrator — it calls all the write and format functions in the
  * correct order and passes their shared inputs. It contains no formatting logic itself.
  *
+ * POOL SECTION (v0.5.0):
+ * If poolMemberIds is provided (from traffic heatmap system), pool members are written
+ * in their own section above regular employees. Pool members are visually distinguished
+ * with a background color and "POOL" label. Pool section is always first (rows after header),
+ * followed by the regular employee section.
+ *
  * @param {Sheet}  scheduleSheet       — The Week_MM_DD_YY sheet to write to.
  * @param {Array}  employeeList        — Employees in seniority order (from scheduleEngine.js).
  * @param {Array}  weekGrid            — The generated schedule grid (from scheduleEngine.js).
  * @param {Object} staffingRequirements — From loadStaffingRequirements().
  * @param {Date}   weekStartDate        — The Monday of the week being written.
  * @param {string} departmentName       — The department name to display in the sheet header.
+ * @param {Set}    poolMemberIds       — (Optional) Set of employee IDs who are pool members (from traffic heatmap).
  */
-function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingRequirements, weekStartDate, departmentName) {
+function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingRequirements, weekStartDate, departmentName, poolMemberIds) {
+  // Partition employees into pool and regular based on poolMemberIds
+  const poolMembers = [];
+  const regularEmployees = [];
+
+  if (poolMemberIds && poolMemberIds.size > 0) {
+    employeeList.forEach(function(emp) {
+      if (poolMemberIds.has(emp.id)) {
+        poolMembers.push(emp);
+      } else {
+        regularEmployees.push(emp);
+      }
+    });
+  } else {
+    // No pool section: all employees are regular
+    regularEmployees = employeeList.slice();
+  }
+
   // Write all content first, then apply formatting.
   // Interleaving content writes and formatting calls would slow down rendering
   // because GAS batches API calls — writing all values first then formatting is faster.
@@ -56,12 +80,18 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
     writeColumnHeaders(scheduleSheet);
   });
 
-  logExecutionTime_('Write Employee Blocks (' + employeeList.length + ' employees)', function() {
-    writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid);
+  logExecutionTime_('Write Pool Section (' + poolMembers.length + ' pool members)', function() {
+    if (poolMembers.length > 0) {
+      writePoolSection_(scheduleSheet, poolMembers, weekGrid, employeeList);
+    }
+  });
+
+  logExecutionTime_('Write Employee Blocks (' + regularEmployees.length + ' regular employees)', function() {
+    writeEmployeeBlocks(scheduleSheet, regularEmployees, weekGrid, poolMembers.length);
   });
 
   logExecutionTime_('Write Staffing Summary', function() {
-    writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements);
+    writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements, poolMembers.length);
   });
 
   // Flush all pending content writes before starting formatting.
@@ -192,6 +222,67 @@ function writeColumnHeaders(scheduleSheet) {
 
 
 /**
+ * Writes pool member blocks to the schedule sheet with "POOL" section label.
+ * Pool members appear first (above regular employees) in the final sheet.
+ *
+ * @param {Sheet} scheduleSheet — The schedule sheet to write to.
+ * @param {Array} poolMembers   — Pool members in seniority order.
+ * @param {Array} weekGrid      — The generated schedule grid (includes all employees).
+ * @param {Array} allEmployees  — Full employee list (for grid indexing).
+ */
+function writePoolSection_(scheduleSheet, poolMembers, weekGrid, allEmployees) {
+  const poolStartRow = WEEK_SHEET.DATA_START_ROW;
+
+  poolMembers.forEach(function(employee, poolIndex) {
+    const baseRow            = poolStartRow + (poolIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
+    const vacationRow        = baseRow + WEEK_SHEET.ROW_OFFSET_VAC;
+    const requestedDayOffRow = baseRow + WEEK_SHEET.ROW_OFFSET_RDO;
+    const shiftRow           = baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT;
+    const roleRow            = baseRow + WEEK_SHEET.ROW_OFFSET_ROLE;
+    const lockRow            = baseRow + WEEK_SHEET.ROW_OFFSET_LOCK;
+
+    // Write row labels with "POOL" prefix
+    scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_LABEL).setValue('POOL-VAC');
+    scheduleSheet.getRange(requestedDayOffRow, WEEK_SHEET.COL_LABEL).setValue('POOL-RDO');
+    scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_LABEL).setValue('POOL-SHIFT');
+    scheduleSheet.getRange(roleRow, WEEK_SHEET.COL_LABEL).setValue('POOL-ROLE');
+    scheduleSheet.getRange(lockRow, WEEK_SHEET.COL_LABEL).setValue('POOL-LOCK');
+
+    // Merge and write employee name across all five rows
+    scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_EMPLOYEE_NAME, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1)
+      .merge()
+      .setValue(employee.name)
+      .setVerticalAlignment('middle');
+
+    // Write VAC/RDO checkboxes (empty on first generation)
+    scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).insertCheckboxes();
+    scheduleSheet.getRange(requestedDayOffRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).insertCheckboxes();
+
+    // Write SHIFT and ROLE rows from grid
+    const gridRowIndex = allEmployees.indexOf(employee);
+    if (gridRowIndex >= 0) {
+      const shiftRowValues = [];
+      const roleRowValues = [];
+      for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
+        const cell = weekGrid[gridRowIndex][dayIndex];
+        shiftRowValues.push([cell.displayText || '']);
+        roleRowValues.push([cell.role && cell.type === 'SHIFT' ? cell.role : '—']);
+      }
+      scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).setValues([shiftRowValues.map(v => v[0])]);
+      scheduleSheet.getRange(roleRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).setValues([roleRowValues.map(v => v[0])]);
+    }
+
+    // Write LOCK checkboxes (hidden)
+    scheduleSheet.getRange(lockRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).insertCheckboxes();
+
+    // Apply pool section background color to the entire block (5 rows)
+    scheduleSheet.getRange(baseRow, 1, WEEK_SHEET.ROWS_PER_EMPLOYEE, WEEK_SHEET.COL_TOTAL_HOURS)
+      .setBackground(COLORS.POOL_SECTION_BG); // config.js
+  });
+}
+
+
+/**
  * Writes all employee data blocks (VAC row, RDO row, SHIFT row, ROLE row, LOCK row) to the schedule sheet.
  *
  * Each employee occupies five consecutive rows:
@@ -212,17 +303,20 @@ function writeColumnHeaders(scheduleSheet) {
  * @param {Sheet} scheduleSheet — The schedule sheet to write to.
  * @param {Array} employeeList  — Employees in seniority order.
  * @param {Array} weekGrid      — The generated schedule grid.
+ * @param {number} poolRowOffset — (Optional) Number of pool member rows before regular employees.
  */
-function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid) {
+function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid, poolRowOffset) {
+  poolRowOffset = poolRowOffset || 0;
   // Determine if this is a first-time write or a re-generation.
-  // Check by looking for content in the first employee's name cell.
+  // Check by looking for content in the first REGULAR employee's name cell (accounting for pool offset).
   const firstEmployeeNameCell = scheduleSheet.getRange(
-    WEEK_SHEET.DATA_START_ROW + WEEK_SHEET.ROW_OFFSET_VAC, WEEK_SHEET.COL_EMPLOYEE_NAME
+    WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + WEEK_SHEET.ROW_OFFSET_VAC,
+    WEEK_SHEET.COL_EMPLOYEE_NAME
   );
   const isFirstTimeGeneration = firstEmployeeNameCell.getValue() === "";
 
   employeeList.forEach(function(employee, employeeIndex) {
-    const baseRow            = WEEK_SHEET.DATA_START_ROW + (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
+    const baseRow            = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
     const vacationRow        = baseRow + WEEK_SHEET.ROW_OFFSET_VAC;
     const requestedDayOffRow = baseRow + WEEK_SHEET.ROW_OFFSET_RDO;
     const shiftRow           = baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT;
@@ -332,13 +426,15 @@ function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid) {
  * the ACTUAL value is a formula result or a static number.
  *
  * @param {Sheet}  scheduleSheet        — The schedule sheet to write to.
- * @param {Array}  employeeList         — Employees in seniority order.
+ * @param {Array}  employeeList         — All employees (includes both pool and regular).
  * @param {Array}  weekGrid             — The generated schedule grid.
  * @param {Object} staffingRequirements — { dayName → { value, mode } } from loadStaffingRequirements().
+ * @param {number} poolRowOffset        — (Optional) Number of pool member rows before regular employees.
  */
-function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements) {
+function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements, poolRowOffset) {
+  poolRowOffset = poolRowOffset || 0;
   const employeeCount     = employeeList.length;
-  const lastEmployeeRow   = WEEK_SHEET.DATA_START_ROW + (employeeCount * WEEK_SHEET.ROWS_PER_EMPLOYEE) - 1;
+  const lastEmployeeRow   = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + (employeeCount * WEEK_SHEET.ROWS_PER_EMPLOYEE) - 1;
   const summaryStartRow   = lastEmployeeRow + 2;
   const requiredRow       = summaryStartRow;
   const actualRow         = summaryStartRow + 1;

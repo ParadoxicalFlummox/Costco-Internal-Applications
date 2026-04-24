@@ -262,7 +262,9 @@
           }
           if (dept) {
             loadDeptSettings(dept);
-            loadSupervisorPeakConfig(dept);
+            // TODO (v0.5.0): Replace supervisor peak config with heatmap config loader
+            // loadSupervisorPeakConfig(dept);
+            // loadTrafficHeatmapConfig(dept);  — will implement in UI phase
             tabsContainer.style.display = '';
             console.log('Showing tabs for dept:', dept);
             // Initialize tab switching after tabs appear
@@ -1139,14 +1141,24 @@
   // ============================================================================
 
   function loadDeptSettings(dept) {
+    console.log('loadDeptSettings: calling getDeptSettings for', dept);
     UI.callServer('getDeptSettings', dept, function (data) {
+      console.log('loadDeptSettings: success callback received data, calling renderDeptSettings');
       renderDeptSettings(data);
+    }, function(error) {
+      console.log('loadDeptSettings: error callback —', error);
     });
   }
 
   function renderDeptSettings(data) {
+    console.log('>>> renderDeptSettings CALLED with data:', data);
+    console.log('>>> data type:', typeof data);
+    console.log('>>> data.staffingReqs:', data ? data.staffingReqs : 'data is null');
+    console.log('>>> data.shifts:', data ? data.shifts : 'data is null');
+
     // Staffing requirements table
     var reqBody = document.getElementById('staffingReqsBody');
+    console.log('>>> reqBody element found:', reqBody ? 'YES' : 'NO');
     reqBody.innerHTML = (data.staffingReqs || []).map(function (req) {
       return '<tr>'
         + '<td>' + esc(req.day) + '</td>'
@@ -1178,6 +1190,9 @@
       + '<td><input type="time" class="form-control form-control-sm shift-end"   value="' + esc(s.endTime || '16:30') + '"></td>'
       + '<td><input type="number" class="form-control form-control-sm shift-hours" value="' + (s.paidHours || 0) + '" step="0.5" style="width:70px;"></td>'
       + '<td><input type="checkbox" class="form-check-input shift-lunch" ' + (s.hasLunch ? 'checked' : '') + '></td>'
+      + '<td><input type="checkbox" class="form-check-input shift-flex-enabled" ' + (s.flexEnabled !== false ? 'checked' : '') + ' title="Enable flex scheduling"></td>'
+      + '<td><input type="time" class="form-control form-control-sm shift-flex-earliest" value="' + esc(s.flexWindowEarliest || '') + '" placeholder="Earliest"></td>'
+      + '<td><input type="time" class="form-control form-control-sm shift-flex-latest" value="' + esc(s.flexWindowLatest || '') + '" placeholder="Latest"></td>'
       + '<td><button type="button" class="btn btn-outline-danger btn-sm btn-delete-shift">&#x2715;</button></td>'
       + '</tr>';
   }
@@ -1210,7 +1225,16 @@
       var endTime = tr.querySelector('.shift-end').value;
       var paidHours = parseFloat(tr.querySelector('.shift-hours').value) || 0;
       var hasLunch = tr.querySelector('.shift-lunch').checked;
-      if (name) shifts.push({ name, ftpt, startTime, endTime, paidHours, hasLunch });
+      var flexEnabledEl = tr.querySelector('.shift-flex-enabled');
+      var flexEnabled = flexEnabledEl ? flexEnabledEl.checked : true;
+      var flexWindowEarliest = tr.querySelector('.shift-flex-earliest').value || '';
+      var flexWindowLatest = tr.querySelector('.shift-flex-latest').value || '';
+      if (name) {
+        shifts.push({
+          name, ftpt, startTime, endTime, paidHours, hasLunch,
+          flexEnabled, flexWindowEarliest, flexWindowLatest
+        });
+      }
     });
     return shifts;
   }

@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.4.1
+ * VERSION: 0.5.0
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -11,14 +11,18 @@
  *   - PERF: Added profiling wrappers to each phase for performance monitoring
  *   - SPLIT_SHIFT: Integrated multi-department scheduling; Phase 0 loads cross-dept hours,
  *     Phase 2 enforces reduced hour budgets based on hours already scheduled elsewhere.
+ *   - TRAFFIC_HEATMAP: Integrated traffic heatmap system (v0.5.0)
+ *     - Phases 1-4 now accept stagger map and use staggered start times
+ *     - Pool members partitioned and scheduled with traffic-aware staffing
+ *     - Phase 5 (old supervisor scheduling) removed; replaced by pool scheduling
  *
  * THE FIVE PHASES:
  *   Phase 0 — Bootstrap: Load roster for dept, initialize grid, load cross-dept hours, stamp vacation locks.
- *   Phase 1 — Preference Assignment: Honor day-off prefs and shift prefs, seniority order (regular employees only).
- *   Phase 2 — Minimum Hour Enforcement: Add shifts until weekly minimum is met (regular employees only).
- *   Phase 3 — Gap Resolution: Fill uncovered time slots by reassigning or adding employees (regular employees only).
+ *   Phase 1 — Preference Assignment: Honor day-off prefs and shift prefs, seniority order (regular employees only, with stagger).
+ *   Phase 2 — Minimum Hour Enforcement: Add shifts until weekly minimum is met (regular employees only, with stagger).
+ *   Phase 3 — Gap Resolution: Fill uncovered time slots by reassigning or adding employees (regular employees only, with stagger).
  *   Phase 4 — Role Assignment: Stamp primaryRole onto SHIFT cells (regular employees only).
- *   Phase 5 — Supervisor Assignment: Assign supervisors to peak traffic windows based on supervisor peak config.
+ *   Phase 5 — Pool Scheduling: Assign pool members to shifts based on traffic level and stagger.
  */
 
 
@@ -37,38 +41,81 @@ function generateWeeklySchedule_(deptName, weekStartDate) {
   const shiftTimingMap      = buildShiftTimingMap(deptName);      // settingsManager.js
   const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
 
+  // --- TRAFFIC HEATMAP INTEGRATION (v0.5.0) ---
+  const heatmapConfig = loadTrafficHeatmapConfig_(deptName); // settingsManager.js
+  let dayTrafficLevels = {}; // Default: all Moderate if heatmap disabled
+  let staggerMap = {}; // Default: empty (phases use anchor times)
+  let poolMembers = [];
+  let regularEmployees = [];
+
+  if (heatmapConfig && heatmapConfig.enabled) {
+    // Classify traffic for each day
+    dayTrafficLevels = classifyDayTrafficLevels_(heatmapConfig, weekStartDate); // trafficHeatmapEngine.js
+
+    // Pre-compute staggered start times for each shift on each day
+    staggerMap = buildStaggeredStartMap_(shiftTimingMap, dayTrafficLevels, weekStartDate); // trafficHeatmapEngine.js
+
+    console.log('Traffic heatmap enabled: ' + Object.keys(dayTrafficLevels).map(d => d + '=' + dayTrafficLevels[d]).join(', '));
+    console.log('Stagger map computed for ' + Object.keys(staggerMap).length + ' days');
+  } else {
+    // Heatmap disabled: default to all Moderate, no stagger
+    DAY_NAMES_IN_ORDER.forEach(function(dayName) {
+      dayTrafficLevels[dayName] = 'Moderate';
+    });
+    console.log('Traffic heatmap disabled; using static staffing');
+  }
+
   const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate);
   if (employeeList.length === 0) {
     throw new Error('No active employees found for department "' + deptName + '".');
   }
 
+  // Partition employees into pool and regular if heatmap enabled
+  if (heatmapConfig && heatmapConfig.enabled) {
+    const partitioned = partitionPoolMembers_(employeeList, heatmapConfig); // trafficHeatmapEngine.js
+    poolMembers = partitioned.poolMembers;
+    regularEmployees = partitioned.regularEmployees;
+    console.log('Pool partitioned: ' + poolMembers.length + ' pool, ' + regularEmployees.length + ' regular employees');
+  } else {
+    regularEmployees = employeeList;
+  }
+
   const weekGrid = initializeWeekGrid_(employeeList, weekStartDate);
 
   // PERF: Wrap each phase with execution time logging
-  logExecutionTime_('Phase 1: Preference Assignment (' + employeeList.length + ' employees)', function() {
-    runPhaseOnePreferenceAssignment_(weekGrid, employeeList, shiftTimingMap, staffingRequirements, weekStartDate);
+  logExecutionTime_('Phase 1: Preference Assignment (' + regularEmployees.length + ' regular employees)', function() {
+    runPhaseOnePreferenceAssignment_(weekGrid, regularEmployees, shiftTimingMap, staffingRequirements, weekStartDate, staggerMap, dayTrafficLevels);
   });
 
   logExecutionTime_('Phase 2: Minimum Hour Enforcement', function() {
-    runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap);
+    runPhaseTwoHourEnforcement_(weekGrid, regularEmployees, shiftTimingMap, staggerMap, dayTrafficLevels);
   });
 
   logExecutionTime_('Phase 3: Gap Resolution', function() {
-    runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, staffingRequirements);
+    runPhaseThreeGapResolution_(weekGrid, regularEmployees, shiftTimingMap, staffingRequirements, staggerMap, dayTrafficLevels);
   });
 
   logExecutionTime_('Phase 4: Role Assignment', function() {
-    runPhaseFourRoleAssignment_(weekGrid, employeeList, deptName);
+    runPhaseFourRoleAssignment_(weekGrid, regularEmployees, deptName);
   });
 
-  logExecutionTime_('Phase 5: Supervisor Assignment', function() {
-    runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, deptName, weekStartDate);
+  logExecutionTime_('Phase 5: Pool Scheduling', function() {
+    if (poolMembers.length > 0) {
+      runPhaseFivePoolScheduling_(weekGrid, employeeList, poolMembers, heatmapConfig, dayTrafficLevels, staggerMap, shiftTimingMap, weekStartDate);
+    }
+  });
+
+  // Build a set of pool member IDs for the formatter to visually distinguish pool section
+  const poolMemberIdSet = new Set();
+  poolMembers.forEach(function(emp) {
+    if (emp.id) poolMemberIdSet.add(emp.id);
   });
 
   return {
     weekSheetName: generateWeekSheetName_(weekStartDate, deptName),
     weekGrid:      weekGrid,
     employeeList:  employeeList,
+    poolMemberIds: poolMemberIdSet,
   };
 }
 
@@ -312,9 +359,9 @@ function getCrossDeptHoursForWeek_(employee, weekStartDate, excludeDept) {
 // Phase 1: Preference Assignment
 // ---------------------------------------------------------------------------
 
-function runPhaseOnePreferenceAssignment_(weekGrid, employeeList, shiftTimingMap, staffingRequirements, weekStartDate) {
+function runPhaseOnePreferenceAssignment_(weekGrid, employeeList, shiftTimingMap, staffingRequirements, weekStartDate, staggerMap, dayTrafficLevels) {
   grantRequestedDaysOff_(weekGrid, employeeList, staffingRequirements);
-  assignPreferredShifts_(weekGrid, employeeList, shiftTimingMap);
+  assignPreferredShifts_(weekGrid, employeeList, shiftTimingMap, staggerMap, dayTrafficLevels);
   enforceMinimumDaysOff_(weekGrid, employeeList);
 }
 
@@ -338,16 +385,41 @@ function grantRequestedDaysOff_(weekGrid, employeeList, staffingRequirements) {
   });
 }
 
-function assignPreferredShifts_(weekGrid, employeeList, shiftTimingMap) {
+function assignPreferredShifts_(weekGrid, employeeList, shiftTimingMap, staggerMap, dayTrafficLevels) {
+  // Track stagger position per shift type per day (for popping next available time)
+  const staggerPositions = {};
+
   employeeList.forEach(function(employee, ei) {
-    DAY_NAMES_IN_ORDER.forEach(function(_dayName, dayIndex) {
+    DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
       const cell = weekGrid[ei][dayIndex];
       if (cell.type !== 'OFF') return;
       // Skip if this cell is locked (manager override via updateCellOverride).
       if (cell.locked) return;
       const shiftDef = resolveShiftForEmployee_(employee, shiftTimingMap);
       if (!shiftDef) return;
-      weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, shiftDef.displayText);
+
+      // Compute actual start time from stagger map if available
+      let displayText = shiftDef.displayText;
+      if (staggerMap && staggerMap[dayName]) {
+        const shiftKey = shiftDef.name + '|' + shiftDef.status;
+        const startTimes = staggerMap[dayName][shiftKey];
+        if (startTimes && startTimes.length > 0) {
+          // Initialize position tracker for this shift on this day
+          const posKey = dayName + '|' + shiftKey;
+          if (!staggerPositions[posKey]) {
+            staggerPositions[posKey] = 0;
+          }
+          // Pop next staggered start time (cycling if necessary)
+          const posIdx = staggerPositions[posKey] % startTimes.length;
+          const staggerStartTime = startTimes[posIdx];
+          staggerPositions[posKey]++;
+
+          // Rebuild display text with the staggered start time
+          displayText = buildShiftDisplayText_(staggerStartTime, shiftDef.paidHours);
+        }
+      }
+
+      weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, displayText);
     });
   });
 }
@@ -380,7 +452,10 @@ function enforceMinimumDaysOff_(weekGrid, employeeList) {
 // Phase 2: Minimum Hour Enforcement
 // ---------------------------------------------------------------------------
 
-function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap) {
+function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap, staggerMap, dayTrafficLevels) {
+  // Track stagger position per shift type per day (for popping next available time)
+  const staggerPositions = {};
+
   employeeList.forEach(function(employee, ei) {
     const weeklyMin = employee.status === 'FT' ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN; // config.js
     const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
@@ -390,7 +465,7 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap) {
     if (currentHours >= weeklyMin) return;
     const shiftDef = resolveShiftForEmployee_(employee, shiftTimingMap);
     if (!shiftDef) return;
-    DAY_NAMES_IN_ORDER.forEach(function(_dayName, dayIndex) {
+    DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
       if (currentHours >= weeklyMin) return;
       const cell = weekGrid[ei][dayIndex];
       if (cell.type !== 'OFF') return;
@@ -398,7 +473,29 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap) {
       if (cell.locked) return;
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) return;
       if (currentHours + shiftDef.paidHours > effectiveMax) return;
-      weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, shiftDef.displayText);
+
+      // Compute actual start time from stagger map if available
+      let displayText = shiftDef.displayText;
+      if (staggerMap && staggerMap[dayName]) {
+        const shiftKey = shiftDef.name + '|' + shiftDef.status;
+        const startTimes = staggerMap[dayName][shiftKey];
+        if (startTimes && startTimes.length > 0) {
+          // Initialize position tracker for this shift on this day
+          const posKey = dayName + '|' + shiftKey;
+          if (!staggerPositions[posKey]) {
+            staggerPositions[posKey] = 0;
+          }
+          // Pop next staggered start time (cycling if necessary)
+          const posIdx = staggerPositions[posKey] % startTimes.length;
+          const staggerStartTime = startTimes[posIdx];
+          staggerPositions[posKey]++;
+
+          // Rebuild display text with the staggered start time
+          displayText = buildShiftDisplayText_(staggerStartTime, shiftDef.paidHours);
+        }
+      }
+
+      weekGrid[ei][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, displayText);
       currentHours += shiftDef.paidHours;
     });
   });
@@ -409,7 +506,11 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap) {
 // Phase 3: Gap Resolution
 // ---------------------------------------------------------------------------
 
-function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, staffingRequirements) {
+function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, staffingRequirements, staggerMap, dayTrafficLevels) {
+  // TODO: Phase 3 currently uses default shift times. For Phase 2 enhancement,
+  // integrate staggerMap into cascade assignments to use staggered start times.
+  // This requires tracking stagger positions through multiple cascades.
+
   DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
     const coverageWindow = COVERAGE_WINDOW[dayName] || { startMinute: 240, endMinute: 1410 }; // config.js
     const windowStartSlot = Math.max(0, Math.floor((coverageWindow.startMinute - COVERAGE.COVERAGE_START_MINUTE) / COVERAGE.SLOT_DURATION_MINUTES));
@@ -514,176 +615,195 @@ function runPhaseFourRoleAssignment_(weekGrid, employeeList, departmentName) {
 
 
 // ---------------------------------------------------------------------------
-// Phase 5: Supervisor Peak Window Assignment
+// Helper: Build Shift Display Text with Staggered Start Time
 // ---------------------------------------------------------------------------
 
 /**
- * Assigns supervisors to peak traffic windows based on the configured peak profile.
+ * Formats two minute-since-midnight values as a human-readable time range string.
+ * e.g. 480, 990 → "8:00 AM - 4:30 PM"
  *
- * Supervisors (role = SUPERVISOR_ROLE) are excluded from Phases 1-4 and only assigned
- * during Phase 5 based on hourly traffic intensity. Peak windows are computed from the
- * peakProfile (24 hourly values) using peakThreshold. Supervisors are selected by
- * seniority for each peak window that requires coverage.
- *
- * @param {Array}  weekGrid        — Grid of day assignments (one row per employee)
- * @param {Array}  employeeList    — List of all employees (supervisors + regular)
- * @param {string} departmentName  — Department name (for loading peak config)
- * @param {Date}   weekStartDate   — The Monday of the week
+ * @param {number} startMinutes
+ * @param {number} endMinutes
+ * @returns {string}
  */
-function runPhaseFiveSupervisorAssignment_(weekGrid, employeeList, departmentName, weekStartDate) {
-  // Load supervisor peak config (from COMET Config sheet, or default from config.js)
-  let supervisorConfig = readSupervisorPeakConfig_(departmentName);
-  if (!supervisorConfig) {
-    // No config found; use default
-    supervisorConfig = {
-      department: departmentName,
-      peakProfile: SUPERVISOR_RULES.defaultPeakProfile,
-      enabled: SUPERVISOR_RULES.enabled || false,
-      membersPerSupervisor: SUPERVISOR_RULES.membersPerSupervisor || 75,
-      maxDoorCount: SUPERVISOR_RULES.maxDoorCount || 500,
-    };
-  }
-
-  // Check if supervisor scheduling is enabled for this department
-  if (!supervisorConfig.enabled) {
-    return;
-  }
-
-  // Extract list of supervisors from employeeList
-  const supervisors = [];
-  const supervisorIndices = [];
-  employeeList.forEach(function(employee, index) {
-    if (employee.primaryRole === SUPERVISOR_RULES.supervisorRole) {
-      supervisors.push(employee);
-      supervisorIndices.push(index);
-    }
-  });
-
-  if (supervisors.length === 0) {
-    return; // No supervisors to assign
-  }
-
-  const membersPerSupervisor = supervisorConfig.membersPerSupervisor || 75;
-
-  // For each day of the week, assign supervisors based on door count
-  DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
-    const peakProfile = supervisorConfig.peakProfile[dayName] || [];
-
-    // peakProfile is an 8-element array (one per 3 hours: 0, 3, 6, 9, 12, 15, 18, 21)
-    for (var pointIndex = 0; pointIndex < peakProfile.length; pointIndex++) {
-      var doorCount = peakProfile[pointIndex] || 0;
-
-      // Calculate how many supervisors are needed at this time slot
-      var supervisorsNeeded = Math.ceil(doorCount / membersPerSupervisor);
-
-      if (supervisorsNeeded === 0) {
-        continue; // No supervisors needed for this time slot
-      }
-
-      // Try to assign supervisorsNeeded supervisors to this time slot
-      var assignedCount = 0;
-      var attemptedIndices = new Set();
-
-      while (assignedCount < supervisorsNeeded && attemptedIndices.size < supervisors.length) {
-        // Find highest-seniority supervisor available (not VAC/RDO, not already assigned)
-        let selectedSupervisorIndex = -1;
-        let highestSeniority = -1;
-
-        supervisors.forEach(function(supervisor, supervisorIndex) {
-          if (attemptedIndices.has(supervisorIndex)) {
-            return; // Already tried this supervisor
-          }
-
-          const supervisorEmployeeIndex = supervisorIndices[supervisorIndex];
-          const cell = weekGrid[supervisorEmployeeIndex][dayIndex];
-
-          // Check if supervisor is VAC or RDO
-          if (cell.type === 'VAC' || cell.type === 'RDO') {
-            return; // Skip this supervisor
-          }
-
-          // Check if supervisor is available (currently OFF)
-          if (cell.type !== 'OFF') {
-            return; // Skip (already assigned to something else)
-          }
-
-          // Select supervisor with highest seniority
-          if (supervisor.seniorityRank > highestSeniority) {
-            highestSeniority = supervisor.seniorityRank;
-            selectedSupervisorIndex = supervisorIndex;
-          }
-        });
-
-        if (selectedSupervisorIndex === -1) {
-          // No more supervisors available for this time slot
-          break;
-        }
-
-        // Assign the selected supervisor
-        const supervisorEmployeeIndex = supervisorIndices[selectedSupervisorIndex];
-        const timeLabels = ['12am', '3am', '6am', '9am', '12pm', '3pm', '6pm', '9pm'];
-        const displayText = 'Peak (' + timeLabels[pointIndex] + ')';
-
-        weekGrid[supervisorEmployeeIndex][dayIndex] = createDayAssignment_(
-          'SHIFT',
-          'Peak',
-          3,  // Rough estimate: 3-hour block
-          false,
-          displayText
-        );
-
-        assignedCount++;
-        attemptedIndices.add(selectedSupervisorIndex);
-      }
-
-      if (assignedCount < supervisorsNeeded) {
-        logConsole_(
-          'WARNING: Day ' + dayName + ' at ' + ['12am', '3am', '6am', '9am', '12pm', '3pm', '6pm', '9pm'][pointIndex] +
-          ' (' + doorCount + ' members): needed ' + supervisorsNeeded + ' supervisors, but only ' + assignedCount + ' available'
-        );
-      }
-    }
-  });
+function formatMinutesAsTimeRange(startMinutes, endMinutes) {
+  return formatMinutesAsTimeString_(startMinutes) + ' - ' + formatMinutesAsTimeString_(endMinutes);
 }
 
 /**
- * Computes peak windows from a 24-hour traffic profile.
+ * Converts minutes-since-midnight to a 12-hour "h:mm AM/PM" string.
  *
- * Scans through hourly values and identifies contiguous blocks where traffic >= peakThreshold.
- * Returns array of [startHour, endHour) pairs.
- *
- * @param {Array}  peakProfile — 24-element array of hourly traffic intensities (0-1)
- * @param {number} peakThreshold — Traffic level above which a window is "peak" (default 0.7)
- * @returns {Array<[number, number]>} Array of [startHour, endHour] pairs
+ * @param {number} totalMinutes
+ * @returns {string}
  */
-function computePeakWindows_(peakProfile, peakThreshold) {
-  if (!peakProfile || peakProfile.length !== 24) {
-    return [];
+function formatMinutesAsTimeString_(totalMinutes) {
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes    = totalMinutes % 60;
+  const period     = totalHours >= 12 ? 'PM' : 'AM';
+  const twelve     = totalHours % 12 === 0 ? 12 : totalHours % 12;
+  return twelve + ':' + String(minutes).padStart(2, '0') + ' ' + period;
+}
+
+/**
+ * Builds a shift display text "HH:MM AM/PM - HH:MM AM/PM" from a start time (string)
+ * and paid hours.
+ *
+ * @param {string} startTimeString — e.g. "07:30" (24-hour format)
+ * @param {number} paidHours — e.g. 8
+ * @returns {string} e.g. "7:30 AM - 3:30 PM"
+ */
+function buildShiftDisplayText_(startTimeString, paidHours) {
+  const startMinutes = timeStringToMinutes_(startTimeString);
+  const endMinutes = startMinutes + (paidHours * 60);
+  return formatMinutesAsTimeRange(startMinutes, endMinutes);
+}
+
+/**
+ * Converts "HH:MM" string to minutes since midnight.
+ *
+ * @param {string} timeString — e.g. "08:00"
+ * @returns {number} e.g. 480
+ */
+function timeStringToMinutes_(timeString) {
+  if (!timeString) return 0;
+  const parts = String(timeString).split(':');
+  if (parts.length < 2) return 0;
+  return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 5: Pool Member Scheduling (replacing old Supervisor Peak Window Assignment)
+// ---------------------------------------------------------------------------
+
+/**
+ * Schedules pool members (supervisors, flex workers, etc.) based on traffic level
+ * and staggered start times.
+ *
+ * Pool members were partitioned in generateWeeklySchedule_() and are now assigned
+ * to shifts with staggered start times matching the traffic level for each day.
+ *
+ * Algorithm:
+ *   1. Build a map from pool member IDs to their indices in weekGrid (via employeeList)
+ *   2. For each day:
+ *      a. Determine traffic level and select pool members for that day (by seniority)
+ *      b. For each selected pool member:
+ *         i. Skip if already VAC/RDO (do not override manager edits)
+ *         ii. If OFF, attempt to assign a shift
+ *         iii. Select best shift from qualifiedShifts based on coverage need
+ *         iv. Pop staggered start time from staggerMap
+ *         v. Update weekGrid with staggered shift assignment
+ *
+ * @param {Array}  weekGrid           — Grid of day assignments (one row per employee)
+ * @param {Array}  employeeList       — Full employee list (same order as weekGrid rows)
+ * @param {Array}  poolMembers        — Pool members subset
+ * @param {Object} heatmapConfig      — { enabled, trafficCurves, pool, ... }
+ * @param {Object} dayTrafficLevels   — { Monday: "Low", ... }
+ * @param {Object} staggerMap         — { dayName: { shiftKey: [startTimes...], ... }, ... }
+ * @param {Object} shiftTimingMap     — Shift definitions
+ * @param {Date}   weekStartDate      — The Monday of the week (unused)
+ */
+function runPhaseFivePoolScheduling_(weekGrid, employeeList, poolMembers, heatmapConfig, dayTrafficLevels, staggerMap, shiftTimingMap, weekStartDate) {
+  if (!poolMembers || poolMembers.length === 0) {
+    return;
   }
 
-  const windows = [];
-  let currentWindowStart = -1;
-
-  for (let hour = 0; hour < 24; hour++) {
-    const intensity = peakProfile[hour];
-    const isPeak = intensity >= (peakThreshold || 0.7);
-
-    if (isPeak && currentWindowStart === -1) {
-      // Start of a new peak window
-      currentWindowStart = hour;
-    } else if (!isPeak && currentWindowStart !== -1) {
-      // End of current peak window
-      windows.push([currentWindowStart, hour]);
-      currentWindowStart = -1;
+  // Build a map from pool member ID to their index in employeeList/weekGrid
+  const poolMemberIndexMap = {};
+  poolMembers.forEach(function(poolMember) {
+    const poolId = poolMember.id || '';
+    // Find this pool member's index in employeeList
+    for (let ei = 0; ei < employeeList.length; ei++) {
+      if ((employeeList[ei].id || '') === poolId) {
+        poolMemberIndexMap[poolId] = ei;
+        break;
+      }
     }
-  }
+  });
 
-  // Handle window that extends to end of day
-  if (currentWindowStart !== -1) {
-    windows.push([currentWindowStart, 24]);
-  }
+  // Track stagger position per shift/day to cycle through available start times
+  const staggerPositions = {};
 
-  return windows;
+  // Process each day
+  DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+    const trafficLevel = dayTrafficLevels[dayName] || 'Moderate';
+
+    // Select which pool members should work on this day based on traffic level and seniority
+    const selectedForDay = selectPoolMembers_(poolMembers, trafficLevel, heatmapConfig); // trafficHeatmapEngine.js
+
+    // Assign each selected pool member to a shift for this day
+    selectedForDay.forEach(function(poolMember) {
+      const poolId = poolMember.id || '';
+      const poolIndex = poolMemberIndexMap[poolId];
+
+      // Skip if pool member's index not found (should not happen if partitioning is correct)
+      if (poolIndex === undefined || poolIndex < 0) {
+        return;
+      }
+
+      const cell = weekGrid[poolIndex][dayIndex];
+
+      // Respect manager edits: do not override VAC or RDO
+      if (cell.type === 'VAC' || cell.type === 'RDO') {
+        return;
+      }
+
+      // Skip if already assigned to a shift (prefer existing assignment)
+      if (cell.type === 'SHIFT') {
+        return;
+      }
+
+      // If OFF, consider assigning a shift
+      if (cell.type !== 'OFF') {
+        // Some other status (e.g., sick, unpaid leave) — do not override
+        return;
+      }
+
+      // Check hour constraints before assigning
+      const weeklyHours = getWeeklyHours_(weekGrid, poolIndex);
+      const weeklyMax = poolMember.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+      const effectiveMax = weeklyMax - (poolMember.crossDeptHoursAlreadyScheduled || 0);
+
+      // Select best shift from pool member's qualifiedShifts based on coverage
+      const dayCoverage = buildDayCoverage_(weekGrid, employeeList, dayIndex, shiftTimingMap, poolIndex);
+      const bestShift = selectBestCoverageShift_(poolMember.qualifiedShifts || [], poolMember.status, dayCoverage, shiftTimingMap);
+
+      if (!bestShift) {
+        // No eligible shift found; skip this pool member for this day
+        return;
+      }
+
+      // Skip if assigning this shift would exceed hour limits
+      if (weeklyHours + bestShift.paidHours > effectiveMax) {
+        return;
+      }
+
+      // Get staggered start time from staggerMap
+      const shiftKey = bestShift.name + '|' + poolMember.status;
+      const staggerKey = dayName + '|' + shiftKey;
+      const startTimes = staggerMap[dayName] && staggerMap[dayName][shiftKey] ? staggerMap[dayName][shiftKey] : [];
+
+      let displayText = bestShift.displayText;
+      if (startTimes && startTimes.length > 0) {
+        // Cycle through available stagger positions for this shift/day
+        if (!staggerPositions[staggerKey]) {
+          staggerPositions[staggerKey] = 0;
+        }
+        const posIdx = staggerPositions[staggerKey] % startTimes.length;
+        const staggerStartTime = startTimes[posIdx];
+        staggerPositions[staggerKey]++;
+
+        // Rebuild display text with staggered start time
+        displayText = buildShiftDisplayText_(staggerStartTime, bestShift.paidHours);
+      }
+
+      // Assign pool member to shift
+      weekGrid[poolIndex][dayIndex] = createDayAssignment_('SHIFT', bestShift.name, bestShift.paidHours, false, displayText);
+    });
+  });
+
+  // Log completion
+  console.log('Phase 5: Pool Scheduling - assigned ' + Object.keys(poolMemberIndexMap).length + ' pool members with traffic-aware staggering');
 }
 
 

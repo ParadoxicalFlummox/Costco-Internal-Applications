@@ -151,9 +151,17 @@ function writeDefaultDeptSettings_(sheet, deptName) {
  * @returns {{ staffingReqs: Array, shifts: Array }}
  */
 function readDeptSettingsFromSheet_(sheet) {
+  console.log('readDeptSettingsFromSheet_: reading staffing requirements...');
+  const staffingReqs = readStaffingRequirements_(sheet);
+  console.log('readDeptSettingsFromSheet_: staffingReqs = ' + staffingReqs.length + ' rows');
+
+  console.log('readDeptSettingsFromSheet_: reading shift definitions...');
+  const shifts = readShiftDefinitions_(sheet);
+  console.log('readDeptSettingsFromSheet_: shifts = ' + shifts.length + ' rows');
+
   return {
-    staffingReqs: readStaffingRequirements_(sheet),
-    shifts:       readShiftDefinitions_(sheet),
+    staffingReqs: staffingReqs,
+    shifts:       shifts,
   };
 }
 
@@ -182,15 +190,22 @@ function readStaffingRequirements_(sheet) {
  * @returns {Array<{ name, ftpt, startTime, endTime, paidHours, hasLunch, flexEnabled, flexWindowEarliest, flexWindowLatest }>}
  */
 function readShiftDefinitions_(sheet) {
-  // Note: We need to read M50 to capture all flex columns. Update the range.
-  const rows = sheet.getRange('E2:M50').getValues();
-  const timeZone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  try {
+    console.log('readShiftDefinitions_: attempting to read E2:M50...');
+    // Read shift definitions including flex window columns (E2:M50).
+    // If flex columns (K-M) don't exist yet, they'll just be empty cells.
+    const rows = sheet.getRange('E2:M50').getValues();
+    console.log('readShiftDefinitions_: got ' + rows.length + ' rows from range');
 
-  return rows
-    .filter(row => row[SHIFT_TABLE_COLUMN.NAME] && row[SHIFT_TABLE_COLUMN.STATUS])
-    .map(row => {
+    const timeZone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+
+    const filtered = rows.filter(row => row[SHIFT_TABLE_COLUMN.NAME] && row[SHIFT_TABLE_COLUMN.STATUS]);
+    console.log('readShiftDefinitions_: ' + filtered.length + ' rows have name + ftpt');
+
+    const mapped = filtered.map(row => {
       const startRaw = row[SHIFT_TABLE_COLUMN.START_TIME];
       const endRaw   = row[SHIFT_TABLE_COLUMN.END_TIME];
+      const flexEnabledRaw = row[SHIFT_TABLE_FLEX_COLUMNS.FLEX_ENABLED];
       const flexEarliestRaw = row[SHIFT_TABLE_FLEX_COLUMNS.FLEX_WINDOW_EARLIEST];
       const flexLatestRaw = row[SHIFT_TABLE_FLEX_COLUMNS.FLEX_WINDOW_LATEST];
 
@@ -201,11 +216,19 @@ function readShiftDefinitions_(sheet) {
         endTime:            formatGasTimeToString_(endRaw,   timeZone),
         paidHours:          Number(row[SHIFT_TABLE_COLUMN.PAID_HOURS] || 0),
         hasLunch:           row[SHIFT_TABLE_COLUMN.HAS_LUNCH] === true,
-        flexEnabled:        row[SHIFT_TABLE_FLEX_COLUMNS.FLEX_ENABLED] !== false,  // Default true if not explicitly false
+        flexEnabled:        flexEnabledRaw !== false,  // Default true if not explicitly false (handles undefined)
         flexWindowEarliest: formatGasTimeToString_(flexEarliestRaw, timeZone) || '',
         flexWindowLatest:   formatGasTimeToString_(flexLatestRaw, timeZone) || '',
       };
     });
+
+    console.log('readShiftDefinitions_: mapped to ' + mapped.length + ' shift objects');
+    return mapped;
+  } catch (error) {
+    console.log('ERROR in readShiftDefinitions_: ' + error.toString());
+    if (error.stack) console.log('Stack: ' + error.stack);
+    return [];
+  }
 }
 
 

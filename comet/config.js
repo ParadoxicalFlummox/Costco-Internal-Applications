@@ -442,6 +442,7 @@ const COLORS = {
   SUMMARY_UNDER: '#F4C7C3',  // Light red — STATUS row when coverage is short
   ROW_LABEL_BG:  '#F5F5F5',  // Light gray — VAC/RDO/SHIFT label column background
   ROLE_ROW_BG:   '#EDE7F6',  // Lavender — ROLE row background (non-working days and label)
+  POOL_SECTION_BG: '#F3E5F5',  // Light purple — pool member section background (traffic heatmap v0.5.0)
 };
 
 /**

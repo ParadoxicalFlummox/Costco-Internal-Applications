@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.4.0
+ * VERSION: 0.5.0
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -140,7 +140,7 @@ function generateSchedule(deptName, mondayDate) {
     }
 
     const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
-    writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName); // formatter.js
+    writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName, result.poolMemberIds); // formatter.js
 
     // Sort workbook tabs and clean up stale Week sheets.
     logExecutionTime_('Cleanup and sort sheets', function() {
@@ -256,11 +256,25 @@ function getCrossDeptHoursForWeek(employeeId, mondayDate) {
 function getDeptSettings(deptName) {
   try {
     if (!deptName) throw new Error('deptName is required.');
+    console.log('getDeptSettings: calling getDeptSettings_(' + deptName + ')');
     const settings = getDeptSettings_(deptName); // scheduleSettings.js
-    return { ok: true, data: settings };
+    console.log('getDeptSettings: received settings — staffingReqs: ' + (settings.staffingReqs ? settings.staffingReqs.length : 0) + ' rows, shifts: ' + (settings.shifts ? settings.shifts.length : 0) + ' rows');
+
+    // Explicitly build clean response object
+    const response = {
+      ok: true,
+      data: {
+        staffingReqs: settings.staffingReqs || [],
+        shifts: settings.shifts || []
+      }
+    };
+    console.log('getDeptSettings: returning response with ok=true');
+    return response;
   } catch (error) {
-    console.error('api: getDeptSettings failed —', error);
-    return { ok: false, error: error.message };
+    const errorMsg = 'api: getDeptSettings failed — ' + (error.message || error.toString());
+    console.log(errorMsg);
+    if (error.stack) console.log('Stack: ' + error.stack);
+    return { ok: false, error: errorMsg };
   }
 }
 
@@ -289,44 +303,6 @@ function saveDeptSettings(deptName, data) {
  * @param {string} deptName — Department name
  * @returns {{ ok: boolean, data?: object, error?: string }}
  */
-function getSupervisorPeakConfig(deptName) {
-  try {
-    if (!deptName) throw new Error('deptName is required.');
-    let config = readSupervisorPeakConfig_(deptName); // settingsManager.js
-    if (!config) {
-      // Return default config from config.js
-      config = {
-        department: deptName,
-        peakProfile: SUPERVISOR_RULES.defaultPeakProfile,
-        minCountPerPeak: SUPERVISOR_RULES.minCountPerPeak,
-        minCountPerValley: SUPERVISOR_RULES.minCountPerValley,
-        peakThreshold: SUPERVISOR_RULES.peakThreshold,
-      };
-    }
-    return { ok: true, data: config };
-  } catch (error) {
-    console.error('api: getSupervisorPeakConfig failed —', error);
-    return { ok: false, error: error.message };
-  }
-}
-
-/**
- * Saves supervisor peak traffic configuration for a department.
- *
- * @param {string} deptName — Department name
- * @param {Object} config — { peakProfile, minCountPerPeak, minCountPerValley, peakThreshold }
- * @returns {{ ok: boolean, data?: { saved: boolean }, error?: string }}
- */
-function saveSupervisorPeakConfig(deptName, config) {
-  try {
-    if (!deptName || !config) throw new Error('deptName and config are required.');
-    saveSupervisorPeakConfig_(deptName, config); // settingsManager.js
-    return { ok: true, data: { saved: true } };
-  } catch (error) {
-    console.error('api: saveSupervisorPeakConfig failed —', error);
-    return { ok: false, error: error.message };
-  }
-}
 
 /**
  * Overrides a single cell in an existing Week sheet (VAC, RDO, or SHIFT),
