@@ -79,7 +79,7 @@
           </li>
           <li class="nav-item" role="presentation">
             <button class="nav-link" id="tab-supervisor-btn" data-bs-toggle="tab" data-bs-target="#tab-supervisor" type="button" role="tab">
-              Supervisor Scheduling
+              Traffic Heatmap
             </button>
           </li>
         </ul>
@@ -127,10 +127,14 @@
                 <tr>
                   <th>Name</th>
                   <th>FT/PT</th>
-                  <th>Start</th>
-                  <th>End</th>
+                  <th>Wkdy Start</th>
+                  <th>Sat Start</th>
+                  <th>Sun Start</th>
                   <th>Paid Hrs</th>
                   <th>Lunch</th>
+                  <th>Flex</th>
+                  <th>Earliest</th>
+                  <th>Latest</th>
                   <th></th>
                 </tr>
               </thead>
@@ -141,33 +145,69 @@
             <button id="btnSaveShiftDefs" class="btn btn-primary btn-sm">Save Shift Definitions</button>
           </div>
 
-          <!-- Tab 4: Supervisor Scheduling -->
+          <!-- Tab 4: Traffic Heatmap -->
           <div class="tab-pane fade" id="tab-supervisor" role="tabpanel">
-            <p class="small text-muted mb-2">Configure expected member foot traffic and supervisor ratios for this department.</p>
+            <p class="small text-muted mb-2">Define expected member traffic patterns to drive dynamic headcount and shift stagger.</p>
 
             <div class="form-check form-switch mb-3">
-              <input class="form-check-input" type="checkbox" id="supervisorSchedulingEnabled">
-              <label class="form-check-label small fw-semibold" for="supervisorSchedulingEnabled">
-                Enable Supervisor Scheduling
+              <input class="form-check-input" type="checkbox" id="heatmapEnabled">
+              <label class="form-check-label small fw-semibold" for="heatmapEnabled">
+                Enable Traffic Heatmap
               </label>
             </div>
 
-            <div id="supervisorPeakConfigControls" style="display:none;">
-              <div class="supervisor-peak-controls mb-3" style="display: flex; gap: 1rem; align-items: center;">
+            <div id="heatmapConfigControls" style="display:none;">
+              <!-- Threshold inputs -->
+              <div class="mb-3 d-flex gap-3 align-items-end flex-wrap">
                 <div>
-                  <label class="form-label small mb-1" for="membersPerSupervisorSlider">Members per Supervisor</label>
-                  <input type="range" id="membersPerSupervisorSlider" class="form-range" min="25" max="200" step="5" value="75" style="width: 150px;">
-                  <span id="membersPerSupervisorValue" class="small ms-2">75</span>
+                  <label class="form-label small mb-1" for="heatmapLowThreshold">Low Threshold</label>
+                  <div class="input-group input-group-sm" style="width:130px;">
+                    <input type="number" id="heatmapLowThreshold" class="form-control" min="0" value="100">
+                    <span class="input-group-text small">doors</span>
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label small mb-1" for="heatmapHighThreshold">High Threshold</label>
+                  <div class="input-group input-group-sm" style="width:130px;">
+                    <input type="number" id="heatmapHighThreshold" class="form-control" min="0" value="300">
+                    <span class="input-group-text small">doors</span>
+                  </div>
+                </div>
+                <p class="small text-muted mb-0" style="align-self:flex-end;">
+                  Below low = <span class="text-success fw-semibold">Low</span> &nbsp;|&nbsp;
+                  Between = <span class="text-warning fw-semibold">Moderate</span> &nbsp;|&nbsp;
+                  Above high = <span class="text-danger fw-semibold">High</span>
+                </p>
+              </div>
+
+              <!-- Day traffic curves -->
+              <p class="small fw-semibold mb-1">Traffic Curves <span class="text-muted fw-normal">(drag dots to adjust expected door count per hour)</span></p>
+              <div id="heatmapCanvases" style="display: grid; grid-template-columns: 1fr; gap: 0.75rem;"></div>
+
+              <!-- Pool scheduling counts -->
+              <div class="mt-3 pt-2 border-top">
+                <p class="small fw-semibold mb-2">Pool Headcount by Traffic Level</p>
+                <div class="d-flex gap-3 flex-wrap">
+                  <div>
+                    <label class="form-label small mb-1" for="poolCountLow">Low traffic</label>
+                    <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;" min="0" value="1">
+                  </div>
+                  <div>
+                    <label class="form-label small mb-1" for="poolCountModerate">Moderate</label>
+                    <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;" min="0" value="3">
+                  </div>
+                  <div>
+                    <label class="form-label small mb-1" for="poolCountHigh">High traffic</label>
+                    <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;" min="0" value="5">
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div id="supervisorPeakCanvases" style="display: grid; grid-template-columns: 1fr; gap: 1rem;">
-              <!-- Canvases will be generated here -->
+            <div class="mt-3">
+              <button id="btnResetHeatmap" class="btn btn-outline-secondary btn-sm">Reset to Default</button>
+              <button id="btnSaveHeatmapConfig" class="btn btn-primary btn-sm ms-1">Save Heatmap Configuration</button>
             </div>
-
-            <button id="btnResetPeakProfile" class="btn btn-outline-secondary btn-sm mt-2">Reset to Default</button>
-            <button id="btnSaveSupervisorConfig" class="btn btn-primary btn-sm mt-2">Save Supervisor Configuration</button>
           </div>
         </div>
       </div>

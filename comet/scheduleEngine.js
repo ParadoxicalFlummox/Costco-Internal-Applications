@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.5.0
+ * VERSION: 0.5.1
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -289,7 +289,7 @@ function applyVacationLocksForEmployee_(weekGrid, employeeIndex, employee, weekS
  */
 function getCrossDeptHoursForWeek_(employee, weekStartDate, excludeDept) {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const sheetNames = workbook.getSheetNames();
+  const sheetNames = workbook.getSheets().map(function(s) { return s.getName(); });
   const normalizedExcludeDept = normalizeDeptName_(excludeDept);
   const month = String(weekStartDate.getMonth() + 1).padStart(2, '0');
   const day   = String(weekStartDate.getDate()).padStart(2, '0');
@@ -398,24 +398,20 @@ function assignPreferredShifts_(weekGrid, employeeList, shiftTimingMap, staggerM
       const shiftDef = resolveShiftForEmployee_(employee, shiftTimingMap);
       if (!shiftDef) return;
 
-      // Compute actual start time from stagger map if available
-      let displayText = shiftDef.displayText;
+      // Default display text uses the day-specific anchor (sat/sun overrides applied here)
+      const dayAnchorMinutes = getStartMinutesForDay_(shiftDef, dayName); // settingsManager.js
+      let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + shiftDef.blockMinutes);
+
+      // Stagger map overrides the anchor when flex is enabled
       if (staggerMap && staggerMap[dayName]) {
         const shiftKey = shiftDef.name + '|' + shiftDef.status;
         const startTimes = staggerMap[dayName][shiftKey];
         if (startTimes && startTimes.length > 0) {
-          // Initialize position tracker for this shift on this day
           const posKey = dayName + '|' + shiftKey;
-          if (!staggerPositions[posKey]) {
-            staggerPositions[posKey] = 0;
-          }
-          // Pop next staggered start time (cycling if necessary)
-          const posIdx = staggerPositions[posKey] % startTimes.length;
-          const staggerStartTime = startTimes[posIdx];
+          if (!staggerPositions[posKey]) staggerPositions[posKey] = 0;
+          const staggerStartTime = startTimes[staggerPositions[posKey] % startTimes.length];
           staggerPositions[posKey]++;
-
-          // Rebuild display text with the staggered start time
-          displayText = buildShiftDisplayText_(staggerStartTime, shiftDef.paidHours);
+          displayText = buildShiftDisplayText_(staggerStartTime, shiftDef.paidHours, shiftDef.hasLunch);
         }
       }
 
@@ -474,24 +470,20 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap, sta
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) return;
       if (currentHours + shiftDef.paidHours > effectiveMax) return;
 
-      // Compute actual start time from stagger map if available
-      let displayText = shiftDef.displayText;
+      // Default display text uses the day-specific anchor (sat/sun overrides applied here)
+      const dayAnchorMinutes = getStartMinutesForDay_(shiftDef, dayName); // settingsManager.js
+      let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + shiftDef.blockMinutes);
+
+      // Stagger map overrides the anchor when flex is enabled
       if (staggerMap && staggerMap[dayName]) {
         const shiftKey = shiftDef.name + '|' + shiftDef.status;
         const startTimes = staggerMap[dayName][shiftKey];
         if (startTimes && startTimes.length > 0) {
-          // Initialize position tracker for this shift on this day
           const posKey = dayName + '|' + shiftKey;
-          if (!staggerPositions[posKey]) {
-            staggerPositions[posKey] = 0;
-          }
-          // Pop next staggered start time (cycling if necessary)
-          const posIdx = staggerPositions[posKey] % startTimes.length;
-          const staggerStartTime = startTimes[posIdx];
+          if (!staggerPositions[posKey]) staggerPositions[posKey] = 0;
+          const staggerStartTime = startTimes[staggerPositions[posKey] % startTimes.length];
           staggerPositions[posKey]++;
-
-          // Rebuild display text with the staggered start time
-          displayText = buildShiftDisplayText_(staggerStartTime, shiftDef.paidHours);
+          displayText = buildShiftDisplayText_(staggerStartTime, shiftDef.paidHours, shiftDef.hasLunch);
         }
       }
 
@@ -645,16 +637,17 @@ function formatMinutesAsTimeString_(totalMinutes) {
 }
 
 /**
- * Builds a shift display text "HH:MM AM/PM - HH:MM AM/PM" from a start time (string)
- * and paid hours.
+ * Builds a shift display text "HH:MM AM/PM - HH:MM AM/PM" from a start time (string),
+ * paid hours, and whether the shift includes an unpaid 30-minute lunch break.
  *
- * @param {string} startTimeString — e.g. "07:30" (24-hour format)
- * @param {number} paidHours — e.g. 8
- * @returns {string} e.g. "7:30 AM - 3:30 PM"
+ * @param {string}  startTimeString — e.g. "07:30" (24-hour format)
+ * @param {number}  paidHours       — e.g. 8
+ * @param {boolean} hasLunch        — when true, adds 30 min to get the clock-out time
+ * @returns {string} e.g. "7:30 AM - 4:00 PM"
  */
-function buildShiftDisplayText_(startTimeString, paidHours) {
+function buildShiftDisplayText_(startTimeString, paidHours, hasLunch) {
   const startMinutes = timeStringToMinutes_(startTimeString);
-  const endMinutes = startMinutes + (paidHours * 60);
+  const endMinutes = startMinutes + (paidHours * 60) + (hasLunch ? 30 : 0);
   return formatMinutesAsTimeRange(startMinutes, endMinutes);
 }
 
@@ -783,18 +776,16 @@ function runPhaseFivePoolScheduling_(weekGrid, employeeList, poolMembers, heatma
       const staggerKey = dayName + '|' + shiftKey;
       const startTimes = staggerMap[dayName] && staggerMap[dayName][shiftKey] ? staggerMap[dayName][shiftKey] : [];
 
-      let displayText = bestShift.displayText;
-      if (startTimes && startTimes.length > 0) {
-        // Cycle through available stagger positions for this shift/day
-        if (!staggerPositions[staggerKey]) {
-          staggerPositions[staggerKey] = 0;
-        }
-        const posIdx = staggerPositions[staggerKey] % startTimes.length;
-        const staggerStartTime = startTimes[posIdx];
-        staggerPositions[staggerKey]++;
+      // Default display text uses the day-specific anchor (sat/sun overrides applied here)
+      const dayAnchorMinutes = getStartMinutesForDay_(bestShift, dayName); // settingsManager.js
+      let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + bestShift.blockMinutes);
 
-        // Rebuild display text with staggered start time
-        displayText = buildShiftDisplayText_(staggerStartTime, bestShift.paidHours);
+      if (startTimes && startTimes.length > 0) {
+        // Stagger map overrides the anchor when flex is enabled
+        if (!staggerPositions[staggerKey]) staggerPositions[staggerKey] = 0;
+        const staggerStartTime = startTimes[staggerPositions[staggerKey] % startTimes.length];
+        staggerPositions[staggerKey]++;
+        displayText = buildShiftDisplayText_(staggerStartTime, bestShift.paidHours, bestShift.hasLunch);
       }
 
       // Assign pool member to shift

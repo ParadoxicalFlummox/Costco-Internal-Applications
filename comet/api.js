@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.0
+ * VERSION: 0.5.2
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -193,7 +193,7 @@ function getCrossDeptHoursForWeek(employeeId, mondayDate) {
 
     // Scan all Week sheets for this week to find hours scheduled across departments
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const sheetNames = workbook.getSheetNames();
+    const sheetNames = workbook.getSheets().map(function(s) { return s.getName(); });
     const month = String(weekStartDate.getMonth() + 1).padStart(2, '0');
     const day   = String(weekStartDate.getDate()).padStart(2, '0');
     const year  = String(weekStartDate.getFullYear()).slice(-2);
@@ -277,15 +277,16 @@ function getDeptSettings(deptName) {
       for (let i = 0; i < settings.shifts.length; i++) {
         const s = settings.shifts[i];
         shiftsArray.push({
-          name: String(s.name || ''),
-          ftpt: String(s.ftpt || ''),
-          startTime: String(s.startTime || ''),
-          endTime: String(s.endTime || ''),
-          paidHours: Number(s.paidHours || 0),
-          hasLunch: Boolean(s.hasLunch),
-          flexEnabled: Boolean(s.flexEnabled !== false),
+          name:               String(s.name         || ''),
+          ftpt:               String(s.ftpt         || ''),
+          weekdayStart:       String(s.weekdayStart || ''),
+          satStart:           String(s.satStart     || ''),
+          sunStart:           String(s.sunStart     || ''),
+          paidHours:          Number(s.paidHours    || 0),
+          hasLunch:           Boolean(s.hasLunch),
+          flexEnabled:        Boolean(s.flexEnabled !== false),
           flexWindowEarliest: String(s.flexWindowEarliest || ''),
-          flexWindowLatest: String(s.flexWindowLatest || '')
+          flexWindowLatest:   String(s.flexWindowLatest   || ''),
         });
       }
     }
@@ -326,12 +327,44 @@ function saveDeptSettings(deptName, data) {
 }
 
 /**
- * Returns supervisor peak traffic configuration for a department.
- * If no config exists, returns default values from config.js.
+ * Returns traffic heatmap configuration for a department.
+ * If no config exists in COMET Config sheet, returns HEATMAP_DEFAULTS from config.js.
  *
- * @param {string} deptName — Department name
+ * @param {string} deptName — Department name.
  * @returns {{ ok: boolean, data?: object, error?: string }}
  */
+function getTrafficHeatmapConfig(deptName) {
+  try {
+    if (!deptName) throw new Error('deptName is required.');
+    const config = loadTrafficHeatmapConfig_(deptName); // settingsManager.js
+    if (!config) {
+      return { ok: true, data: Object.assign({}, HEATMAP_DEFAULTS, { department: deptName }) };
+    }
+    return { ok: true, data: config };
+  } catch (error) {
+    console.error('api: getTrafficHeatmapConfig failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Saves traffic heatmap configuration for a department to the COMET Config sheet.
+ *
+ * @param {string} deptName — Department name.
+ * @param {Object} config   — Heatmap config object { enabled, thresholds, trafficCurves, pool, ... }.
+ * @returns {{ ok: boolean, data?: { saved: boolean }, error?: string }}
+ */
+function saveTrafficHeatmapConfig(deptName, config) {
+  try {
+    if (!deptName) throw new Error('deptName is required.');
+    if (!config) throw new Error('config is required.');
+    saveTrafficHeatmapConfig_(deptName, config); // settingsManager.js
+    return { ok: true, data: { saved: true } };
+  } catch (error) {
+    console.error('api: saveTrafficHeatmapConfig failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
 
 /**
  * Overrides a single cell in an existing Week sheet (VAC, RDO, or SHIFT),

@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.0
+ * VERSION: 0.5.1
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -108,27 +108,33 @@ const STAFFING_MODE = {
  * A1-notation range addresses for each table on a Settings_[Dept] sheet.
  *
  *   STAFFING_REQUIREMENTS_TABLE — A2:C8  (Day | Count | Mode, 7 rows for Mon–Sun)
- *   SHIFT_DEFINITIONS_TABLE     — E2:J50 (Name | FT/PT | StartTime | EndTime | PaidHours | HasLunch)
+ *   SHIFT_DEFINITIONS_TABLE     — E2:N50 (Name | FT/PT | WkdyStart | SatStart | SunStart |
+ *                                          PaidHours | HasLunch | FlexEnabled | FlexEarliest | FlexLatest)
  *                                 Column D is a visual spacer; not read.
  */
 const SETTINGS_RANGE = {
   STAFFING_REQUIREMENTS_TABLE: 'A2:C8',
-  SHIFT_DEFINITIONS_TABLE:     'E2:J50',
+  SHIFT_DEFINITIONS_TABLE:     'E2:N50',
 };
 
 /**
- * Column offsets (0-indexed) within the array returned by reading SHIFT_DEFINITIONS_TABLE.
+ * Column offsets (0-indexed) within the array returned by reading SHIFT_DEFINITIONS_TABLE (E2:N50).
  *
- * The raw data array returned by getValues() on the E2:J50 range uses 0-based offsets,
- * so these constants convert from logical name to array index.
+ * Shift start times are defined as per-day anchors instead of a single start/end pair:
+ *   WEEKDAY_START — Mon–Fri anchor (required)
+ *   SAT_START     — Saturday override (optional; falls back to WEEKDAY_START if blank)
+ *   SUN_START     — Sunday override   (optional; falls back to WEEKDAY_START if blank)
+ *
+ * End time is computed: anchorStart + paidHours × 60 + (hasLunch ? 30 : 0)
  */
 const SHIFT_TABLE_COLUMN = {
-  NAME:       0,  // E — Shift display name (e.g. "Morning", "Closing")
-  STATUS:     1,  // F — "FT" or "PT" — this shift applies only to employees of this status
-  START_TIME: 2,  // G — Shift start time (stored as "HH:MM" string)
-  END_TIME:   3,  // H — Shift end time
-  PAID_HOURS: 4,  // I — Hours counted toward the employee's weekly minimum/maximum
-  HAS_LUNCH:  5,  // J — TRUE if this shift includes an unpaid 30-minute lunch break
+  NAME:          0,  // E — Shift display name (e.g. "Morning", "Night Merch")
+  STATUS:        1,  // F — "FT" or "PT" — this shift applies only to employees of this status
+  WEEKDAY_START: 2,  // G — Mon–Fri anchor start time (stored as "HH:MM" string)
+  SAT_START:     3,  // H — Saturday anchor start time (blank = same as WEEKDAY_START)
+  SUN_START:     4,  // I — Sunday anchor start time   (blank = same as WEEKDAY_START)
+  PAID_HOURS:    5,  // J — Hours counted toward the employee's weekly minimum/maximum
+  HAS_LUNCH:     6,  // K — TRUE if this shift includes an unpaid 30-minute lunch break
 };
 
 
@@ -321,18 +327,18 @@ const HEATMAP_DEFAULTS = {
 
 /**
  * Extended shift definition column offsets for flex windows.
- * These columns are added to SHIFT_DEFINITIONS_TABLE (E2:J50) starting at column K (index 6).
+ * These columns follow SHIFT_TABLE_COLUMN in the E2:N50 range.
  *
- *   K — flexEnabled         (boolean; if false, shift is fixed and stagger does not apply)
- *   L — flexWindowEarliest  (string "HH:MM"; earliest valid start time)
- *   M — flexWindowLatest    (string "HH:MM"; latest valid start time)
+ *   L (7) — flexEnabled         (boolean; if false, shift is fixed and stagger does not apply)
+ *   M (8) — flexWindowEarliest  (string "HH:MM"; earliest valid start time)
+ *   N (9) — flexWindowLatest    (string "HH:MM"; latest valid start time)
  *
- * Extended offsets (0-indexed, relative to E2:J50 range):
+ * Extended offsets (0-indexed, relative to the E2:N50 range start):
  */
 const SHIFT_TABLE_FLEX_COLUMNS = {
-  FLEX_ENABLED:        6,  // K
-  FLEX_WINDOW_EARLIEST: 7,  // L
-  FLEX_WINDOW_LATEST:   8,  // M
+  FLEX_ENABLED:         7,  // L
+  FLEX_WINDOW_EARLIEST: 8,  // M
+  FLEX_WINDOW_LATEST:   9,  // N
 };
 
 

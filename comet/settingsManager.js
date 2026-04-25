@@ -1,15 +1,16 @@
 /**
  * settingsManager.js — Builds shift timing maps and staffing requirements for the schedule engine.
- * VERSION: 0.5.0
+ * VERSION: 0.5.1
  *
  * In the original autoScheduleGenerator this file read directly from a Settings sheet.
  * In COMET, settings are owned by scheduleSettings.js and stored in Settings_[Dept] sheets.
  * This file now reads from getDeptSettings_() and converts the plain data objects into
  * the same in-memory structures (shiftTimingMap, staffingRequirements) that the engine expects.
  *
- * The engine itself (scheduleEngine.js) is unchanged — it still calls
- * buildShiftTimingMap(settingsData) and loadStaffingRequirements(settingsData),
- * but now these functions receive a pre-loaded data object rather than a sheet reference.
+ * Shift timing schema (v0.5.1):
+ *   startTime/endTime replaced by weekdayStart + satStart + sunStart + paidHours.
+ *   End time is computed: anchorStart + paidHours×60 + (hasLunch ? 30 : 0).
+ *   Use getStartMinutesForDay_(shiftDef, dayName) to get the day-specific anchor start.
  */
 
 
@@ -18,7 +19,12 @@
  *
  * Returns a plain object keyed by "ShiftName|Status" (e.g., "Morning|FT").
  * Each value is a ShiftDefinition:
- *   { name, status, startMinutes, endMinutes, paidHours, blockHours, displayText, hasLunch }
+ *   { name, status,
+ *     weekdayStartMinutes, satStartMinutes, sunStartMinutes,
+ *     startMinutes (alias for weekdayStartMinutes),
+ *     blockMinutes, endMinutes (alias, weekday only),
+ *     paidHours, blockHours, displayText,
+ *     hasLunch, flexEnabled, flexWindowEarliest, flexWindowLatest }
  *
  * @param {string} deptName — Department name (used to load settings from the sheet).
  * @returns {Object} shiftTimingMap
@@ -33,31 +39,58 @@ function buildShiftTimingMap(deptName) {
 
     if (!shiftName || !status) return;
 
-    const startMinutes = timeStringToMinutes_(shift.startTime); // scheduleSettings.js
-    const endMinutes   = timeStringToMinutes_(shift.endTime);
+    const weekdayStartMinutes = timeStringToMinutes_(shift.weekdayStart); // scheduleSettings.js
+    // Sat/Sun anchors fall back to weekday anchor when blank.
+    const satStartMinutes = shift.satStart ? timeStringToMinutes_(shift.satStart) : weekdayStartMinutes;
+    const sunStartMinutes = shift.sunStart ? timeStringToMinutes_(shift.sunStart) : weekdayStartMinutes;
 
-    if (endMinutes <= startMinutes) {
-      console.warn('settingsManager: Shift "' + shiftName + '" has end <= start — skipped.');
+    const paidHours = Number(shift.paidHours || 0);
+    // Block duration includes the unpaid 30-min lunch break in the clock-time span.
+    const blockMinutes = paidHours * 60 + (shift.hasLunch === true ? 30 : 0);
+
+    if (!weekdayStartMinutes && shift.flexEnabled === false) {
+      console.warn('settingsManager: Fixed shift "' + shiftName + '" has no weekday anchor — skipped.');
       return;
     }
 
-    const blockHours = (endMinutes - startMinutes) / 60;
-    const displayText = formatMinutesAsTimeRange(startMinutes, endMinutes);
+    const displayText = formatMinutesAsTimeRange(weekdayStartMinutes, weekdayStartMinutes + blockMinutes);
     const mapKey = shiftName + '|' + status;
 
     shiftTimingMap[mapKey] = {
-      name:         shiftName,
-      status:       status,
-      startMinutes: startMinutes,
-      endMinutes:   endMinutes,
-      paidHours:    Number(shift.paidHours || 0),
-      blockHours:   blockHours,
-      displayText:  displayText,
-      hasLunch:     shift.hasLunch === true,
+      name:                 shiftName,
+      status:               status,
+      weekdayStartMinutes:  weekdayStartMinutes,
+      satStartMinutes:      satStartMinutes,
+      sunStartMinutes:      sunStartMinutes,
+      startMinutes:         weekdayStartMinutes,              // backward-compat alias
+      blockMinutes:         blockMinutes,
+      endMinutes:           weekdayStartMinutes + blockMinutes, // backward-compat alias (weekday only)
+      paidHours:            paidHours,
+      blockHours:           blockMinutes / 60,
+      displayText:          displayText,
+      hasLunch:             shift.hasLunch === true,
+      flexEnabled:          shift.flexEnabled !== false,
+      flexWindowEarliest:   shift.flexWindowEarliest || '',
+      flexWindowLatest:     shift.flexWindowLatest   || '',
     };
   });
 
   return shiftTimingMap;
+}
+
+
+/**
+ * Returns the anchor start time in minutes-since-midnight for a specific day.
+ * Uses the Saturday or Sunday override when configured; falls back to weekday anchor.
+ *
+ * @param {Object} shiftDef — Entry from the shift timing map.
+ * @param {string} dayName  — e.g. "Saturday", "Sunday", "Monday"
+ * @returns {number} minutes since midnight
+ */
+function getStartMinutesForDay_(shiftDef, dayName) {
+  if (dayName === 'Saturday') return shiftDef.satStartMinutes || shiftDef.weekdayStartMinutes || 0;
+  if (dayName === 'Sunday')   return shiftDef.sunStartMinutes || shiftDef.weekdayStartMinutes || 0;
+  return shiftDef.weekdayStartMinutes || 0;
 }
 
 

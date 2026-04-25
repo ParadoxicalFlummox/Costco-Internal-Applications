@@ -1,6 +1,6 @@
 /**
  * trafficHeatmapEngine.js — Traffic heatmap classification, stagger scheduling, and pool management.
- * VERSION: 0.5.0
+ * VERSION: 0.5.1
  *
  * This module owns all logic related to the unified traffic heatmap system:
  *   1. Traffic classification (Low / Moderate / High based on door counts)
@@ -184,8 +184,9 @@ function buildStaggeredStartMap_(shiftTimingMap, dayTrafficLevels, weekStartDate
 
       // Check if flex is enabled for this shift
       if (shiftDef.flexEnabled === false) {
-        // Fixed shift: use anchor start time only
-        staggerMap[dayName][shiftKey] = [formatMinutesAsTimeString(shiftDef.startMinutes)];
+        // Fixed shift: use the day-specific anchor start time (sat/sun may differ)
+        const fixedStart = getStartMinutesForDay_(shiftDef, dayName); // settingsManager.js
+        staggerMap[dayName][shiftKey] = [formatMinutesAsTimeString(fixedStart)];
         return;
       }
 
@@ -210,15 +211,18 @@ function buildStaggeredStartMap_(shiftTimingMap, dayTrafficLevels, weekStartDate
  * @returns {Array<string>} ["HH:MM", "HH:MM", ...]
  */
 function computeStaggerPositions_(shiftDef, trafficLevel, dayName, dayIndex, weekStartDate, staggerIncrement) {
+  // Use the day-specific anchor for fallback calculations
+  const dayAnchorMinutes = getStartMinutesForDay_(shiftDef, dayName); // settingsManager.js
+
   // Parse flex window from shift definition
   let flexEarliestMin = timeStringToMinutes_(shiftDef.flexWindowEarliest);
   let flexLatestMin = timeStringToMinutes_(shiftDef.flexWindowLatest);
 
   // Handle missing flex window (should not happen if flexEnabled=true, but be defensive)
   if (!flexEarliestMin || !flexLatestMin || flexLatestMin <= flexEarliestMin) {
-    // Fallback: use anchor +/- 30 minutes
-    flexEarliestMin = Math.max(240, shiftDef.startMinutes - 30);  // 240 = 4 AM (earliest safe)
-    flexLatestMin = shiftDef.startMinutes + 30;
+    // Fallback: day anchor +/- 30 minutes
+    flexEarliestMin = Math.max(240, dayAnchorMinutes - 30);  // 240 = 4 AM (earliest safe)
+    flexLatestMin = dayAnchorMinutes + 30;
   }
 
   // Apply hard constraints for openers and closers
@@ -227,9 +231,9 @@ function computeStaggerPositions_(shiftDef, trafficLevel, dayName, dayIndex, wee
     flexEarliestMin = 240;
     flexLatestMin = 240;
   } else if (shiftDef.name && shiftDef.name.toLowerCase().includes('clos')) {
-    // Closer: cap latest start time by store closing time
-    const closingTime = getStoreClosingTimeMinutes_(dayIndex);  // Returns minutes (e.g., 1410 for 11:30 PM)
-    const maxStartMin = closingTime - (shiftDef.endMinutes - shiftDef.startMinutes);
+    // Closer: cap latest start time so shift ends by store closing time
+    const closingTime = getStoreClosingTimeMinutes_(dayIndex);
+    const maxStartMin = closingTime - shiftDef.blockMinutes;  // blockMinutes = paidHours*60 + (hasLunch?30:0)
     flexLatestMin = Math.min(flexLatestMin, maxStartMin);
   }
 
