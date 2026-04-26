@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.3.7
+     VERSION: 0.3.9
   
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -520,6 +520,7 @@
             _weekGrid = data.weekGrid;
             _employeeList = data.employeeList;
             _staffingRequirements = data.staffingRequirements || {};
+            _populateCrossDeptCache_(_currentMonday);
             renderScheduleGrid();
 
             // Warn about employees who ended up with all non-SHIFT days
@@ -593,6 +594,7 @@
         _employeeList = data.employeeList;
         _staffingRequirements = data.staffingRequirements || {};
         _currentMonday = mondayDate;
+        _populateCrossDeptCache_(mondayDate);
         renderScheduleGrid(true); // true = render into #scheduleGridInner
       });
     }
@@ -606,6 +608,25 @@
       _loadWeekIntoGrid(btn.dataset.monday);
     }
 
+    /**
+     * Clears and repopulates the cross-dept hours cache for the given week.
+     * Only fires calls for employees who have secondary departments — skips everyone else.
+     * Called once per week load (not on every render) to avoid redundant server round-trips.
+     *
+     * @param {string} mondayDate — "YYYY-MM-DD"
+     */
+    function _populateCrossDeptCache_(mondayDate) {
+      _crossDeptHoursCache = {};
+      if (!mondayDate || !_employeeList) return;
+      var mondayString = String(mondayDate).split('T')[0];
+      _employeeList.forEach(function (emp) {
+        if (!emp.secondaryDepartments || emp.secondaryDepartments.length === 0) return;
+        UI.callServer('getCrossDeptHoursForWeek', [emp.employeeId, mondayString], function (data) {
+          if (data.totalHours > 0) _crossDeptHoursCache[emp.employeeId] = data;
+        });
+      });
+    }
+
     function renderScheduleGrid(innerOnly) {
       var container = innerOnly
         ? (document.getElementById('scheduleGridInner') || document.getElementById('scheduleTableContainer'))
@@ -613,20 +634,6 @@
       if (!_weekGrid || !_employeeList) {
         container.innerHTML = '<div class="p-3 text-comet-muted small">No schedule data.</div>';
         return;
-      }
-
-      // Clear cross-dept hours cache and repopulate it for all employees
-      _crossDeptHoursCache = {};
-      if (_currentMonday) {
-        // _currentMonday is always a string "YYYY-MM-DD" from the date input, not a Date object.
-        var mondayString = String(_currentMonday).split('T')[0];
-        _employeeList.forEach(function (emp) {
-          UI.callServer('getCrossDeptHoursForWeek', [emp.employeeId, mondayString], function (data) {
-            if (data.totalHours > 0 || (data.assignments && data.assignments.length > 0)) {
-              _crossDeptHoursCache[emp.employeeId] = data;
-            }
-          });
-        });
       }
 
       var html = '<table class="table table-bordered comet-schedule-table mb-0">';
@@ -658,7 +665,8 @@
             + '</td>';
         });
 
-        html += '<td class="schedule-cell text-center"><small>' + totalHours + '</small></td>';
+        var hrsClass = emp.underHours ? 'text-danger fw-semibold' : '';
+        html += '<td class="schedule-cell text-center"><small class="' + hrsClass + '">' + totalHours.toFixed(1) + '</small></td>';
         html += '</tr>';
       });
 
@@ -736,14 +744,20 @@
           + '</span>';
       }
 
-      // Weekly hours indicator — red if under minimum, muted gray if okay
-      var hoursClass = emp.underHours ? 'text-danger' : 'text-comet-muted';
-      var hoursLabel = '<span class="' + hoursClass + '" style="font-size:0.68rem;">'
-        + (emp.weeklyHours || 0).toFixed(1) + 'h</span>';
+      // Parse the employee's role list — first entry is their priority role
+      var roleList = (emp.primaryRole || '').split(',').map(function(r) { return r.trim(); }).filter(Boolean);
+      var priorityRole = roleList[0] || '';
+      var priorityRoleCssClass = 'role-priority-badge role-badge-' + priorityRole.toLowerCase().replace(/\s+/g, '-');
+      var priorityRoleBadge = priorityRole
+        ? '<span class="' + priorityRoleCssClass + '">' + esc(priorityRole) + '</span>'
+        : '';
+      var qualifiedRolesText = roleList.length > 0
+        ? '<span class="role-qualified-list">' + esc(roleList.join(', ')) + '</span>'
+        : '';
 
       return '<span class="fw-semibold">' + esc(emp.name) + '</span>' + badge + ' ' + crossDeptBadge
-        + '<br><span class="schedule-cell-role">' + esc(emp.primaryRole || '') + '</span>'
-        + ' ' + hoursLabel;
+        + ' ' + priorityRoleBadge
+        + qualifiedRolesText;
     }
 
     function buildCellHtml(cell, isFt) {
@@ -760,19 +774,18 @@
       var cls = isFt ? 'schedule-cell-ft' : 'schedule-cell-pt';
       var shiftHtml = '<span class="' + cls + '">' + esc(cell.displayText || cell.shiftName || 'SHIFT') + '</span>';
 
-      // Add role-colored badge if role is present
+      // Role text pill shown beneath the shift time
       var roleBadge = '';
       if (cell.role) {
         var roleColorClass = 'role-badge-' + cell.role.toLowerCase().replace(/\s+/g, '-');
-        roleBadge = '<span class="role-badge ' + roleColorClass + '" title="' + esc(cell.role) + '"></span>';
+        roleBadge = '<br><span class="role-badge ' + roleColorClass + '">' + esc(cell.role) + '</span>';
       }
 
-      // Wrap with role badge, positioned relatively
       var content = shiftHtml + roleBadge;
       if (cell.locked) {
-        return '<span style="position:relative;" title="Manager override">' + content + '<span class="lock-badge">🔒</span></span>';
+        return '<span title="Manager override">' + content + ' <span class="lock-badge">🔒</span></span>';
       }
-      return '<span style="position:relative;">' + content + '</span>';
+      return content;
     }
 
     function _onCellClick(tdEl) {

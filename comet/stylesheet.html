@@ -263,24 +263,43 @@
     animation: fadeFromYellow 2s ease-out forwards;
   }
 
-  /* Role color badge on shift cells */
+  /* Role text pill on shift cells */
   .role-badge {
-    position: absolute;
-    bottom: -4px;
-    right: -4px;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    border: 1px solid rgba(255,255,255,0.8);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    display: inline-block;
+    margin-top: 2px;
+    padding: 0 5px;
+    font-size: 0.6rem;
+    font-weight: 600;
+    border-radius: 4px;
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
-  .role-badge-cashier                { background-color: #DBEAFE; }
-  .role-badge-sco                    { background-color: #E0F2FE; }
-  .role-badge-prescan                { background-color: #EDE9FE; }
-  .role-badge-floor                  { background-color: #D1FAE5; }
-  .role-badge-maintenance-associate  { background-color: #FEF3C7; }
-  .role-badge-lead                   { background-color: #FEE2E2; }
-  .role-badge-supervisor             { background-color: #FCE7F3; }
+  .role-badge-cashier                { background-color: #DBEAFE; color: #1E40AF; }
+  .role-badge-sco                    { background-color: #E0F2FE; color: #0369A1; }
+  .role-badge-prescan                { background-color: #EDE9FE; color: #5B21B6; }
+  .role-badge-floor                  { background-color: #D1FAE5; color: #065F46; }
+  .role-badge-maintenance-associate  { background-color: #FEF3C7; color: #92400E; }
+  .role-badge-lead                   { background-color: #FEE2E2; color: #991B1B; }
+  .role-badge-supervisor             { background-color: #FCE7F3; color: #9D174D; }
+
+  /* Priority role badge in the employee name cell */
+  .role-priority-badge {
+    display: inline-block;
+    padding: 0 5px;
+    font-size: 0.6rem;
+    font-weight: 600;
+    border-radius: 4px;
+    line-height: 1.4;
+    vertical-align: middle;
+  }
+  /* Qualified roles list under the employee name */
+  .role-qualified-list {
+    display: block;
+    font-size: 0.65rem;
+    color: #6B7280;
+    margin-top: 1px;
+  }
 
   .schedule-row-ft td:first-child { border-left: 3px solid #3B82F6; }
   .schedule-row-pt td:first-child { border-left: 3px solid #22C55E; }

@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.2
+ * VERSION: 0.5.3
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -79,6 +79,9 @@ function getScheduleForWeek(deptName, mondayDate) {
     if (!result) {
       return { ok: true, data: { weekSheetName: null, weekGrid: null, employeeList: [], staffingRequirements: {} } };
     }
+    // Re-run Phase 4 role assignment so roles are visible when loading an existing sheet.
+    // readExistingWeekSchedule_ reads VAC/RDO/SHIFT state but does not populate cell.role.
+    runPhaseFourRoleAssignment_(result.weekGrid, result.employeeList, deptName); // scheduleEngine.js
     const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
     return {
       ok: true,

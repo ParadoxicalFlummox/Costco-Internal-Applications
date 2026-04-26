@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.5.1
+ * VERSION: 0.6.0
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -203,6 +203,16 @@ function loadRosterSortedBySeniority_(deptName, weekStartDate) {
         if (!isNaN(parsed.getTime())) hireDate = parsed;
       }
 
+      // Calculate seniority rank from hire date using the SENIORITY formula in config.js.
+      // Column M is not used — calculating live ensures the rank always reflects the actual
+      // formula (FT_BASE/PT_BASE + days before REFERENCE_DATE) without requiring a setup re-run.
+      const seniorityReferenceDate = new Date(SENIORITY.REFERENCE_DATE_STRING);
+      const seniorityBase = emp.ftpt === 'FT' ? SENIORITY.FT_BASE : SENIORITY.PT_BASE;
+      const seniorityDaysFromHire = Math.max(0, Math.floor(
+        (seniorityReferenceDate - hireDate) / (1000 * 60 * 60 * 24)
+      ));
+      const calculatedSeniorityRank = seniorityBase + seniorityDaysFromHire;
+
       // Load secondary departments from Employees sheet column N
       let secondaryDepartments = [];
       let crossDeptHoursAlreadyScheduled = 0;
@@ -241,15 +251,23 @@ function loadRosterSortedBySeniority_(deptName, weekStartDate) {
         preferredShift:                  emp.preferredShift  || '',
         qualifiedShifts:                 qualifiedShiftList,
         vacationDateStrings:             vacationDateStrings,
-        seniorityRank:                   Number(emp.seniorityRank || 0),
+        seniorityRank:                   calculatedSeniorityRank,
         department:                      normalizeDeptName_(emp.department),
         primaryRole:                     emp.role || '',
         secondaryDepartments:            secondaryDepartments,
         crossDeptHoursAlreadyScheduled:  crossDeptHoursAlreadyScheduled,
       };
+    })
+    .filter(function(employee) {
+      // Exclude employees whose primary role is "manager" — they manage the schedule
+      // rather than appear in it. Role field is comma-separated; first entry is primary.
+      var firstRole = (employee.primaryRole || '').split(',')[0].trim().toLowerCase();
+      return firstRole !== 'manager';
     });
 
-  deptEmployees.sort(compareEmployeesBySeniority_);
+  // Supervisors first, then remaining employees sorted alphabetically by primary role,
+  // then by seniority within each role group.
+  deptEmployees.sort(compareEmployeesForScheduleOrder_);
   return deptEmployees;
 }
 
@@ -572,10 +590,60 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
 // ---------------------------------------------------------------------------
 
 function runPhaseFourRoleAssignment_(weekGrid, employeeList, departmentName) {
-  employeeList.forEach(function(employee, ei) {
+
+  // Parse each employee's full ordered role list once (comma-separated in column L)
+  const employeeRoleLists = employeeList.map(function(employee) {
+    return (employee.primaryRole || '')
+      .split(',')
+      .map(function(r) { return r.trim(); })
+      .filter(Boolean);
+  });
+
+  // Phase 4a: assign everyone their priority (first) role on days they are working
+  employeeList.forEach(function(_employee, ei) {
     DAY_NAMES_IN_ORDER.forEach(function(_dayName, dayIndex) {
       const cell = weekGrid[ei][dayIndex];
-      cell.role = cell.type === 'SHIFT' ? (employee.primaryRole || null) : null;
+      cell.role = cell.type === 'SHIFT' ? (employeeRoleLists[ei][0] || null) : null;
+    });
+  });
+
+  // Phase 4b: fill days where a role has zero coverage.
+  // Only pulls a backup if their current primary role stays covered by at least one other
+  // person — avoids patching one gap by creating another. Unfilled gaps are left visible
+  // so managers can plan around them.
+  DAY_NAMES_IN_ORDER.forEach(function(_dayName, dayIndex) {
+
+    // Collect every unique role any employee is qualified for
+    const allRoles = [];
+    employeeRoleLists.forEach(function(roleList) {
+      roleList.forEach(function(role) {
+        if (allRoles.indexOf(role) === -1) allRoles.push(role);
+      });
+    });
+
+    allRoles.forEach(function(role) {
+      // Skip roles that already have at least one person assigned today
+      const alreadyCovered = employeeList.some(function(_emp, ei) {
+        return weekGrid[ei][dayIndex].role === role;
+      });
+      if (alreadyCovered) return;
+
+      // Find the most senior employee working today who is qualified for this role
+      // and whose current role would still have coverage if they were pulled away
+      for (let ei = 0; ei < employeeList.length; ei++) {
+        const cell = weekGrid[ei][dayIndex];
+        if (cell.type !== 'SHIFT') continue;
+        if (employeeRoleLists[ei].indexOf(role) === -1) continue; // not qualified
+
+        const currentRole = cell.role;
+        const currentRoleStillCovered = employeeList.some(function(_emp, otherEi) {
+          return otherEi !== ei && weekGrid[otherEi][dayIndex].role === currentRole;
+        });
+        if (!currentRole || !currentRoleStillCovered) continue; // would create a new gap
+
+        cell.role = role;
+        break;
+      }
     });
   });
 
@@ -884,14 +952,15 @@ function serializeEmployeeList_(employeeList, weekGrid) {
     var weeklyHours = getWeeklyHours_(weekGrid, i);
     var minHours = emp.status === 'FT' ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN;
     return {
-      name:           emp.name,
-      employeeId:     emp.employeeId,
-      status:         emp.status,
-      department:     emp.department,
-      seniorityRank:  emp.seniorityRank,
-      primaryRole:    emp.primaryRole || '',
-      weeklyHours:    weeklyHours,
-      underHours:     weeklyHours < minHours,
+      name:                 emp.name,
+      employeeId:           emp.employeeId,
+      status:               emp.status,
+      department:           emp.department,
+      seniorityRank:        emp.seniorityRank,
+      primaryRole:          emp.primaryRole || '',
+      weeklyHours:          weeklyHours,
+      underHours:           weeklyHours < minHours,
+      secondaryDepartments: emp.secondaryDepartments || [],
     };
   });
 }
@@ -924,6 +993,41 @@ function compareEmployeesBySeniority_(a, b) {
   if (b.seniorityRank !== a.seniorityRank) return b.seniorityRank - a.seniorityRank;
   if (a.status !== b.status) return a.status === 'FT' ? -1 : 1;
   return a.name.localeCompare(b.name);
+}
+
+/**
+ * Sort order for the schedule grid:
+ *   Tier 1 — Supervisors before everyone else (seniority within tier)
+ *   Tier 2 — Remaining employees sorted alphabetically by primary role
+ *   Tier 3 — Seniority within each role group
+ *
+ * @param {object} a
+ * @param {object} b
+ * @returns {number}
+ */
+function compareEmployeesForScheduleOrder_(a, b) {
+  var aIsSupervisor = isSupervisorRole_(a.primaryRole);
+  var bIsSupervisor = isSupervisorRole_(b.primaryRole);
+  if (aIsSupervisor !== bIsSupervisor) return aIsSupervisor ? -1 : 1;
+
+  if (!aIsSupervisor) {
+    var aRole = (a.primaryRole || '').split(',')[0].trim().toLowerCase();
+    var bRole = (b.primaryRole || '').split(',')[0].trim().toLowerCase();
+    if (aRole !== bRole) return aRole.localeCompare(bRole);
+  }
+
+  return compareEmployeesBySeniority_(a, b);
+}
+
+/**
+ * Returns true if the employee's primary role is "supervisor" (case-insensitive).
+ *
+ * @param {string} roleString — Comma-separated role list; first entry is the primary role.
+ * @returns {boolean}
+ */
+function isSupervisorRole_(roleString) {
+  var firstRole = (roleString || '').split(',')[0].trim().toLowerCase();
+  return firstRole === 'supervisor';
 }
 
 function createDayAssignment_(type, shiftName, paidHours, locked, displayText) {
