@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.3.9
+     VERSION: 0.4.0
   
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -358,7 +358,11 @@
       var resetHeatmapBtn = document.getElementById('btnResetHeatmap');
       if (resetHeatmapBtn) {
         resetHeatmapBtn.onclick = function () {
+          // Preserve the current enabled state so canvases stay visible and
+          // the feature toggle isn't accidentally turned off by a curve reset.
+          var wasEnabled = _currentHeatmapConfig && _currentHeatmapConfig.enabled;
           _currentHeatmapConfig = JSON.parse(JSON.stringify(HEATMAP_CONFIG_DEFAULT));
+          _currentHeatmapConfig.enabled = !!wasEnabled;
           renderHeatmapConfig(_currentHeatmapConfig);
         };
       }
@@ -649,7 +653,8 @@
       // Employee rows
       _employeeList.forEach(function (emp, ei) {
         var isFt = emp.status === 'FT';
-        var rowClass = isFt ? 'schedule-row-ft' : 'schedule-row-pt';
+        var isLpt = emp.status === 'LPT';
+        var rowClass = isFt ? 'schedule-row-ft' : (isLpt ? 'schedule-row-lpt' : 'schedule-row-pt');
         html += '<tr class="' + rowClass + '">';
         html += '<td class="schedule-cell">' + buildNameCellHtml(emp) + '</td>';
 
@@ -661,7 +666,7 @@
             + 'data-emp-id="' + esc(emp.employeeId) + '" '
             + 'data-day-index="' + di + '" '
             + 'onclick="Schedule._onCellClick(this)">'
-            + buildCellHtml(cell, isFt)
+            + buildCellHtml(cell, isFt, isLpt)
             + '</td>';
         });
 
@@ -760,7 +765,7 @@
         + qualifiedRolesText;
     }
 
-    function buildCellHtml(cell, isFt) {
+    function buildCellHtml(cell, isFt, isLpt) {
       if (cell.type === 'VAC') {
         var vacHtml = '<span class="schedule-cell-vac">VAC</span>';
         return cell.locked ? '<span style="position:relative;">' + vacHtml + '<span class="lock-badge">🔒</span></span>' : vacHtml;
@@ -771,7 +776,7 @@
       }
       if (cell.type === 'OFF') return '<span class="schedule-cell-off">OFF</span>';
       // SHIFT
-      var cls = isFt ? 'schedule-cell-ft' : 'schedule-cell-pt';
+      var cls = isFt ? 'schedule-cell-ft' : (isLpt ? 'schedule-cell-lpt' : 'schedule-cell-pt');
       var shiftHtml = '<span class="' + cls + '">' + esc(cell.displayText || cell.shiftName || 'SHIFT') + '</span>';
 
       // Role text pill shown beneath the shift time
@@ -1340,7 +1345,7 @@
         return;
       }
       tbody.innerHTML = employees.map(function (emp, i) {
-        var statusClass = emp.status === 'Archived' ? 'text-muted' : '';
+        var statusClass = emp.status === 'Archived' ? 'text-muted' : (emp.status === 'LOA' ? 'text-warning' : '');
         var toggleLabel = emp.status === 'Active' ? 'Archive' : 'Restore';
         var toggleClass = emp.status === 'Active' ? 'btn-outline-secondary' : 'btn-outline-success';
         // View button: render as direct <a> link using URL pre-fetched in getEmployeeList.
@@ -1374,6 +1379,7 @@
       var emp = _renderedEmployees[i];
       if (!emp) return;
       document.getElementById('editEmployeeId').value = emp.id || '';
+      document.getElementById('editStatus').value = emp.status || 'Active';
       document.getElementById('editFtpt').value = emp.ftpt || '';
       document.getElementById('editDayOffPrefOne').value = emp.dayOffPrefOne || '';
       document.getElementById('editDayOffPrefTwo').value = emp.dayOffPrefTwo || '';
@@ -1407,6 +1413,7 @@
       var id = document.getElementById('editEmployeeId').value;
       if (!id) return;
       var fields = {
+        status: document.getElementById('editStatus').value,
         ftpt: document.getElementById('editFtpt').value,
         dayOffPrefOne: document.getElementById('editDayOffPrefOne').value,
         dayOffPrefTwo: document.getElementById('editDayOffPrefTwo').value,
@@ -1428,7 +1435,7 @@
       if (!emp) return;
       var newStatus = emp.status === 'Active' ? 'Archived' : 'Active';
       if (newStatus === 'Archived') {
-        if (!confirm('Archive ' + emp.name + '?\n\nThey will be removed from all active lists and excluded from schedule generation and CN scans. This can be undone with Restore.')) {
+        if (!confirm('Archive ' + emp.name + '?\n\nThey will be excluded from scheduling and CN scans. This can be undone with Restore.\n\nTo set Leave of Absence instead, use the Edit modal.')) {
           return;
         }
       }
@@ -1568,17 +1575,19 @@
 
   // Default 24-element traffic curves (hours 0-23). Values represent expected door count.
   // Pattern: slow ramp from 4 AM, peak mid-morning, taper in late afternoon.
+  // Keep in sync with TRAFFIC_HEATMAP.defaultTrafficCurves in config.js.
   var HEATMAP_CONFIG_DEFAULT = {
     enabled: false,
     thresholds: { low: 100, high: 300 },
     trafficCurves: {
-      Monday:    [0,0,0,0,10,30,60,100,140,160,150,130,110,90,70,50,30,10,0,0,0,0,0,0],
-      Tuesday:   [0,0,0,0,10,30,60,100,140,160,150,130,110,90,70,50,30,10,0,0,0,0,0,0],
-      Wednesday: [0,0,0,0,10,30,60,100,140,160,150,130,110,90,70,50,30,10,0,0,0,0,0,0],
-      Thursday:  [0,0,0,0,15,40,80,130,170,190,170,150,120,100,80,60,35,15,0,0,0,0,0,0],
-      Friday:    [0,0,0,0,20,60,140,260,360,400,380,340,290,240,190,150,100,50,15,0,0,0,0,0],
-      Saturday:  [0,0,0,0,10,50,160,320,460,500,480,440,380,310,250,190,130,60,20,0,0,0,0,0],
-      Sunday:    [0,0,0,0,5,40,120,220,280,300,280,250,210,170,130,90,50,20,5,0,0,0,0,0],
+      //           12a 1  2  3  4  5  6  7  8   9am  10   11  12p   1    2    3    4   5pm   6   7pm   8  9pm 10 11
+      Monday:    [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+      Tuesday:   [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+      Wednesday: [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+      Thursday:  [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+      Friday:    [0, 0, 0, 0, 0, 0, 0, 0, 0,  80, 110, 140, 200, 155, 140, 200, 180, 250, 195, 205, 170,   0, 0, 0],
+      Saturday:  [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 320, 330, 330, 320, 330, 320, 310, 200,   0,   0,   0, 0, 0],
+      Sunday:    [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 310, 330, 325, 320, 320, 300, 250,   0,   0,   0,   0, 0, 0],
     },
     pool: {
       schedulingCounts: { Low: 1, Moderate: 3, High: 5 },
@@ -1725,8 +1734,10 @@
     var graphHeight = cssHeight - bottomPadding - topPadding;
     var baselineY = cssHeight - bottomPadding;
 
+    // Allow dragging into the bottom padding so the user can reach 0 — relativeY is
+    // clamped to [0, graphHeight] below, so values below the baseline map cleanly to 0.
     if (mouseX < leftPadding || mouseX > cssWidth - rightPadding ||
-        mouseY < topPadding || mouseY > baselineY) return;
+        mouseY < topPadding || mouseY > cssHeight) return;
 
     // Find nearest of 24 control points
     var pointSpacing = graphWidth / 24;
@@ -1744,7 +1755,7 @@
 
     if (nearest >= 0) {
       var maxDoorCount = getHeatmapMaxDoorCount_();
-      var relativeY = mouseY - topPadding;
+      var relativeY = Math.min(graphHeight, mouseY - topPadding);
       var doorCount = Math.round((1.0 - (relativeY / graphHeight)) * maxDoorCount);
       doorCount = Math.max(0, Math.min(maxDoorCount, doorCount));
       curve[nearest] = doorCount;

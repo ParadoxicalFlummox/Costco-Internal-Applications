@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.1
+ * VERSION: 0.5.3
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -56,8 +56,14 @@ const EMPLOYEE_SHEET_STALENESS_THRESHOLD_DAYS = 7;
  *   B — Employee ID
  *   C — Hire Date
  *   D — Department
- *   E — Status ("Active" or "Archived")
- *   F — FT/PT             ("FT" or "PT")
+ *   E — Status ("Active", "LOA", or "Archived")
+ *         Active  = employed and available for scheduling
+ *         LOA     = on Leave of Absence; excluded from schedule generation
+ *         Archived = no longer employed (terminated / resigned)
+ *   F — FT/PT             ("FT", "PT", or "LPT")
+ *         FT  = full-time, 40 h/week
+ *         PT  = part-time, 24–40 h/week
+ *         LPT = limited part-time (students / weekenders), 0–12 h/week
  *   G — Day Off Pref 1    (day name, e.g. "Monday")
  *   H — Day Off Pref 2    (day name)
  *   I — Preferred Shift   (shift name from dept settings)
@@ -198,18 +204,20 @@ const DAY_NAMES_IN_ORDER = [
 // ---------------------------------------------------------------------------
 
 /**
- * Weekly paid hour minimums and maximums for full-time and part-time employees.
+ * Weekly paid hour minimums and maximums per employee scheduling type.
  *
- * FT: 40 hours exactly (minimum = maximum).
- * PT: 24–40 hours. Phase 2 adds shifts until the minimum is reached.
+ * FT:  40 hours exactly (minimum = maximum).
+ * PT:  24–40 hours. Phase 2 adds shifts until the minimum is reached.
+ * LPT: 0–12 hours. No minimum enforced; intended for students and
+ *      weekend-only workers who cannot commit to standard PT hours.
  */
 const HOUR_RULES = {
-  FT_MIN:            40,
-  FT_MAX:            40,
-  PT_MIN:            24,
-  PT_MAX:            40,
-  PT_PLUS_MIN_HOURS:  5,
-  PT_PLUS_MAX_HOURS:  8,
+  FT_MIN:   40,
+  FT_MAX:   40,
+  PT_MIN:   24,
+  PT_MAX:   40,
+  LPT_MIN:   0,  // No weekly minimum — schedule as needed
+  LPT_MAX:  12,  // Hard cap: never exceed 12 paid hours per week
 };
 
 
@@ -313,15 +321,21 @@ const HEATMAP_DEFAULTS = {
     'Moderate': 3,
     'High': 5,
   },
-  // Default traffic curves for new departments (can be overridden per week)
+  // Default traffic curves for new departments (can be overridden per week).
+  // 24 values — one per hour, index 0 = midnight, index 9 = 9am, etc.
+  // Based on observed member traffic at warehouse 1338:
+  //   Weekdays open 9am–9pm; weekday peaks at 12pm, 3pm, 5pm (max), 7–8pm.
+  //   Friday slightly busier. Saturday closes 7pm, Sunday closes 6pm;
+  //   both weekends run consistent high traffic (~330) from 11am–5pm.
   defaultTrafficCurves: {
-    'Monday':    [0,0,0,10,30,80,120,180,200,190,160,140,100,80,60,40,20,10,0,0,0,0,0,0],
-    'Tuesday':   [0,0,0,5,20,60,100,150,160,140,120,100,80,60,40,20,10,5,0,0,0,0,0,0],
-    'Wednesday': [0,0,0,8,25,70,110,170,190,160,140,110,90,70,50,30,15,8,0,0,0,0,0,0],
-    'Thursday':  [0,0,0,10,30,80,120,180,200,190,160,140,100,80,60,40,20,10,0,0,0,0,0,0],
-    'Friday':    [0,0,0,20,60,150,300,420,480,460,400,350,300,260,200,180,140,80,30,10,0,0,0,0],
-    'Saturday':  [0,0,0,0,20,80,200,380,500,480,440,400,350,300,250,200,150,80,30,0,0,0,0,0],
-    'Sunday':    [0,0,0,0,10,60,150,250,280,260,220,180,140,100,60,30,15,5,0,0,0,0,0,0],
+    //                       12a 1  2  3  4  5  6  7  8   9am 10  11  12p  1   2   3   4   5pm  6   7pm  8   9pm 10  11
+    'Monday':    [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+    'Tuesday':   [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+    'Wednesday': [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+    'Thursday':  [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
+    'Friday':    [0, 0, 0, 0, 0, 0, 0, 0, 0,  80, 110, 140, 200, 155, 140, 200, 180, 250, 195, 205, 170,   0, 0, 0],
+    'Saturday':  [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 320, 330, 330, 320, 330, 320, 310, 200,   0,   0,   0, 0, 0],
+    'Sunday':    [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 310, 330, 325, 320, 320, 300, 250,   0,   0,   0,   0, 0, 0],
   },
 };
 
@@ -457,13 +471,48 @@ const COLORS = {
  * Roles not found in this map receive the generic COLORS.ROLE_ROW_BG (lavender).
  */
 const ROLE_COLORS = {
-  'Cashier':                '#DBEAFE',  // Light blue
-  'SCO':                    '#E0F2FE',  // Lighter blue
-  'PreScan':                '#EDE9FE',  // Light purple
-  'Floor':                  '#D1FAE5',  // Light green
-  'Maintenance Associate':  '#FEF3C7',  // Light amber
-  'Lead':                   '#FEE2E2',  // Light red
-  'Supervisor':             '#FCE7F3',  // Light pink
+  // Front End — blue / cyan / purple family
+  'Cashier':               '#DBEAFE',  // Blue
+  'Assistant':             '#BFDBFE',  // Medium blue  (cashier assistant)
+  'SCO':                   '#BAE6FD',  // Sky blue
+  'Liquor':                '#A5F3FC',  // Cyan
+  'PreScan':               '#EDE9FE',  // Purple
+  'Go Backs':              '#F5D0FE',  // Fuchsia
+  'Carts':                 '#CBD5E1',  // Slate
+  'Floater':               '#FEF08A',  // Yellow
+
+  // Merchandising — green / indigo family
+  'Morning':               '#D1FAE5',  // Green
+  'Night':                 '#C7D2FE',  // Indigo
+  'Produce':               '#BBF7D0',  // Bright green
+  'Stocker':               '#ECFDF5',  // Mint
+  'Driver':                '#FDBA74',  // Orange
+
+  // Bakery / Food — rose and warm yellow
+  // Bakery uses rose so it reads distinctly alongside Maintenance amber in
+  // the Bakery dept schedule when cross-trained Merch employees appear there.
+  'Bakery':                '#FECACA',  // Rose
+  'Deli':                  '#FDE68A',  // Warm yellow
+  'Food Service':          '#FDE68A',  // Warm yellow (Food Court / Service Deli)
+  'Food Court':            '#FDE68A',  // Warm yellow
+
+  // Maintenance — amber
+  'Maintenance Associate': '#FEF3C7',  // Amber
+  'Maintenance':           '#FEF3C7',  // Amber (alias)
+
+  // Other departments
+  'Receiving':             '#A7F3D0',  // Teal green
+  'Membership Service':    '#FFFBEB',  // Light warm
+  'Security':              '#E2E8F0',  // Neutral gray-blue
+  'Tire Tech':             '#F0FDF4',  // Light mint
+  'Gas Attendant':         '#FFEDD5',  // Light orange
+  'Pharmacy Tech':         '#F3E8FF',  // Light purple
+  'Optician':              '#F0F9FF',  // Very light blue
+  'Hearing Specialist':    '#FFF0F5',  // Very light pink
+
+  // Leadership
+  'Lead':                  '#FEE2E2',  // Light red
+  'Supervisor':            '#FCE7F3',  // Pink
 };
 
 /**

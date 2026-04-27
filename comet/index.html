@@ -507,11 +507,20 @@
           <input type="hidden" id="editEmployeeId">
           <div class="row g-2">
             <div class="col-6 col-md-3">
+              <label class="form-label small fw-semibold">Status</label>
+              <select id="editStatus" class="form-select form-select-sm">
+                <option value="Active">Active</option>
+                <option value="LOA">LOA (Leave of Absence)</option>
+                <option value="Archived">Archived</option>
+              </select>
+            </div>
+            <div class="col-6 col-md-3">
               <label class="form-label small fw-semibold">FT / PT</label>
               <select id="editFtpt" class="form-select form-select-sm">
                 <option value="">— —</option>
                 <option value="FT">FT</option>
                 <option value="PT">PT</option>
+                <option value="LPT">LPT (Limited)</option>
               </select>
             </div>
             <div class="col-6 col-md-3">

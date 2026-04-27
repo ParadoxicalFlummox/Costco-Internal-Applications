@@ -1,6 +1,6 @@
 /**
  * ukgImport.js — UKG employee data import for COMET.
- * VERSION: 0.2.4
+ * VERSION: 0.2.6
  *
  * This file owns the server-side logic for upserting employee rows into the
  * Employees sheet from a parsed UKG CSV export.
@@ -119,8 +119,9 @@ function getAllEmployees_() {
   if (lastRow < EMPLOYEES_DATA_START_ROW) return []; // config.js
 
   const numRows = lastRow - EMPLOYEES_DATA_START_ROW + 1;
-  // Read all 13 columns (A–M) so schedule-specific fields F–M are included.
-  const numCols = Math.max(5, EMPLOYEE_COLUMN.SENIORITY_RANK); // 13
+  // Read all 14 columns (A–N) so schedule-specific fields F–N are included,
+  // including Secondary Departments (column N) needed by the Admin modal.
+  const numCols = Math.max(5, EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS); // 14
   const data = sheet.getRange(EMPLOYEES_DATA_START_ROW, 1, numRows, numCols).getValues();
 
   return data
@@ -145,8 +146,9 @@ function getAllEmployees_() {
         preferredShift:  String(row[EMPLOYEE_COLUMN.PREFERRED_SHIFT - 1] || '').trim(),
         qualifiedShifts: String(row[EMPLOYEE_COLUMN.QUALIFIED_SHIFTS - 1] || '').trim(),
         vacationDates:   String(row[EMPLOYEE_COLUMN.VACATION_DATES  - 1] || '').trim(),
-        role:            String(row[EMPLOYEE_COLUMN.ROLE            - 1] || '').trim(),
-        seniorityRank:   Number(row[EMPLOYEE_COLUMN.SENIORITY_RANK  - 1] || 0),
+        role:                  String(row[EMPLOYEE_COLUMN.ROLE                  - 1] || '').trim(),
+        seniorityRank:         Number(row[EMPLOYEE_COLUMN.SENIORITY_RANK         - 1] || 0),
+        secondaryDepartments:  String(row[EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS  - 1] || '').trim(),
       };
     });
 }
@@ -272,6 +274,7 @@ function updateEmployeeScheduleFields_(id, fields) {
 
   const sheetRow = index.get(String(id));
   const writes = [
+    [EMPLOYEE_COLUMN.STATUS,                 'status'],
     [EMPLOYEE_COLUMN.FTPT,                   'ftpt'],
     [EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE,       'dayOffPrefOne'],
     [EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO,       'dayOffPrefTwo'],

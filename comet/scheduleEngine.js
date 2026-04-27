@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.6.0
+ * VERSION: 0.6.2
  *
  * CHANGES FROM SOURCE:
  *   - loadRosterSortedBySeniority_() now reads from getActiveEmployees_() (ukgImport.js)
@@ -216,6 +216,7 @@ function loadRosterSortedBySeniority_(deptName, weekStartDate) {
       // Load secondary departments from Employees sheet column N
       let secondaryDepartments = [];
       let crossDeptHoursAlreadyScheduled = 0;
+      let crossDeptScheduledDays = null; // null = not a cross-dept employee
       if (employeesData && employeesData.length > 0) {
         // Find the row for this employee (match by name or ID)
         for (let rowIdx = EMPLOYEES_DATA_START_ROW - 1; rowIdx < employeesData.length; rowIdx++) {
@@ -235,9 +236,14 @@ function loadRosterSortedBySeniority_(deptName, weekStartDate) {
           }
         }
 
-        // If the employee has secondary departments, query for cross-dept hours
+        // If the employee has secondary departments, query for cross-dept hours and scheduled days.
+        // crossDeptScheduledDays drives handoff scheduling: when this employee appears in a
+        // secondary department's schedule, Phases 1–3 only assign shifts on days they are
+        // already working in their home department — mirroring the home dept days off rather
+        // than filling their open days.
         if (secondaryDepartments.length > 0 && weekStartDate) {
           crossDeptHoursAlreadyScheduled = getCrossDeptHoursForWeek_(emp, weekStartDate, deptName);
+          crossDeptScheduledDays = getCrossDeptScheduledDays_(emp, weekStartDate, deptName);
         }
       }
 
@@ -256,6 +262,7 @@ function loadRosterSortedBySeniority_(deptName, weekStartDate) {
         primaryRole:                     emp.role || '',
         secondaryDepartments:            secondaryDepartments,
         crossDeptHoursAlreadyScheduled:  crossDeptHoursAlreadyScheduled,
+        crossDeptScheduledDays:          crossDeptScheduledDays,
       };
     })
     .filter(function(employee) {
@@ -373,6 +380,73 @@ function getCrossDeptHoursForWeek_(employee, weekStartDate, excludeDept) {
 }
 
 
+/**
+ * Scans existing Week schedules for other departments to find which days an
+ * employee already has a SHIFT assigned. Used for handoff scheduling: when a
+ * cross-dept employee appears in a secondary department, Phases 1–3 only assign
+ * shifts on days they are already working in their home department — their home
+ * dept days off become the secondary dept days off automatically.
+ *
+ * Returns null if no other-dept schedule exists yet for this week, which means
+ * the home dept hasn't been generated yet and handoff scheduling can't run.
+ * In that case the engine falls back to normal (fill open days) behavior.
+ *
+ * @param {object}  employee        — Employee object with name field
+ * @param {Date}    weekStartDate   — The Monday of the week
+ * @param {string}  excludeDept     — Department to exclude (current dept being generated)
+ * @returns {{ Monday: bool, Tuesday: bool, ... }|null}
+ */
+function getCrossDeptScheduledDays_(employee, weekStartDate, excludeDept) {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetNames = workbook.getSheets().map(function(s) { return s.getName(); });
+  const normalizedExcludeDept = normalizeDeptName_(excludeDept);
+  const month = String(weekStartDate.getMonth() + 1).padStart(2, '0');
+  const day   = String(weekStartDate.getDate()).padStart(2, '0');
+  const year  = String(weekStartDate.getFullYear()).slice(-2);
+  const weekBaseName = 'Week_' + month + '_' + day + '_' + year + '_';
+
+  // Start with all days off — any day found as SHIFT in another dept flips to true
+  const scheduledDays = {
+    Monday: false, Tuesday: false, Wednesday: false,
+    Thursday: false, Friday: false, Saturday: false, Sunday: false,
+  };
+  let foundInAnyDept = false;
+
+  sheetNames.forEach(function(sheetName) {
+    if (!sheetName.startsWith(weekBaseName)) return;
+    const deptNameFromSheet = sheetName.substring(weekBaseName.length);
+    if (normalizeDeptName_(deptNameFromSheet) === normalizedExcludeDept) return;
+
+    const sheet = workbook.getSheetByName(sheetName);
+    if (!sheet) return;
+
+    const data = sheet.getDataRange().getValues();
+    if (!data || data.length < WEEK_SHEET.DATA_START_ROW) return;
+
+    for (let rowIndex = WEEK_SHEET.DATA_START_ROW - 1; rowIndex < data.length; rowIndex++) {
+      const row = data[rowIndex];
+      if (row[WEEK_SHEET.COL_ROW_LABEL - 1] !== 'SHIFT') continue;
+      const empName = row[WEEK_SHEET.COL_EMPLOYEE_NAME - 1];
+      if (!empName || empName.toString().trim() !== employee.name.toString().trim()) continue;
+
+      // Found the employee's SHIFT row — check each day column for a non-empty value
+      foundInAnyDept = true;
+      DAY_NAMES_IN_ORDER.forEach(function(dayName, dayIndex) {
+        const cellValue = row[WEEK_SHEET.COL_MONDAY - 1 + dayIndex];
+        if (cellValue && String(cellValue).trim() !== '') {
+          scheduledDays[dayName] = true;
+        }
+      });
+      break;
+    }
+  });
+
+  // Return null if no other-dept schedule was found — signals that the home dept
+  // hasn't been generated yet and handoff mode cannot be applied this run.
+  return foundInAnyDept ? scheduledDays : null;
+}
+
+
 // ---------------------------------------------------------------------------
 // Phase 1: Preference Assignment
 // ---------------------------------------------------------------------------
@@ -413,6 +487,11 @@ function assignPreferredShifts_(weekGrid, employeeList, shiftTimingMap, staggerM
       if (cell.type !== 'OFF') return;
       // Skip if this cell is locked (manager override via updateCellOverride).
       if (cell.locked) return;
+      // Handoff mode: cross-dept employee in a secondary dept schedule should only
+      // receive shifts on days they are already working in their home department.
+      // If crossDeptScheduledDays is set but false for this day, skip it — their
+      // home dept scheduled that day as off and we must honour that.
+      if (employee.crossDeptScheduledDays && !employee.crossDeptScheduledDays[dayName]) return;
       const shiftDef = resolveShiftForEmployee_(employee, shiftTimingMap);
       if (!shiftDef) return;
 
@@ -471,8 +550,8 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap, sta
   const staggerPositions = {};
 
   employeeList.forEach(function(employee, ei) {
-    const weeklyMin = employee.status === 'FT' ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN; // config.js
-    const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+    const weeklyMin = employee.status === 'FT' ? HOUR_RULES.FT_MIN : (employee.status === 'LPT' ? HOUR_RULES.LPT_MIN : HOUR_RULES.PT_MIN); // config.js
+    const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : (employee.status === 'LPT' ? HOUR_RULES.LPT_MAX : HOUR_RULES.PT_MAX);
     // Reduce effective max by hours already scheduled in other departments (split-shift)
     const effectiveMax = weeklyMax - (employee.crossDeptHoursAlreadyScheduled || 0);
     let currentHours = getWeeklyHours_(weekGrid, ei);
@@ -485,6 +564,8 @@ function runPhaseTwoHourEnforcement_(weekGrid, employeeList, shiftTimingMap, sta
       if (cell.type !== 'OFF') return;
       // Skip if this cell is locked (manager override via updateCellOverride).
       if (cell.locked) return;
+      // Handoff mode: only schedule on days already worked in home department.
+      if (employee.crossDeptScheduledDays && !employee.crossDeptScheduledDays[dayName]) return;
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) return;
       if (currentHours + shiftDef.paidHours > effectiveMax) return;
 
@@ -545,7 +626,7 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
       // Skip if this cell is locked (manager override via updateCellOverride).
       if (cell.locked) continue;
       const employee = employeeList[ei];
-      const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+      const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : (employee.status === 'LPT' ? HOUR_RULES.LPT_MAX : HOUR_RULES.PT_MAX);
       const effectiveMax = weeklyMax - (employee.crossDeptHoursAlreadyScheduled || 0);
       const currentHours = getWeeklyHours_(weekGrid, ei);
       const coverageWithout = buildDayCoverage_(weekGrid, employeeList, dayIndex, shiftTimingMap, ei);
@@ -571,7 +652,9 @@ function runPhaseThreeGapResolution_(weekGrid, employeeList, shiftTimingMap, sta
       if (cell.locked) continue;
       if (countWorkingDays_(weekGrid, ei) >= WEEK_SHEET.DAYS_IN_WEEK - SCHEDULE_RULES.MIN_DAYS_OFF) continue;
       const employee = employeeList[ei];
-      const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+      // Handoff mode: cross-dept employee must not be pulled in on days their home dept has off.
+      if (employee.crossDeptScheduledDays && !employee.crossDeptScheduledDays[dayName]) continue;
+      const weeklyMax = employee.status === 'FT' ? HOUR_RULES.FT_MAX : (employee.status === 'LPT' ? HOUR_RULES.LPT_MAX : HOUR_RULES.PT_MAX);
       const effectiveMax = weeklyMax - (employee.crossDeptHoursAlreadyScheduled || 0);
       const currentHours = getWeeklyHours_(weekGrid, ei);
       const best = selectBestCoverageShift_(employee.qualifiedShifts, employee.status, dayCoverage, shiftTimingMap);
@@ -822,7 +905,7 @@ function runPhaseFivePoolScheduling_(weekGrid, employeeList, poolMembers, heatma
 
       // Check hour constraints before assigning
       const weeklyHours = getWeeklyHours_(weekGrid, poolIndex);
-      const weeklyMax = poolMember.status === 'FT' ? HOUR_RULES.FT_MAX : HOUR_RULES.PT_MAX;
+      const weeklyMax = poolMember.status === 'FT' ? HOUR_RULES.FT_MAX : (poolMember.status === 'LPT' ? HOUR_RULES.LPT_MAX : HOUR_RULES.PT_MAX);
       const effectiveMax = weeklyMax - (poolMember.crossDeptHoursAlreadyScheduled || 0);
 
       // Select best shift from pool member's qualifiedShifts based on coverage
@@ -950,7 +1033,7 @@ function serializeWeekGrid_(weekGrid, employeeList) {
 function serializeEmployeeList_(employeeList, weekGrid) {
   return employeeList.map(function(emp, i) {
     var weeklyHours = getWeeklyHours_(weekGrid, i);
-    var minHours = emp.status === 'FT' ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN;
+    var minHours = emp.status === 'FT' ? HOUR_RULES.FT_MIN : (emp.status === 'LPT' ? HOUR_RULES.LPT_MIN : HOUR_RULES.PT_MIN);
     return {
       name:                 emp.name,
       employeeId:           emp.employeeId,
@@ -991,7 +1074,8 @@ function countWorkingDays_(weekGrid, ei) {
 
 function compareEmployeesBySeniority_(a, b) {
   if (b.seniorityRank !== a.seniorityRank) return b.seniorityRank - a.seniorityRank;
-  if (a.status !== b.status) return a.status === 'FT' ? -1 : 1;
+  // FT first, then PT, then LPT
+  if (a.status !== b.status) return a.status === 'FT' ? -1 : (b.status === 'FT' ? 1 : (a.status === 'LPT' ? 1 : -1));
   return a.name.localeCompare(b.name);
 }
 

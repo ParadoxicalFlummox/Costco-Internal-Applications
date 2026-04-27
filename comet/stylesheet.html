@@ -236,6 +236,8 @@
                         background: #DBEAFE; color: #1E40AF; font-weight: 600; font-size: 0.75rem; }
   .schedule-cell-pt   { display: inline-block; padding: 2px 5px; border-radius: 4px;
                         background: #DCFCE7; color: #166534; font-weight: 600; font-size: 0.75rem; }
+  .schedule-cell-lpt  { display: inline-block; padding: 2px 5px; border-radius: 4px;
+                        background: #FFF7ED; color: #9A3412; font-weight: 600; font-size: 0.75rem; }
   .schedule-cell-vac  { display: inline-block; padding: 2px 5px; border-radius: 4px;
                         background: #FEF9C3; color: #854D0E; font-weight: 600; font-size: 0.75rem; }
   .schedule-cell-rdo  { display: inline-block; padding: 2px 5px; border-radius: 4px;
@@ -275,13 +277,46 @@
     letter-spacing: 0.02em;
     white-space: nowrap;
   }
-  .role-badge-cashier                { background-color: #DBEAFE; color: #1E40AF; }
-  .role-badge-sco                    { background-color: #E0F2FE; color: #0369A1; }
-  .role-badge-prescan                { background-color: #EDE9FE; color: #5B21B6; }
-  .role-badge-floor                  { background-color: #D1FAE5; color: #065F46; }
-  .role-badge-maintenance-associate  { background-color: #FEF3C7; color: #92400E; }
-  .role-badge-lead                   { background-color: #FEE2E2; color: #991B1B; }
-  .role-badge-supervisor             { background-color: #FCE7F3; color: #9D174D; }
+  /* Front End — blue / cyan / purple family */
+  .role-badge-cashier              { background-color: #DBEAFE; color: #1E40AF; }
+  .role-badge-assistant            { background-color: #BFDBFE; color: #1E40AF; }
+  .role-badge-sco                  { background-color: #BAE6FD; color: #0369A1; }
+  .role-badge-liquor               { background-color: #A5F3FC; color: #0E7490; }
+  .role-badge-prescan              { background-color: #EDE9FE; color: #5B21B6; }
+  .role-badge-go-backs             { background-color: #F5D0FE; color: #86198F; }
+  .role-badge-carts                { background-color: #CBD5E1; color: #334155; }
+  .role-badge-floater              { background-color: #FEF08A; color: #713F12; }
+
+  /* Merchandising — green / indigo family */
+  .role-badge-morning              { background-color: #D1FAE5; color: #065F46; }
+  .role-badge-night                { background-color: #C7D2FE; color: #3730A3; }
+  .role-badge-produce              { background-color: #BBF7D0; color: #166534; }
+  .role-badge-stocker              { background-color: #ECFDF5; color: #065F46; }
+  .role-badge-driver               { background-color: #FDBA74; color: #7C2D12; }
+
+  /* Bakery / Food — rose and warm yellow */
+  .role-badge-bakery               { background-color: #FECACA; color: #991B1B; }
+  .role-badge-deli                 { background-color: #FDE68A; color: #92400E; }
+  .role-badge-food-service         { background-color: #FDE68A; color: #92400E; }
+  .role-badge-food-court           { background-color: #FDE68A; color: #92400E; }
+
+  /* Maintenance — amber */
+  .role-badge-maintenance-associate { background-color: #FEF3C7; color: #92400E; }
+  .role-badge-maintenance          { background-color: #FEF3C7; color: #92400E; }
+
+  /* Other departments */
+  .role-badge-receiving            { background-color: #A7F3D0; color: #065F46; }
+  .role-badge-membership-service   { background-color: #FFFBEB; color: #92400E; }
+  .role-badge-security             { background-color: #E2E8F0; color: #334155; }
+  .role-badge-tire-tech            { background-color: #F0FDF4; color: #166534; }
+  .role-badge-gas-attendant        { background-color: #FFEDD5; color: #9A3412; }
+  .role-badge-pharmacy-tech        { background-color: #F3E8FF; color: #6B21A8; }
+  .role-badge-optician             { background-color: #F0F9FF; color: #0369A1; }
+  .role-badge-hearing-specialist   { background-color: #FFF0F5; color: #9D174D; }
+
+  /* Leadership */
+  .role-badge-lead                 { background-color: #FEE2E2; color: #991B1B; }
+  .role-badge-supervisor           { background-color: #FCE7F3; color: #9D174D; }
 
   /* Priority role badge in the employee name cell */
   .role-priority-badge {
@@ -301,8 +336,9 @@
     margin-top: 1px;
   }
 
-  .schedule-row-ft td:first-child { border-left: 3px solid #3B82F6; }
-  .schedule-row-pt td:first-child { border-left: 3px solid #22C55E; }
+  .schedule-row-ft  td:first-child { border-left: 3px solid #3B82F6; }
+  .schedule-row-pt  td:first-child { border-left: 3px solid #22C55E; }
+  .schedule-row-lpt td:first-child { border-left: 3px solid #F97316; }
 
   .schedule-coverage-row td { font-size: 0.78rem; }
 
