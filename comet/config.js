@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.3
+ * VERSION: 0.5.5
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -162,11 +162,14 @@ const SHIFT_TABLE_COLUMN = {
  * The LOCK row stores override flags to prevent phase re-calculation from overwriting manager decisions.
  */
 const WEEK_SHEET = {
-  HEADER_ROW:         1,  // Merged week label ("Week of April 7 – 13, 2026")
-  TIMESTAMP_ROW:      2,  // "Generated: [timestamp]"
-  DEPARTMENT_ROW:     3,  // "Department: [deptName]"
-  COLUMN_HEADER_ROW:  5,  // "Label | Employee | Mon | Tue | ... | Sun | Total Hrs"
-  DATA_START_ROW:     6,  // First row of employee data blocks
+  HEADER_ROW:           1,  // Merged week label ("Week of April 7 – 13, 2026")
+  TIMESTAMP_ROW:        2,  // "Generated: [timestamp]"
+  DEPARTMENT_ROW:       3,  // "Department: [deptName]"
+  COLUMN_HEADER_ROW:    5,  // "Label | Employee | Mon | Tue | ... | Sun | Total Hrs"
+  SUMMARY_REQUIRED_ROW: 6,  // REQUIRED row — fixed position, always row 6
+  SUMMARY_ACTUAL_ROW:   7,  // ACTUAL row — fixed position, always row 7
+  SUMMARY_STATUS_ROW:   8,  // STATUS row — fixed position, always row 8; freeze through here
+  DATA_START_ROW:       9,  // First row of employee data blocks (was 6; summary moved to top)
 
   // Column positions (1-indexed)
   COL_ROW_LABEL:      1,  // A — "VAC", "RDO", "SHIFT", "ROLE", "LOCK" label
@@ -446,12 +449,13 @@ const COVERAGE_WINDOW = {
  * Hex color codes applied to cells in generated schedule sheets.
  *
  * Blue  = FT shift  |  Green = PT shift  |  Yellow = Vacation
- * Gray  = Day off   |  Red   = Under hours  |  Orange = FT over-hours
+ * Gray  = Day off   |  Red   = Under hours  |  Orange = FT over-hours / combo shift
  * Lavender = Role row background
  */
 const COLORS = {
   FT_SHIFT:      '#4A90D9',  // Blue — full-time shift background
   PT_SHIFT:      '#57BB8A',  // Green — part-time shift background
+  COMBO_SHIFT:   '#FF7043',  // Deep orange — hybrid/combo shift (cross-dept handoff)
   VACATION:      '#FFD966',  // Yellow — vacation day background
   DAY_OFF:       '#B7B7B7',  // Gray — RDO/OFF background
   UNDER_HOURS:   '#E06666',  // Red — name cell when employee is below weekly minimum
@@ -600,6 +604,13 @@ const EMPLOYEE_FIELDS = {
   employeeId:   'X3',
   hireDate:     'AD3',
 };
+
+/**
+ * Hidden template sheet used by the attendance controller tab generator.
+ * Built once per year with all formatting; each employee tab is a copy of this sheet.
+ * The leading underscore sorts it before employee tabs and signals it is system-managed.
+ */
+const ATTENDANCE_TEMPLATE_SHEET_NAME = '_AC_TEMPLATE_';
 
 /**
  * Regex that identifies employee tabs in the attendance controller.

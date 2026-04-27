@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.4.0
+     VERSION: 0.4.1
   
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -260,11 +260,23 @@
             console.error('scheduleTabsContainer not found');
             return;
           }
+
+          // Clear any previously loaded schedule so the old dept's data is not
+          // visible while the new dept is loading or has no schedule yet.
+          _weekSheetName = null;
+          _weekGrid = null;
+          _employeeList = null;
+          _staffingRequirements = null;
+          _currentMonday = null;
+          _currentDept = null;
+          var gridInner = document.getElementById('scheduleGridInner');
+          if (gridInner) gridInner.innerHTML = '';
+
           if (dept) {
+            _currentDept = dept;
             loadDeptSettings(dept);
             loadTrafficHeatmapConfig(dept);
             tabsContainer.style.display = '';
-            console.log('Showing tabs for dept:', dept);
             // Initialize tab switching after tabs appear
             initializeScheduleTabs();
           } else {

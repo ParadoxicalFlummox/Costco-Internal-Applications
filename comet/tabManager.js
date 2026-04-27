@@ -1,6 +1,6 @@
 /**
  * tabManager.js — Attendance controller tab generation for COMET.
- * VERSION: 0.2.4
+ * VERSION: 0.3.0
  *
  * Generates one attendance controller sheet tab per active employee, following
  * the standardized Costco layout that calendarParser.js already knows how to read:
@@ -18,9 +18,11 @@
  * IDEMPOTENT: existing tabs are skipped, so the function is safe to run again
  * if it times out partway through or new employees are added later.
  *
- * EXECUTION TIME: GAS has a 6-minute limit. At ~200ms per sheet, a roster of
- * 100 employees takes roughly 20 seconds. If you have 200+ employees on a slow
- * script host, run Setup a second time — the skipped count confirms progress.
+ * PERFORMANCE: Template-copy pattern — ensureAttendanceTemplate_() builds one
+ * hidden _AC_TEMPLATE_ sheet with all formatting and the full calendar grid.
+ * Each employee tab is then created by copyTo() + rename + 4 setValue calls
+ * (~8 API calls vs. ~65 in the previous per-employee build approach).
+ * For 300 employees: ~2,400 total API calls vs. ~19,500 previously.
  */
 
 
@@ -31,12 +33,81 @@
 /**
  * Creates attendance controller tabs for all active employees for the given year.
  *
+ * Uses a template-copy pattern: ensureAttendanceTemplate_() builds one hidden
+ * _AC_TEMPLATE_ sheet with all formatting and the calendar grid. Each employee
+ * tab is created by copying that template, renaming it, and writing 4 cells.
+ *
  * @param {number} year — Calendar year (e.g. 2026).
  * @returns {{ created: number, skipped: number }}
  */
 function generateAttendanceControllerTabs_(year) {
   const workbook  = SpreadsheetApp.getActiveSpreadsheet();
   const employees = getActiveEmployees_(); // ukgImport.js
+
+  // Build or validate the hidden template once — all formatting happens here
+  const templateSheet = ensureAttendanceTemplate_(workbook, year);
+
+  let created = 0;
+  let skipped = 0;
+
+  employees.forEach(function(employee) {
+    const tabName = employee.name + ' - ' + employee.id;
+
+    if (workbook.getSheetByName(tabName)) {
+      skipped++;
+      return;
+    }
+
+    // Copy template → rename → make visible → write 4 employee-specific cells
+    const newSheet = templateSheet.copyTo(workbook);
+    newSheet.setName(tabName);
+    newSheet.showSheet(); // copyTo preserves hidden state — must make visible
+    newSheet.getRange(EMPLOYEE_FIELDS.employeeName).setValue(employee.name);
+    newSheet.getRange(EMPLOYEE_FIELDS.department)  .setValue(employee.department);
+    newSheet.getRange(EMPLOYEE_FIELDS.employeeId)  .setValue(employee.id);
+    if (employee.hireDate) newSheet.getRange(EMPLOYEE_FIELDS.hireDate).setValue(employee.hireDate);
+
+    created++;
+  });
+
+  SpreadsheetApp.flush();
+  sortWorkbookSheets_(); // api.js
+  return { created, skipped };
+}
+
+
+// ---------------------------------------------------------------------------
+// Template Builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds or validates the hidden attendance controller template sheet.
+ *
+ * The template encodes the year in D1. If it already exists and matches the
+ * requested year, it is returned as-is. If the year has changed (e.g. running
+ * Setup for 2027 when a 2026 template exists), the old template is deleted and
+ * a new one is built. Employee tabs already created for the old year are
+ * unaffected — they exist independently as copies.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} workbook
+ * @param {number} year
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+ */
+function ensureAttendanceTemplate_(workbook, year) {
+  const expectedTitle = year + ' Attendance Controller';
+  let templateSheet = workbook.getSheetByName(ATTENDANCE_TEMPLATE_SHEET_NAME); // config.js
+
+  if (templateSheet) {
+    const existingTitle = String(templateSheet.getRange(EMPLOYEE_FIELDS.yearTitle).getValue() || '').trim();
+    if (existingTitle === expectedTitle) {
+      return templateSheet; // Valid for this year — reuse it
+    }
+    // Year mismatch — delete and rebuild
+    workbook.deleteSheet(templateSheet);
+  }
+
+  // Build a fresh template sheet
+  templateSheet = workbook.insertSheet(ATTENDANCE_TEMPLATE_SHEET_NAME);
 
   const MONTHS = [
     'JANUARY', 'FEBRUARY', 'MARCH',    'APRIL',
@@ -45,60 +116,39 @@ function generateAttendanceControllerTabs_(year) {
   ];
   const DAY_HEADERS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-  let created = 0;
-  let skipped = 0;
+  // Write year title — the only non-employee metadata field on the sheet
+  templateSheet.getRange(EMPLOYEE_FIELDS.yearTitle).setValue(expectedTitle);
 
-  employees.forEach(function(emp) {
-    const tabName = emp.name + ' - ' + emp.id;
+  // Write calendar grid: month names, day-of-week headers, day numbers
+  DATA_BANDS.forEach(function(band, bandIndex) {
+    START_COLUMNS.forEach(function(colLetter, blockIndex) {
+      const monthIndex = bandIndex * 4 + blockIndex;
+      if (monthIndex >= 12) return;
 
-    if (workbook.getSheetByName(tabName)) {
-      skipped++;
-      return;
-    }
+      const startColIdx = colLetterToIndex_(colLetter); // calendarParser.js
 
-    const sheet = workbook.insertSheet(tabName);
+      const monthNameCell = templateSheet.getRange(band.monthRow, startColIdx);
+      monthNameCell.setValue(MONTHS[monthIndex]);
+      monthNameCell.setFontWeight('bold');
 
-    // ---- Metadata cells ----
-    sheet.getRange(EMPLOYEE_FIELDS.yearTitle)   .setValue(year + ' Attendance Controller');
-    sheet.getRange(EMPLOYEE_FIELDS.employeeName).setValue(emp.name);
-    sheet.getRange(EMPLOYEE_FIELDS.department)  .setValue(emp.department);
-    sheet.getRange(EMPLOYEE_FIELDS.employeeId)  .setValue(emp.id);
-    if (emp.hireDate) sheet.getRange(EMPLOYEE_FIELDS.hireDate).setValue(emp.hireDate);
+      templateSheet.getRange(band.dayOfWeekRow, startColIdx, 1, DAY_COLS_PER_BLOCK)
+        .setValues([DAY_HEADERS])
+        .setFontWeight('bold')
+        .setBackground('#E8EAF6')
+        .setHorizontalAlignment('center');
 
-    // ---- Calendar grid ----
-    DATA_BANDS.forEach(function(band, bandIndex) {
-      START_COLUMNS.forEach(function(colLetter, blockIndex) {
-        const monthIndex = bandIndex * 4 + blockIndex;
-        if (monthIndex >= 12) return;
-
-        const startColIdx = colLetterToIndex_(colLetter); // calendarParser.js
-
-        // Month name header
-        const monthNameCell = sheet.getRange(band.monthRow, startColIdx);
-        monthNameCell.setValue(MONTHS[monthIndex]);
-        monthNameCell.setFontWeight('bold');
-
-        // Day-of-week header row
-        sheet.getRange(band.dayOfWeekRow, startColIdx, 1, DAY_COLS_PER_BLOCK)
-          .setValues([DAY_HEADERS])
-          .setFontWeight('bold')
-          .setBackground('#E8EAF6')
-          .setHorizontalAlignment('center');
-
-        // Day numbers — written as one batch per month block
-        writeDayNumberGrid_(
-          sheet, year, monthIndex,
-          band.firstGridRow, band.lastGridRow, startColIdx
-        );
-      });
+      writeDayNumberGrid_(
+        templateSheet, year, monthIndex,
+        band.firstGridRow, band.lastGridRow, startColIdx
+      );
     });
-
-    formatAttendanceControllerSheet_(sheet, year, emp);
-    created++;
   });
 
-  sortWorkbookSheets_(); // api.js
-  return { created, skipped };
+  // Apply all visual formatting — null employee signals this is a template build
+  formatAttendanceControllerSheet_(templateSheet, year, null);
+
+  templateSheet.hideSheet();
+  return templateSheet;
 }
 
 
@@ -166,6 +216,10 @@ function writeDayNumberGrid_(sheet, year, monthIndex, startRow, endRow, startCol
  * Applies visual formatting to a newly created attendance controller tab so
  * it is readable on screen and clean when printed.
  *
+ * When called with emp=null (template build), all formatting is applied but
+ * employee-specific font sizing for the hire date cell is skipped — safe
+ * because the template has no hire date value to size.
+ *
  * Layout overview (columns A–AH, 34 columns):
  *   Each band occupies 4 blocks × 8 columns (7 day cols + 1 spacer) = 32 cols.
  *   Cols A–G, I–O, Q–W, Y–AE are the 7 day columns per month block.
@@ -173,9 +227,10 @@ function writeDayNumberGrid_(sheet, year, monthIndex, startRow, endRow, startCol
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
  * @param {number} year
- * @param {{ name: string, id: string, department: string }} emp
+ * @param {{ name: string, id: string, department: string, hireDate: string }|null} employee
+ *   Pass null when building the template — employee-specific font sizing is skipped.
  */
-function formatAttendanceControllerSheet_(sheet, year, emp) {
+function formatAttendanceControllerSheet_(sheet, year, employee) {
   // ---- Header rows (rows 1–4): employee identity ----
   sheet.getRange('A1:AH4').setBackground('#263238').setFontColor('#FFFFFF');
   sheet.getRange(EMPLOYEE_FIELDS.yearTitle)
@@ -186,7 +241,7 @@ function formatAttendanceControllerSheet_(sheet, year, emp) {
     .setFontSize(10);
   sheet.getRange(EMPLOYEE_FIELDS.employeeId)
     .setFontSize(10);
-  if (emp.hireDate) {
+  if (employee && employee.hireDate) {
     sheet.getRange(EMPLOYEE_FIELDS.hireDate).setFontSize(10);
   }
   // Freeze the identity rows so they stay visible while scrolling

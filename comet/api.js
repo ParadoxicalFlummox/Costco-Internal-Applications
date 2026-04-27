@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.3
+ * VERSION: 0.5.4
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -115,6 +115,12 @@ function generateSchedule(deptName, mondayDate) {
     if (!deptName || !mondayDate) throw new Error('deptName and mondayDate are required.');
     const weekStartDate = new Date(mondayDate + 'T00:00:00');
 
+    // Acquire document lock before any sheet reads/writes to prevent two managers
+    // from generating the same schedule simultaneously. If a generation is already
+    // in progress, the caller waits up to 10 s then receives a clear error rather
+    // than silently writing garbled interleaved data.
+    return withDocumentLock_(10000, function() {
+
     const { result } = logExecutionTime_('generateWeeklySchedule_', function() {
       return generateWeeklySchedule_(deptName, weekStartDate); // scheduleEngine.js
     });
@@ -166,6 +172,7 @@ function generateSchedule(deptName, mondayDate) {
         staffingRequirements: staffingRequirements,
       },
     };
+    }); // end withDocumentLock_
   } catch (error) {
     console.error('api: generateSchedule failed —', error);
     return { ok: false, error: error.message };
@@ -321,8 +328,10 @@ function getDeptSettings(deptName) {
 function saveDeptSettings(deptName, data) {
   try {
     if (!deptName) throw new Error('deptName is required.');
-    saveDeptSettings_(deptName, data); // scheduleSettings.js
-    return { ok: true, data: { saved: true } };
+    return withDocumentLock_(10000, function() {
+      saveDeptSettings_(deptName, data); // scheduleSettings.js
+      return { ok: true, data: { saved: true } };
+    });
   } catch (error) {
     console.error('api: saveDeptSettings failed —', error);
     return { ok: false, error: error.message };
@@ -361,8 +370,10 @@ function saveTrafficHeatmapConfig(deptName, config) {
   try {
     if (!deptName) throw new Error('deptName is required.');
     if (!config) throw new Error('config is required.');
-    saveTrafficHeatmapConfig_(deptName, config); // settingsManager.js
-    return { ok: true, data: { saved: true } };
+    return withDocumentLock_(10000, function() {
+      saveTrafficHeatmapConfig_(deptName, config); // settingsManager.js
+      return { ok: true, data: { saved: true } };
+    });
   } catch (error) {
     console.error('api: saveTrafficHeatmapConfig failed —', error);
     return { ok: false, error: error.message };
@@ -391,6 +402,7 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
     if (!weekSheetName || !employeeId || dayIndex == null || !newType) {
       throw new Error('weekSheetName, employeeId, dayIndex, and newType are all required.');
     }
+    return withDocumentLock_(10000, function() {
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = workbook.getSheetByName(weekSheetName);
     if (!sheet) throw new Error('Week sheet "' + weekSheetName + '" not found.');
@@ -479,6 +491,7 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
         staffingRequirements: staffingReqs,
       },
     };
+    }); // end withDocumentLock_
   } catch (error) {
     console.error('api: updateCellOverride failed —', error);
     return { ok: false, error: error.message };
@@ -496,8 +509,10 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
 function updateEmployeeScheduleFields(id, fields) {
   try {
     if (!id) throw new Error('id is required.');
-    const updated = updateEmployeeScheduleFields_(id, fields); // ukgImport.js
-    return { ok: true, data: { updated } };
+    return withDocumentLock_(10000, function() {
+      const updated = updateEmployeeScheduleFields_(id, fields); // ukgImport.js
+      return { ok: true, data: { updated } };
+    });
   } catch (error) {
     console.error('api: updateEmployeeScheduleFields failed —', error);
     return { ok: false, error: error.message };
@@ -549,8 +564,13 @@ function getAbsenceLogForDay(dateString) {
  */
 function logAbsenceEntry(data) {
   try {
-    const result = appendCallLogEntry_(data); // callLog.js
-    return { ok: true, data: result };
+    // Document lock is critical here: appendCallLogEntry_ uses getLastRow() + append.
+    // Without it two concurrent calls can get the same last-row number and one entry
+    // silently overwrites the other.
+    return withDocumentLock_(10000, function() {
+      const result = appendCallLogEntry_(data); // callLog.js
+      return { ok: true, data: result };
+    });
   } catch (error) {
     console.error('api: logAbsenceEntry failed —', error);
     return { ok: false, error: error.message };
@@ -669,8 +689,10 @@ function runSetup() {
  */
 function importFromUKG(rows) {
   try {
-    const result = importEmployeesFromUkg_(rows); // ukgImport.js
-    return { ok: true, data: result };
+    return withDocumentLock_(10000, function() {
+      const result = importEmployeesFromUkg_(rows); // ukgImport.js
+      return { ok: true, data: result };
+    });
   } catch (error) {
     console.error('api: importFromUKG failed —', error);
     return { ok: false, error: error.message };
@@ -801,8 +823,10 @@ function getEmployeeSheetAge() {
  */
 function setEmployeeStatus(id, status) {
   try {
-    const updated = setEmployeeStatus_(id, status); // ukgImport.js
-    return { ok: true, data: { updated } };
+    return withDocumentLock_(10000, function() {
+      const updated = setEmployeeStatus_(id, status); // ukgImport.js
+      return { ok: true, data: { updated } };
+    });
   } catch (error) {
     console.error('api: setEmployeeStatus failed —', error);
     return { ok: false, error: error.message };
@@ -1017,6 +1041,47 @@ function updateConfig(key, value) {
   } catch (error) {
     console.error('api: updateConfig failed —', error);
     return { ok: false, error: error.message };
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Internal — Concurrency
+// ---------------------------------------------------------------------------
+
+/**
+ * Executes a callback inside a GAS DocumentLock to serialize concurrent writes.
+ *
+ * WHY THIS EXISTS:
+ *   GAS does not provide atomic read-modify-write operations across executions.
+ *   When two managers trigger write operations simultaneously (e.g. both log an
+ *   absence, or both generate a schedule), their executions can interleave:
+ *
+ *   - logAbsenceEntry: both calls read the same getLastRow() value and one entry
+ *     silently overwrites the other.
+ *   - generateSchedule: both write their independently computed grids to the same
+ *     sheet, producing garbled interleaved row data.
+ *
+ *   A DocumentLock serializes all write operations within this spreadsheet.
+ *   If one write is in progress the caller waits up to timeoutMs, then throws
+ *   with a clear message rather than corrupting data.
+ *
+ * @param {number}   timeoutMs — How long (ms) to wait for the lock before throwing.
+ * @param {Function} callback  — Function to run while the lock is held.
+ * @returns {*} The return value of callback.
+ * @throws {Error} If the lock cannot be acquired within timeoutMs.
+ */
+function withDocumentLock_(timeoutMs, callback) {
+  const lock = LockService.getDocumentLock();
+  try {
+    lock.waitLock(timeoutMs);
+  } catch (_lockError) {
+    throw new Error('Another operation is in progress. Please wait a moment and try again.');
+  }
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
   }
 }
 

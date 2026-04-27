@@ -1,6 +1,6 @@
 /**
  * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION: 0.5.2
+ * VERSION: 0.5.4
  *
  * This file is the only place in the codebase that writes to a Week schedule sheet.
  * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
@@ -80,6 +80,13 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
     writeColumnHeaders(scheduleSheet);
   });
 
+  // Write summary rows BEFORE employee blocks so they occupy fixed rows 6/7/8.
+  // Employee blocks grow downward from row 9; hybrid-pass appends land below
+  // without ever disturbing the summary row positions.
+  logExecutionTime_('Write Staffing Summary', function() {
+    writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements, poolMembers.length);
+  });
+
   logExecutionTime_('Write Pool Section (' + poolMembers.length + ' pool members)', function() {
     if (poolMembers.length > 0) {
       writePoolSection_(scheduleSheet, poolMembers, weekGrid, employeeList);
@@ -88,10 +95,6 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
 
   logExecutionTime_('Write Employee Blocks (' + regularEmployees.length + ' regular employees)', function() {
     writeEmployeeBlocks(scheduleSheet, regularEmployees, weekGrid, poolMembers.length);
-  });
-
-  logExecutionTime_('Write Staffing Summary', function() {
-    writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements, poolMembers.length);
   });
 
   // Flush all pending content writes before starting formatting.
@@ -109,11 +112,11 @@ function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingR
   });
 
   logExecutionTime_('Apply Under-Hours Highlight', function() {
-    applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid);
+    applyUnderHoursHighlight(scheduleSheet, regularEmployees, weekGrid, poolMembers.length);
   });
 
   logExecutionTime_('Apply Status Row Conditional Format', function() {
-    applyStatusRowConditionalFormat(scheduleSheet, employeeList.length);
+    applyStatusRowConditionalFormat(scheduleSheet);
   });
 
   logExecutionTime_('Apply Structural Formatting', function() {
@@ -469,17 +472,15 @@ function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid, poolRowOffse
  * @param {number} poolRowOffset        — (Optional) Number of pool member rows before regular employees.
  */
 function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements, poolRowOffset) {
-  poolRowOffset = poolRowOffset || 0;
-  const employeeCount     = employeeList.length;
-  const lastEmployeeRow   = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + (employeeCount * WEEK_SHEET.ROWS_PER_EMPLOYEE) - 1;
-  const summaryStartRow   = lastEmployeeRow + 2;
-  const requiredRow       = summaryStartRow;
-  const actualRow         = summaryStartRow + 1;
-  const statusRow         = summaryStartRow + 2;
+  // poolRowOffset is kept for signature compatibility but no longer used — summary rows
+  // are at fixed positions and do not depend on employee count or pool section size.
+  void poolRowOffset;
 
-  // First SHIFT row and last SHIFT row — used for the Count-mode COUNTIF range.
-  const dataStartRow = WEEK_SHEET.DATA_START_ROW + WEEK_SHEET.ROW_OFFSET_SHIFT;
-  const lastShiftRow = lastEmployeeRow;
+  // Fixed row positions — never move regardless of employee count.
+  // Rows 6/7/8 are always REQUIRED/ACTUAL/STATUS; employee data starts at row 9.
+  const requiredRow = WEEK_SHEET.SUMMARY_REQUIRED_ROW;
+  const actualRow   = WEEK_SHEET.SUMMARY_ACTUAL_ROW;
+  const statusRow   = WEEK_SHEET.SUMMARY_STATUS_ROW;
 
   // Row labels (column A).
   scheduleSheet.getRange(requiredRow, WEEK_SHEET.COL_ROW_LABEL).setValue("REQUIRED").setFontWeight("bold");
@@ -511,8 +512,10 @@ function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingReq
       // ACTUAL (Count mode): live formula counting cells that contain a time-range
       // string (identified by the colon in "8:45 AM - 9:30 AM").
       // Role names, OFF/VAC/RDO text, and checkboxes are all excluded by "*:*".
+      // Open-ended range (DATA_START_ROW:10000) automatically includes any hybrid
+      // employee rows appended by a future second-pass run.
       const countIfFormula =
-        "=COUNTIF(" + columnLetter + dataStartRow + ":" + columnLetter + lastShiftRow + ",\"*:*\")";
+        "=COUNTIF(" + columnLetter + WEEK_SHEET.DATA_START_ROW + ":" + columnLetter + "10000,\"*:*\")";
       scheduleSheet.getRange(actualRow, columnNumber).setFormula(countIfFormula);
     }
 
@@ -524,10 +527,11 @@ function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingReq
     scheduleSheet.getRange(statusRow, columnNumber).setFormula(statusFormula);
   });
 
-  // Department total hours (STATUS row, column J) — always a sum of weekly per-employee totals.
+  // Department total hours (STATUS row, column J) — sum of all weekly per-employee totals.
+  // Open-ended range automatically includes hybrid employee rows appended later.
   const totalHoursColumnLetter = columnIndexToLetter(WEEK_SHEET.COL_TOTAL_HOURS);
   const departmentTotalFormula =
-    "=SUM(" + totalHoursColumnLetter + dataStartRow + ":" + totalHoursColumnLetter + lastShiftRow + ")";
+    "=SUM(" + totalHoursColumnLetter + WEEK_SHEET.DATA_START_ROW + ":" + totalHoursColumnLetter + "10000)";
   scheduleSheet.getRange(statusRow, WEEK_SHEET.COL_TOTAL_HOURS)
     .setFormula(departmentTotalFormula)
     .setFontWeight("bold");
@@ -542,10 +546,11 @@ function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingReq
  * Applies cell background colors to SHIFT row cells based on the assignment type and status.
  *
  * Color mapping:
- *   FT SHIFT  → COLORS.FT_SHIFT  (blue)
- *   PT SHIFT  → COLORS.PT_SHIFT  (green)
- *   VAC       → COLORS.VACATION  (yellow)
- *   RDO / OFF → COLORS.DAY_OFF   (gray)
+ *   Combo SHIFT → COLORS.COMBO_SHIFT (deep orange) — shift name contains "Combo"
+ *   FT SHIFT    → COLORS.FT_SHIFT    (blue)
+ *   PT SHIFT    → COLORS.PT_SHIFT    (green)
+ *   VAC         → COLORS.VACATION    (yellow)
+ *   RDO / OFF   → COLORS.DAY_OFF     (gray)
  *
  * Only SHIFT row cells receive color. VAC and RDO rows use a neutral background so the
  * shift row visually pops as the primary information row for each employee.
@@ -564,7 +569,11 @@ function applyShiftColors(scheduleSheet, employeeList, weekGrid) {
 
     const rowColors = [weekGrid[employeeIndex].map(function(cell) {
       if (cell.type === "SHIFT") {
-        // Blue for FT, green for PT — easy to see the mix at a glance.
+        // Combo shifts (cross-dept handoff) get orange regardless of FT/PT status.
+        // Blue for FT, green for PT/LPT otherwise.
+        if (cell.shiftName && cell.shiftName.indexOf('Combo') !== -1) {
+          return COLORS.COMBO_SHIFT;
+        }
         return employee.status === "FT" ? COLORS.FT_SHIFT : COLORS.PT_SHIFT;
       } else if (cell.type === "VAC") {
         return COLORS.VACATION;
@@ -633,34 +642,56 @@ function applyRoleRowColors(scheduleSheet, employeeList, weekGrid) {
  * @param {Array} employeeList  — Employees in seniority order.
  * @param {Array} weekGrid      — The generated schedule grid.
  */
-function applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid) {
-  employeeList.forEach(function(employee, employeeIndex) {
-    const shiftRow = WEEK_SHEET.DATA_START_ROW +
-      (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE) +
-      WEEK_SHEET.ROW_OFFSET_SHIFT;
+function applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid, poolRowOffset) {
+  poolRowOffset = poolRowOffset || 0;
 
-    const weeklyHours   = getWeeklyHours(weekGrid, employeeIndex);
-    const weeklyMinimum = employee.status === "FT" ? HOUR_RULES.FT_MIN : HOUR_RULES.PT_MIN;
+  const totalEmployeeRows = employeeList.length * WEEK_SHEET.ROWS_PER_EMPLOYEE;
+  if (totalEmployeeRows === 0) return;
 
-    // Name cell highlight (column B, SHIFT row) — red when the employee is under their minimum.
-    // Applied to the SHIFT row's column B, which is the visible bottom of the merged name cell.
-    const nameHighlightCell        = scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_EMPLOYEE_NAME);
-    // Total hours cell highlight (column J, SHIFT row) — orange when an FT employee is over 40 hrs.
-    const totalHoursHighlightCell  = scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_TOTAL_HOURS);
+  // Sheet row where this employee list's blocks begin (after any pool section).
+  const blockStartSheetRow = WEEK_SHEET.DATA_START_ROW
+    + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE);
 
-    if (employee.status === "FT" && weeklyHours > HOUR_RULES.FT_MAX) {
-      // FT employees should never exceed 40 hours — orange on the total hours number signals overtime risk.
-      nameHighlightCell.setBackground(null);
-      totalHoursHighlightCell.setBackground(COLORS.OVER_HOURS_FT);
-    } else if (weeklyHours < weeklyMinimum) {
-      nameHighlightCell.setBackground(COLORS.UNDER_HOURS);
-      totalHoursHighlightCell.setBackground(null);
-    } else {
-      // Clear any previous highlights in case of re-generation.
-      nameHighlightCell.setBackground(null);
-      totalHoursHighlightCell.setBackground(null);
+  // Build two sparse color arrays — one for column B (name), one for column J (total hours).
+  // Each array covers every row in the employee block range; null = clear existing background.
+  // Only the SHIFT row within each 5-row block receives a color; all others get null.
+  // This reduces 4N individual getRange/setBackground calls to 2 total API calls.
+  const nameColors  = [];
+  const hoursColors = [];
+
+  for (let employeeIndex = 0; employeeIndex < employeeList.length; employeeIndex++) {
+    const employee    = employeeList[employeeIndex];
+    const weeklyHours = getWeeklyHours(weekGrid, employeeIndex);
+    const weeklyMin   = employee.status === 'FT'  ? HOUR_RULES.FT_MIN
+                      : employee.status === 'LPT' ? HOUR_RULES.LPT_MIN
+                      : HOUR_RULES.PT_MIN;
+
+    let nameColor  = null;
+    let hoursColor = null;
+
+    if (employee.status === 'FT' && weeklyHours > HOUR_RULES.FT_MAX) {
+      // Orange on the total hours cell flags overtime risk for FT employees.
+      hoursColor = COLORS.OVER_HOURS_FT;
+    } else if (weeklyHours < weeklyMin) {
+      // Red on the name cell flags under-minimum hours.
+      nameColor = COLORS.UNDER_HOURS;
     }
-  });
+    // null on both clears any prior highlight when re-generating (employee now in-hours).
+
+    for (let rowOffset = 0; rowOffset < WEEK_SHEET.ROWS_PER_EMPLOYEE; rowOffset++) {
+      const isShiftRow = rowOffset === WEEK_SHEET.ROW_OFFSET_SHIFT;
+      nameColors.push([isShiftRow  ? nameColor  : null]);
+      hoursColors.push([isShiftRow ? hoursColor : null]);
+    }
+  }
+
+  // Two API calls total regardless of roster size.
+  scheduleSheet
+    .getRange(blockStartSheetRow, WEEK_SHEET.COL_EMPLOYEE_NAME, totalEmployeeRows, 1)
+    .setBackgrounds(nameColors);
+  scheduleSheet
+    .getRange(blockStartSheetRow, WEEK_SHEET.COL_TOTAL_HOURS, totalEmployeeRows, 1)
+    .setBackgrounds(hoursColors);
 }
 
 
@@ -675,9 +706,8 @@ function applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid) {
  * @param {Sheet}  scheduleSheet  — The schedule sheet.
  * @param {number} employeeCount  — Used to calculate the STATUS row number.
  */
-function applyStatusRowConditionalFormat(scheduleSheet, employeeCount) {
-  const lastEmployeeRow = WEEK_SHEET.DATA_START_ROW + (employeeCount * WEEK_SHEET.ROWS_PER_EMPLOYEE) - 1;
-  const statusRow       = lastEmployeeRow + 4; // +2 gap, +1 REQUIRED, +1 ACTUAL, +1 STATUS = +4
+function applyStatusRowConditionalFormat(scheduleSheet) {
+  const statusRow = WEEK_SHEET.SUMMARY_STATUS_ROW; // Fixed position — always row 8
 
   const statusRange = scheduleSheet.getRange(
     statusRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK
@@ -726,11 +756,12 @@ function applyStructuralFormatting(scheduleSheet, employeeCount) {
   scheduleSheet.setColumnWidth(WEEK_SHEET.COL_TOTAL_HOURS, 85); // "Total Hrs"
 
   // --- Freeze the header rows ---
-  // Freezing rows 1–5 keeps the week label and column headers visible while scrolling.
+  // Freezing rows 1–8 keeps the week label, staffing summary (REQUIRED/ACTUAL/STATUS),
+  // and column headers always visible while scrolling through employee blocks.
   // Column A is NOT frozen because the week header row (row 1) has a merged cell spanning
   // all columns (A1:J1). Google Sheets does not allow freezing a column that would split
   // a merged cell — attempting to do so throws a runtime error.
-  scheduleSheet.setFrozenRows(WEEK_SHEET.COLUMN_HEADER_ROW);
+  scheduleSheet.setFrozenRows(WEEK_SHEET.SUMMARY_STATUS_ROW);
 
   // --- Row label column (A) background ---
   // Light gray background on the label column helps visually separate it from data cells.
