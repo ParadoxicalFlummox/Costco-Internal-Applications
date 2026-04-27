@@ -63,22 +63,26 @@
       <div id="scheduleTabsContainer" style="display:none;">
         <ul class="nav nav-tabs mb-3" role="tablist">
           <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="tab-schedule-gen-btn" data-bs-toggle="tab" data-bs-target="#tab-schedule-gen" type="button" role="tab">
+            <button class="nav-link active" id="tab-schedule-gen-btn" data-bs-toggle="tab"
+              data-bs-target="#tab-schedule-gen" type="button" role="tab">
               Schedule Generator
             </button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-staffing-req-btn" data-bs-toggle="tab" data-bs-target="#tab-staffing-req" type="button" role="tab">
+            <button class="nav-link" id="tab-staffing-req-btn" data-bs-toggle="tab" data-bs-target="#tab-staffing-req"
+              type="button" role="tab">
               Staffing Requirements
             </button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-shift-defs-btn" data-bs-toggle="tab" data-bs-target="#tab-shift-defs" type="button" role="tab">
+            <button class="nav-link" id="tab-shift-defs-btn" data-bs-toggle="tab" data-bs-target="#tab-shift-defs"
+              type="button" role="tab">
               Shift Definitions
             </button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-supervisor-btn" data-bs-toggle="tab" data-bs-target="#tab-supervisor" type="button" role="tab">
+            <button class="nav-link" id="tab-supervisor-btn" data-bs-toggle="tab" data-bs-target="#tab-supervisor"
+              type="button" role="tab">
               Traffic Heatmap
             </button>
           </li>
@@ -147,7 +151,8 @@
 
           <!-- Tab 4: Traffic Heatmap -->
           <div class="tab-pane fade" id="tab-supervisor" role="tabpanel">
-            <p class="small text-muted mb-2">Define expected member traffic patterns to drive dynamic headcount and shift stagger.</p>
+            <p class="small text-muted mb-2">Define expected member traffic patterns to drive dynamic headcount and
+              shift stagger.</p>
 
             <div class="form-check form-switch mb-3">
               <input class="form-check-input" type="checkbox" id="heatmapEnabled">
@@ -163,14 +168,14 @@
                   <label class="form-label small mb-1" for="heatmapLowThreshold">Low Threshold</label>
                   <div class="input-group input-group-sm" style="width:130px;">
                     <input type="number" id="heatmapLowThreshold" class="form-control" min="0" value="100">
-                    <span class="input-group-text small">doors</span>
+                    <span class="input-group-text small">Door Count</span>
                   </div>
                 </div>
                 <div>
                   <label class="form-label small mb-1" for="heatmapHighThreshold">High Threshold</label>
                   <div class="input-group input-group-sm" style="width:130px;">
                     <input type="number" id="heatmapHighThreshold" class="form-control" min="0" value="300">
-                    <span class="input-group-text small">doors</span>
+                    <span class="input-group-text small">Door Count</span>
                   </div>
                 </div>
                 <p class="small text-muted mb-0" style="align-self:flex-end;">
@@ -181,7 +186,8 @@
               </div>
 
               <!-- Day traffic curves -->
-              <p class="small fw-semibold mb-1">Traffic Curves <span class="text-muted fw-normal">(drag dots to adjust expected door count per hour)</span></p>
+              <p class="small fw-semibold mb-1">Traffic Curves <span class="text-muted fw-normal">(drag dots to adjust
+                  expected door count per hour)</span></p>
               <div id="heatmapCanvases" style="display: grid; grid-template-columns: 1fr; gap: 0.75rem;"></div>
 
               <!-- Pool scheduling counts -->
@@ -190,15 +196,18 @@
                 <div class="d-flex gap-3 flex-wrap">
                   <div>
                     <label class="form-label small mb-1" for="poolCountLow">Low traffic</label>
-                    <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;" min="0" value="1">
+                    <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;"
+                      min="0" value="1">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="poolCountModerate">Moderate</label>
-                    <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;" min="0" value="3">
+                    <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;"
+                      min="0" value="3">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="poolCountHigh">High traffic</label>
-                    <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;" min="0" value="5">
+                    <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;"
+                      min="0" value="5">
                   </div>
                 </div>
               </div>
@@ -459,7 +468,8 @@
           </div>
           <div class="mb-2">
             <label class="form-label small">Scheduled Shift</label>
-            <input type="text" id="absenceScheduledShift" class="form-control form-control-sm" list="absenceScheduledShiftList">
+            <input type="text" id="absenceScheduledShift" class="form-control form-control-sm"
+              list="absenceScheduledShiftList">
             <datalist id="absenceScheduledShiftList"></datalist>
           </div>
           <div class="mb-2">
@@ -614,9 +624,12 @@
             <input type="number" id="customShiftHours" class="form-control form-control-sm" min="1" max="12" step="0.5">
           </div>
 
-          <button class="btn btn-primary btn-sm" data-override-type="SHIFT" onclick="handleCellOverride('SHIFT')">Assign Shift</button>
-          <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC" onclick="handleCellOverride('VAC')">Mark Vacation</button>
-          <button class="btn btn-secondary btn-sm" data-override-type="RDO" onclick="handleCellOverride('RDO')">Mark RDO</button>
+          <button class="btn btn-primary btn-sm" data-override-type="SHIFT" onclick="handleCellOverride('SHIFT')">Assign
+            Shift</button>
+          <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC"
+            onclick="handleCellOverride('VAC')">Mark Vacation</button>
+          <button class="btn btn-secondary btn-sm" data-override-type="RDO" onclick="handleCellOverride('RDO')">Mark
+            RDO</button>
         </div>
       </div>
     </div>
