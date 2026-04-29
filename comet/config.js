@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.6
+ * VERSION: 0.5.7
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -168,46 +168,36 @@ const SHIFT_TABLE_COLUMN = {
 /**
  * Row and column positions for generated Week_MM_DD_YY_[Dept] schedule sheets.
  *
- * Each employee occupies a block of five consecutive rows:
- *   Row 0 of block (VAC):   vacation checkboxes
- *   Row 1 of block (RDO):   requested-day-off checkboxes
- *   Row 2 of block (SHIFT): assigned shift text (e.g. "8:00 AM - 4:30 PM") or "OFF"
- *   Row 3 of block (ROLE):  employee role name on working days (e.g. "Cashier")
- *   Row 4 of block (LOCK):  cell lock flags (hidden checkboxes indicating manager overrides)
+ * Sheets are pure data storage — one row per employee, JSON payload in col C.
+ * All display and interaction happens in the web UI; managers never edit these sheets directly.
  *
- * The ROLE row was added for COMET vs. the original three-row layout.
- * The LOCK row stores override flags to prevent phase re-calculation from overwriting manager decisions.
+ *   Row 1: Week label ("Week of April 28 – May 4, 2026")
+ *   Row 2: "Generated: [timestamp]"
+ *   Row 3: "Department: [deptName]"
+ *   Row 4: (spacer)
+ *   Row 5: Column headers — Name | Employee ID | Schedule | Total Hours | Stored At
+ *   Row 6+: One row per employee
+ *     Col A (1): Employee name
+ *     Col B (2): Employee ID
+ *     Col C (3): JSON string — { Monday: {type,shiftName,displayText,paidHours,role,locked}, ... }
+ *     Col D (4): Total paid hours (number)
+ *     Col E (5): ISO timestamp of last write
  */
 const WEEK_SHEET = {
-  HEADER_ROW:           1,  // Merged week label ("Week of April 7 – 13, 2026")
-  TIMESTAMP_ROW:        2,  // "Generated: [timestamp]"
-  DEPARTMENT_ROW:       3,  // "Department: [deptName]"
-  COLUMN_HEADER_ROW:    5,  // "Label | Employee | Mon | Tue | ... | Sun | Total Hrs"
-  SUMMARY_REQUIRED_ROW: 6,  // REQUIRED row — fixed position, always row 6
-  SUMMARY_ACTUAL_ROW:   7,  // ACTUAL row — fixed position, always row 7
-  SUMMARY_STATUS_ROW:   8,  // STATUS row — fixed position, always row 8; freeze through here
-  DATA_START_ROW:       9,  // First row of employee data blocks (was 6; summary moved to top)
+  HEADER_ROW:        1,
+  TIMESTAMP_ROW:     2,
+  DEPARTMENT_ROW:    3,
+  COLUMN_HEADER_ROW: 5,
+  DATA_START_ROW:    6,
 
-  // Column positions (1-indexed)
-  COL_ROW_LABEL:      1,  // A — "VAC", "RDO", "SHIFT", "ROLE", "LOCK" label
-  COL_EMPLOYEE_NAME:  2,  // B — Employee name (merged across all 5 rows)
-  COL_MONDAY:         3,  // C
-  COL_TUESDAY:        4,  // D
-  COL_WEDNESDAY:      5,  // E
-  COL_THURSDAY:       6,  // F
-  COL_FRIDAY:         7,  // G
-  COL_SATURDAY:       8,  // H
-  COL_SUNDAY:         9,  // I
-  COL_TOTAL_HOURS:    10, // J — Weekly paid hours total
+  COL_NAME:          1,  // A — employee name
+  COL_EMPLOYEE_ID:   2,  // B — employee ID
+  COL_SCHEDULE_JSON: 3,  // C — JSON string of the 7-day schedule
+  COL_TOTAL_HOURS:   4,  // D — total paid hours for the week
+  COL_STORED_AT:     5,  // E — ISO timestamp of last write
 
-  ROWS_PER_EMPLOYEE:  5,  // VAC + RDO + SHIFT + ROLE + LOCK
-  ROW_OFFSET_VAC:     0,
-  ROW_OFFSET_RDO:     1,
-  ROW_OFFSET_SHIFT:   2,
-  ROW_OFFSET_ROLE:    3,
-  ROW_OFFSET_LOCK:    4,
-
-  DAYS_IN_WEEK:       7,  // Monday through Sunday
+  DAYS_IN_WEEK:      7,
+  SCHEMA_VERSION:    2,
 };
 
 /**

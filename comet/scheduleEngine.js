@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.7.1
+ * VERSION: 0.7.2
  *
  * REWORK SUMMARY (v0.7.0):
  *   - Phase condensation: 5 → 4 phases (Phases 1+2 merged; role assignment moved last).
@@ -168,35 +168,52 @@ function readExistingWeekSchedule_(deptName, weekStartDate) {
   const sheet = workbook.getSheetByName(sheetName);
   if (!sheet) return null;
 
-  // Pass null for preloadedSheets — readExistingWeekSchedule_ doesn't need cross-dept data
-  // since it's only reconstructing the grid from what's already written to the sheet.
   const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate, null);
   if (employeeList.length === 0) return null;
 
-  // Read checkbox state and rebuild a grid representation.
-  const weekGrid = readCheckboxStateFromSheet_(sheet, employeeList.length);
-
-  // Re-read SHIFT row text to populate displayText.
-  const shiftTimingMap = buildShiftTimingMap(deptName);
-  employeeList.forEach(function (employee, employeeIndex) {
-    const baseRow = WEEK_SHEET.DATA_START_ROW + (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-    const shiftRowValues = sheet
-      .getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
-      .getValues()[0];
-
-    shiftRowValues.forEach(function (cellText, dayIndex) {
-      const current = weekGrid[employeeIndex][dayIndex];
-      if (current.type === 'OFF' && cellText && cellText !== 'OFF' && cellText !== '' &&
-        cellText !== 'VAC' && cellText !== 'RDO') {
-        // This is a SHIFT cell — reconstruct it from the display text.
-        weekGrid[employeeIndex][dayIndex] = createDayAssignment_(
-          'SHIFT', null, 0, false, String(cellText)
-        );
-      }
-    });
-  });
+  // Read from JSON format (new) or legacy format (if this sheet was generated before the refactor)
+  let weekGrid;
+  const format = detectSheetFormat(sheet); // formatter.js
+  if (format === 'json') {
+    weekGrid = readJsonScheduleFromSheet_(sheet, employeeList);
+  } else {
+    // Legacy format: use the old 5-row reader for backward compat
+    console.warn('readExistingWeekSchedule_: sheet "' + sheetName + '" uses legacy 5-row format. Re-generate to upgrade to JSON format.');
+    weekGrid = readCheckboxStateFromSheet_(sheet, employeeList.length);
+  }
 
   return { weekSheetName: sheetName, weekGrid, employeeList };
+}
+
+
+/**
+ * Legacy read function for backward compatibility. Replaced by readJsonScheduleFromSheet_
+ * but kept temporarily for sheets generated in the old 5-row format.
+ */
+function readCheckboxStateFromSheet_(weekSheet, employeeCount) {
+  const state = [];
+  for (let ei = 0; ei < employeeCount; ei++) {
+    state[ei] = [];
+    const baseRow = WEEK_SHEET.DATA_START_ROW + (ei * WEEK_SHEET.ROWS_PER_EMPLOYEE);
+    const vacRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_VAC, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+    const rdoRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_RDO, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+    const shiftRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+    const lockRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_LOCK, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+
+    for (let di = 0; di < WEEK_SHEET.DAYS_IN_WEEK; di++) {
+      const isLocked = lockRow[di] === true;
+      if (vacRow[di] === true) {
+        state[ei][di] = createDayAssignment_('VAC', null, 0, true);
+      } else if (rdoRow[di] === true) {
+        state[ei][di] = createDayAssignment_('RDO', null, 0, isLocked);
+      } else if (shiftRow[di] && shiftRow[di] !== 'OFF' && shiftRow[di] !== '') {
+        state[ei][di] = createDayAssignment_('SHIFT', null, 0, isLocked, String(shiftRow[di]));
+      } else {
+        state[ei][di] = createDayAssignment_('OFF', null, 0, isLocked);
+      }
+    }
+  }
+  return state;
 }
 
 
@@ -251,11 +268,11 @@ function preloadAllWeekSheets_(workbook) {
 
 
 /**
- * Extracts cross-dept scheduled days for an employee from the preloaded sheet map.
- * Returns { Monday: bool, ... } keyed by day name, or null if no home-dept sheet exists.
+ * Extracts home-dept scheduled days for a combo participant from preloaded 2D data.
+ * Returns { Monday: bool, ... } keyed by day name, or null if not found or invalid JSON.
  *
- * @param {string} employeeName      — Employee's name (matched against COL_EMPLOYEE_NAME)
- * @param {string} homeDeptSheetName — The exact sheet name to look in
+ * @param {string} employeeName      — Employee's name
+ * @param {string} homeDeptSheetName — The home dept sheet name
  * @param {Object} preloadedSheets   — { sheetName: 2DValueArray }
  * @returns {{ Monday: boolean, ... }|null}
  */
@@ -267,33 +284,40 @@ function extractHomeDeptScheduledDays_(employeeName, homeDeptSheetName, preloade
     Monday: false, Tuesday: false, Wednesday: false,
     Thursday: false, Friday: false, Saturday: false, Sunday: false,
   };
-  let found = false;
 
+  // JSON format: row[COL_NAME - 1] = name, row[COL_SCHEDULE_JSON - 1] = JSON string
   for (let rowIndex = WEEK_SHEET.DATA_START_ROW - 1; rowIndex < data.length; rowIndex++) {
     const row = data[rowIndex];
-    if (row[WEEK_SHEET.COL_ROW_LABEL - 1] !== 'SHIFT') continue;
-    const cellEmpName = row[WEEK_SHEET.COL_EMPLOYEE_NAME - 1];
+    const cellEmpName = row[WEEK_SHEET.COL_NAME - 1];
     if (!cellEmpName || cellEmpName.toString().trim() !== employeeName.toString().trim()) continue;
 
-    found = true;
-    DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
-      const cellValue = row[WEEK_SHEET.COL_MONDAY - 1 + dayIndex];
-      if (cellValue && String(cellValue).trim() !== '') {
-        scheduledDays[dayName] = true;
-      }
-    });
-    break;
+    try {
+      const scheduleJson = row[WEEK_SHEET.COL_SCHEDULE_JSON - 1];
+      if (!scheduleJson) return null;
+
+      const scheduleObj = JSON.parse(scheduleJson);
+      DAY_NAMES_IN_ORDER.forEach(function (dayName) {
+        const dayData = scheduleObj[dayName];
+        if (dayData && dayData.type === 'SHIFT') {
+          scheduledDays[dayName] = true;
+        }
+      });
+      return scheduledDays;
+    } catch (e) {
+      console.warn('extractHomeDeptScheduledDays_: JSON parse error for ' + employeeName + ': ' + e.message);
+      return null;
+    }
   }
 
-  return found ? scheduledDays : null;
+  return null;
 }
 
 
 /**
- * Extracts the total scheduled hours for an employee from a preloaded sheet data array.
- * Reads the COL_TOTAL_HOURS cell on the employee's SHIFT row.
+ * Extracts total scheduled hours for a primary employee from preloaded JSON data.
+ * Reads the COL_TOTAL_HOURS cell (col D).
  *
- * @param {string} employeeName — Employee name to search for
+ * @param {string} employeeName — Employee name
  * @param {Array}  sheetData    — 2D value array from getDataRange().getValues()
  * @returns {number} Total paid hours, or 0 if not found
  */
@@ -301,8 +325,7 @@ function extractCrossDeptHours_(employeeName, sheetData) {
   if (!sheetData || sheetData.length < WEEK_SHEET.DATA_START_ROW) return 0;
   for (let rowIndex = WEEK_SHEET.DATA_START_ROW - 1; rowIndex < sheetData.length; rowIndex++) {
     const row = sheetData[rowIndex];
-    if (row[WEEK_SHEET.COL_ROW_LABEL - 1] !== 'SHIFT') continue;
-    const cellEmpName = row[WEEK_SHEET.COL_EMPLOYEE_NAME - 1];
+    const cellEmpName = row[WEEK_SHEET.COL_NAME - 1];
     if (!cellEmpName || cellEmpName.toString().trim() !== employeeName.toString().trim()) continue;
     const totalHoursCell = row[WEEK_SHEET.COL_TOTAL_HOURS - 1];
     if (totalHoursCell && !isNaN(parseFloat(totalHoursCell))) return parseFloat(totalHoursCell);
@@ -1336,8 +1359,8 @@ function isSupervisorRole_(roleString) {
   return firstRole === 'supervisor';
 }
 
-function createDayAssignment_(type, shiftName, paidHours, locked, displayText) {
-  return { type, shiftName: shiftName || null, paidHours: paidHours || 0, locked: locked || false, displayText: displayText || null, role: null };
+function createDayAssignment_(type, shiftName, paidHours, locked, displayText, role) {
+  return { type, shiftName: shiftName || null, paidHours: paidHours || 0, locked: locked || false, displayText: displayText || null, role: role || null };
 }
 
 function resolveShiftForEmployee_(employee, shiftTimingMap) {
@@ -1415,35 +1438,52 @@ function getDayIndexForDate_(targetDate, weekStartDate) {
   return (diff < 0 || diff > 6) ? -1 : diff;
 }
 
-function readCheckboxStateFromSheet_(weekSheet, employeeCount) {
-  const state = [];
-  for (let ei = 0; ei < employeeCount; ei++) {
-    state[ei] = [];
-    const baseRow = WEEK_SHEET.DATA_START_ROW + (ei * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-    // Read VAC, RDO, SHIFT, and LOCK rows to fully reconstruct grid state.
-    const vacRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_VAC, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
-    const rdoRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_RDO, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
-    const shiftRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
-    const lockRow = weekSheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_LOCK, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).getValues()[0];
+function readJsonScheduleFromSheet_(weekSheet, employeeList) {
+  const { employeeRows } = readJsonSchedule(weekSheet); // formatter.js
+  const weekGrid = [];
 
-    for (let di = 0; di < WEEK_SHEET.DAYS_IN_WEEK; di++) {
-      const isLocked = lockRow[di] === true;
-      if (vacRow[di] === true) {
-        state[ei][di] = createDayAssignment_('VAC', null, 0, true);
-      } else if (rdoRow[di] === true) {
-        // Honour the LOCK row for RDO cells — a manager may lock an RDO to prevent
-        // re-generation from overwriting a manually placed day off.
-        state[ei][di] = createDayAssignment_('RDO', null, 0, isLocked);
-      } else if (shiftRow[di] && shiftRow[di] !== 'OFF' && shiftRow[di] !== '') {
-        // This is a SHIFT cell — reconstruct it from the display text.
-        // shiftName is null; displayText is the cell content.
-        state[ei][di] = createDayAssignment_('SHIFT', null, 0, isLocked, String(shiftRow[di]));
-      } else {
-        state[ei][di] = createDayAssignment_('OFF', null, 0, isLocked);
-      }
+  employeeList.forEach(function (employee, employeeIndex) {
+    weekGrid[employeeIndex] = [];
+
+    const row = employeeRows.find(function (r) {
+      return String(r.employeeId).trim() === String(employee.employeeId).trim();
+    });
+
+    if (!row) {
+      // Employee not in sheet (added to roster since last generation) — fill with OFF
+      DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
+        weekGrid[employeeIndex][dayIndex] = createDayAssignment_('OFF', null, 0, false);
+      });
+      return;
     }
-  }
-  return state;
+
+    try {
+      const scheduleObj = JSON.parse(row.scheduleJson);
+      DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
+        const dayData = scheduleObj[dayName];
+        if (!dayData) {
+          weekGrid[employeeIndex][dayIndex] = createDayAssignment_('OFF', null, 0, false);
+          return;
+        }
+
+        weekGrid[employeeIndex][dayIndex] = createDayAssignment_(
+          dayData.type,
+          dayData.shiftName || null,
+          dayData.paidHours || 0,
+          dayData.locked || false,
+          dayData.displayText || null,
+          dayData.role || null
+        );
+      });
+    } catch (e) {
+      console.warn('readJsonScheduleFromSheet_: failed to parse JSON for ' + employee.name + ': ' + e.message);
+      DAY_NAMES_IN_ORDER.forEach(function (_dayName, dayIndex) {
+        weekGrid[employeeIndex][dayIndex] = createDayAssignment_('OFF', null, 0, false);
+      });
+    }
+  });
+
+  return weekGrid;
 }
 
 

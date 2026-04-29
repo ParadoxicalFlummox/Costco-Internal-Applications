@@ -1,1028 +1,171 @@
 /**
- * formatter.js — Writes a generated WeekGrid to a Google Sheet and applies all visual formatting.
- * VERSION: 0.5.6
+ * formatter.js — Writes schedule data to the Week sheet in JSON format.
+ * VERSION: 0.6.0
  *
- * This file is the only place in the codebase that writes to a Week schedule sheet.
- * The schedule engine (scheduleEngine.js) produces a pure JavaScript data structure (the WeekGrid).
- * This file translates that data structure into what the manager actually sees on screen.
+ * In the new architecture, the Week sheet is pure data storage, not a visual display.
+ * One row per employee; one JSON string per row in column C.
+ * Managers interact entirely via the web UI; the sheet is a backend database table.
  *
- * PERF: Optimized to batch write operations—all SHIFT row values across all employees
- * are written in one API call, not per-employee. Shift colors and role colors are
- * similarly batched via setBackgrounds() for each row type.
- *
- * SEPARATION OF CONCERNS:
- * Every visual concern is its own function:
- *   writeWeekHeader()               — Rows 1–4 (title, timestamp, department)
- *   writeColumnHeaders()            — Row 5 (Mon, Tue, ... column labels)
- *   writeEmployeeBlocks()           — Employee VAC/RDO/SHIFT rows
- *   writeStaffingSummary()          — REQUIRED/ACTUAL/STATUS footer
- *   applyShiftColors()              — Cell background colors by assignment type
- *   applyUnderHoursHighlight()      — Red name cell for employees below minimum hours
- *   applyStatusRowConditionalFormat() — Green/red STATUS row cells
- *   applyStructuralFormatting()     — Borders, column widths, freeze rows
- *
- * If a visual bug occurs, it can be traced to exactly one function.
- *
- * RE-GENERATION BEHAVIOR:
- * When a manager checks a VAC or RDO checkbox on an existing schedule sheet, the engine
- * re-runs Phases 1–3 and then this formatter re-writes the sheet. The formatter clears
- * only the SHIFT row cells — the VAC and RDO checkboxes set by the manager are preserved.
+ * The JSON cell payload preserves all schedule information: shift name (was lost before),
+ * lock flags, role assignments, and paid hours. A single setValues() call writes all
+ * employee rows at once — no per-employee batching complexity.
  */
 
 
 /**
- * The single entry point for writing and formatting a schedule sheet.
+ * The single entry point: writes a complete schedule to the Week sheet in JSON format.
  *
- * This function is an orchestrator — it calls all the write and format functions in the
- * correct order and passes their shared inputs. It contains no formatting logic itself.
- *
- * POOL SECTION (v0.5.0):
- * If poolMemberIds is provided (from traffic heatmap system), pool members are written
- * in their own section above regular employees. Pool members are visually distinguished
- * with a background color and "POOL" label. Pool section is always first (rows after header),
- * followed by the regular employee section.
- *
- * @param {Sheet}  scheduleSheet       — The Week_MM_DD_YY sheet to write to.
+ * @param {Sheet}  scheduleSheet       — The Week_MM_DD_YY_[Dept] sheet.
  * @param {Array}  employeeList        — Employees in seniority order (from scheduleEngine.js).
  * @param {Array}  weekGrid            — The generated schedule grid (from scheduleEngine.js).
- * @param {Object} staffingRequirements — From loadStaffingRequirements().
- * @param {Date}   weekStartDate        — The Monday of the week being written.
- * @param {string} departmentName       — The department name to display in the sheet header.
- * @param {Set}    poolMemberIds        — (Optional) Set of employee IDs who are pool members.
- * @param {Set}    comboParticipantIds  — (Optional) Set of employee IDs who are combo participants.
+ * @param {string} weekStartDate       — The Monday of the week (Date object).
+ * @param {string} departmentName      — The department name to display in the sheet header.
  */
-function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, staffingRequirements, weekStartDate, departmentName, poolMemberIds, comboParticipantIds) {
-  // Partition employees into pool, combo, and regular sections
-  let poolMembers = [];
-  let comboParticipants = [];
-  let regularEmployees = [];
+function writeAndFormatSchedule(scheduleSheet, employeeList, weekGrid, _staffingRequirements, weekStartDate, departmentName) {
+  // Write header rows (unchanged from before)
+  writeWeekHeader_(scheduleSheet, weekStartDate, departmentName);
 
-  employeeList.forEach(function (employee) {
-    const employeeId = employee.employeeId || employee.id || '';
-    if (comboParticipantIds && comboParticipantIds.has(employeeId)) {
-      comboParticipants.push(employee);
-    } else if (poolMemberIds && poolMemberIds.has(employeeId)) {
-      poolMembers.push(employee);
-    } else {
-      regularEmployees.push(employee);
-    }
-  });
+  // Write column headers
+  scheduleSheet
+    .getRange(WEEK_SHEET.COLUMN_HEADER_ROW, 1, 1, 5)
+    .setValues([['Name', 'Employee ID', 'Schedule', 'Total Hours', 'Stored At']])
+    .setBackground(COLORS.HEADER_BG)
+    .setFontColor(COLORS.HEADER_TEXT)
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center');
 
-  // Write all content first, then apply formatting.
-  // Interleaving content writes and formatting calls would slow down rendering
-  // because GAS batches API calls — writing all values first then formatting is faster.
+  // Build the data rows: one per employee, JSON payload in col C
+  const dataRows = [];
+  const now = new Date().toISOString();
 
-  logExecutionTime_('Write Week Header', function () {
-    writeWeekHeader(scheduleSheet, weekStartDate, departmentName);
-  });
+  employeeList.forEach(function (employee, employeeIndex) {
+    const scheduleObj = {};
+    let totalHours = 0;
 
-  logExecutionTime_('Write Column Headers', function () {
-    writeColumnHeaders(scheduleSheet);
-  });
-
-  // Write summary rows BEFORE employee blocks so they occupy fixed rows 6/7/8.
-  // Employee blocks grow downward from row 9; hybrid-pass appends land below
-  // without ever disturbing the summary row positions.
-  logExecutionTime_('Write Staffing Summary', function () {
-    writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements, poolMembers.length);
-  });
-
-  logExecutionTime_('Write Pool Section (' + poolMembers.length + ' pool members)', function () {
-    if (poolMembers.length > 0) {
-      writePoolSection_(scheduleSheet, poolMembers, weekGrid, employeeList);
-    }
-  });
-
-  logExecutionTime_('Write Employee Blocks (' + regularEmployees.length + ' regular employees)', function () {
-    writeEmployeeBlocks(scheduleSheet, regularEmployees, weekGrid, poolMembers.length);
-  });
-
-  if (comboParticipants.length > 0) {
-    logExecutionTime_('Write Combo Participant Section (' + comboParticipants.length + ' hybrid employees)', function () {
-      const primaryCount = poolMembers.length + regularEmployees.length;
-      appendComboParticipantsToSheet_(scheduleSheet, weekGrid, employeeList, primaryCount);
+    // Build the JSON object for all 7 days
+    DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
+      const cell = weekGrid[employeeIndex][dayIndex];
+      scheduleObj[dayName] = {
+        type: cell.type,
+        shiftName: cell.shiftName || null,
+        displayText: cell.displayText || null,
+        paidHours: cell.paidHours || 0,
+        role: cell.role || null,
+        locked: cell.locked || false,
+      };
+      if (cell.type === 'SHIFT') totalHours += (cell.paidHours || 0);
     });
+
+    dataRows.push([
+      employee.name,
+      employee.employeeId || '',
+      JSON.stringify(scheduleObj),
+      totalHours,
+      now,
+    ]);
+  });
+
+  // Write all employee rows in one batch call (huge performance win)
+  if (dataRows.length > 0) {
+    scheduleSheet
+      .getRange(WEEK_SHEET.DATA_START_ROW, 1, dataRows.length, 5)
+      .setValues(dataRows);
   }
-
-  // Flush all pending content writes before starting formatting.
-  // This ensures GAS does not hold too many deferred operations in memory,
-  // which reduces mid-run timeout risk on large rosters or multi-department runs.
-  SpreadsheetApp.flush();
-
-  // Apply visual formatting after all content is written.
-  logExecutionTime_('Apply Shift Colors', function () {
-    applyShiftColors(scheduleSheet, employeeList, weekGrid);
-  });
-
-  logExecutionTime_('Apply Role Row Colors', function () {
-    applyRoleRowColors(scheduleSheet, employeeList, weekGrid);
-  });
-
-  logExecutionTime_('Apply Under-Hours Highlight', function () {
-    applyUnderHoursHighlight(scheduleSheet, regularEmployees, weekGrid, poolMembers.length);
-  });
-
-  logExecutionTime_('Apply Status Row Conditional Format', function () {
-    applyStatusRowConditionalFormat(scheduleSheet);
-  });
-
-  logExecutionTime_('Apply Structural Formatting', function () {
-    applyStructuralFormatting(scheduleSheet, employeeList.length);
-  });
 }
 
-
-// ---------------------------------------------------------------------------
-// Content Writers
-// ---------------------------------------------------------------------------
 
 /**
  * Writes the schedule sheet header rows (rows 1–4).
  *
- * The header contains:
- *   Row 1: "Week of [Month Day] – [Day], [Year]" (merged across all columns)
- *   Row 2: "Generated: [timestamp]"
- *   Row 3: "Department: [departmentName]"
- *   Row 4: (blank spacer row)
- *
- * @param {Sheet}  scheduleSheet  — The schedule sheet to write to.
+ * @param {Sheet}  scheduleSheet  — The schedule sheet.
  * @param {Date}   weekStartDate  — The Monday of the week.
- * @param {string} departmentName — The department name from the Ingestion sheet.
+ * @param {string} departmentName — The department name.
  */
-function writeWeekHeader(scheduleSheet, weekStartDate, departmentName) {
-  const weekEndDate = getDateForDayIndex(weekStartDate, 6); // Sunday
+function writeWeekHeader_(scheduleSheet, weekStartDate, departmentName) {
+  const weekEndDate = new Date(weekStartDate);
+  weekEndDate.setDate(weekEndDate.getDate() + 6); // Sunday
 
-  // GAS's V8 Intl implementation does not produce clean output for partial date
-  // option sets like { day, year } without month — it renders "(day: 12) 2026".
-  // Build the label manually: "April 6 – 12, 2026".
   const weekLabel =
-    "Week of " +
-    weekStartDate.toLocaleDateString("en-US", { month: "long", day: "numeric" }) +
-    " \u2013 " +
-    weekEndDate.getDate() + ", " + weekEndDate.getFullYear();
+    'Week of ' +
+    weekStartDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' }) +
+    ' – ' +
+    weekEndDate.getDate() + ', ' + weekEndDate.getFullYear();
 
-  // Row 1: Week label — merged across all 10 columns for visual impact.
-  const titleRange = scheduleSheet.getRange(
-    WEEK_SHEET.HEADER_ROW, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS
-  );
+  // Row 1: Week label
+  const titleRange = scheduleSheet.getRange(WEEK_SHEET.HEADER_ROW, 1, 1, WEEK_SHEET.COL_STORED_AT);
   titleRange.merge();
   titleRange.setValue(weekLabel);
   titleRange.setFontSize(14);
-  titleRange.setFontWeight("bold");
+  titleRange.setFontWeight('bold');
   titleRange.setBackground(COLORS.HEADER_BG);
   titleRange.setFontColor(COLORS.HEADER_TEXT);
-  titleRange.setHorizontalAlignment("center");
-  titleRange.setVerticalAlignment("middle");
+  titleRange.setHorizontalAlignment('center');
+  titleRange.setVerticalAlignment('middle');
 
-  // Row 2: Generation timestamp — formatted for human readability.
-  // Format: "Generated: April 20, 2026 at 3:45 PM"
+  // Row 2: Generation timestamp
   const now = new Date();
-  const timestampText = "Generated: " +
-    now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) +
-    " at " +
-    now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const timestampText =
+    'Generated: ' +
+    now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) +
+    ' at ' +
+    now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-  const timestampRange = scheduleSheet.getRange(WEEK_SHEET.TIMESTAMP_ROW, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS);
+  const timestampRange = scheduleSheet.getRange(WEEK_SHEET.TIMESTAMP_ROW, 1, 1, WEEK_SHEET.COL_STORED_AT);
   timestampRange.merge();
   timestampRange.setValue(timestampText);
   timestampRange.setFontSize(10);
-  timestampRange.setFontColor("#666666");
-  timestampRange.setHorizontalAlignment("left");
+  timestampRange.setFontColor('#666666');
+  timestampRange.setHorizontalAlignment('left');
 
-  // Row 3: Department name — styled for consistency.
-  const deptText = "Department: " + departmentName;
-  const deptRange = scheduleSheet.getRange(WEEK_SHEET.DEPARTMENT_ROW, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS);
+  // Row 3: Department name
+  const deptText = 'Department: ' + departmentName;
+  const deptRange = scheduleSheet.getRange(WEEK_SHEET.DEPARTMENT_ROW, 1, 1, WEEK_SHEET.COL_STORED_AT);
   deptRange.merge();
   deptRange.setValue(deptText);
   deptRange.setFontSize(11);
-  deptRange.setFontWeight("bold");
-  deptRange.setFontColor("#000000");
-  deptRange.setHorizontalAlignment("left");
+  deptRange.setFontWeight('bold');
+  deptRange.setFontColor('#000000');
+  deptRange.setHorizontalAlignment('left');
 
-  // Row 4: Spacer — light background for visual separation (between department and column headers).
-  const spacerRange = scheduleSheet.getRange(WEEK_SHEET.COLUMN_HEADER_ROW - 1, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS);
-  spacerRange.setBackground("#EEEEEE");
+  // Row 4: Spacer
+  scheduleSheet.getRange(4, 1, 1, WEEK_SHEET.COL_STORED_AT).setBackground('#EEEEEE');
 }
 
 
 /**
- * Writes the column header row (row 5) with day names and "Total Hrs".
+ * Reads schedule data from the JSON-format Week sheet.
  *
- * This row is frozen so that it remains visible when the manager scrolls down
- * through a long roster. The freeze is applied in applyStructuralFormatting().
- *
- * @param {Sheet} scheduleSheet — The schedule sheet to write to.
+ * @param {Sheet} scheduleSheet — The Week sheet.
+ * @returns {{ employeeRows: Array<{ name, employeeId, scheduleJson, totalHours, storedAt }> }}
  */
-function writeColumnHeaders(scheduleSheet) {
-  const headerRowValues = [
-    ["Label", "Employee", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Total Hrs"]
-  ];
+function readJsonSchedule(scheduleSheet) {
+  const dataRange = scheduleSheet.getRange(WEEK_SHEET.DATA_START_ROW, 1, scheduleSheet.getLastRow() - WEEK_SHEET.DATA_START_ROW + 1, 5);
+  const allRows = dataRange.getValues();
 
-  scheduleSheet
-    .getRange(WEEK_SHEET.COLUMN_HEADER_ROW, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS)
-    .setValues(headerRowValues);
+  const employeeRows = [];
+  allRows.forEach(function (row) {
+    if (!row[WEEK_SHEET.COL_NAME - 1]) return; // skip blank rows
+    employeeRows.push({
+      name: row[WEEK_SHEET.COL_NAME - 1],
+      employeeId: row[WEEK_SHEET.COL_EMPLOYEE_ID - 1],
+      scheduleJson: row[WEEK_SHEET.COL_SCHEDULE_JSON - 1],
+      totalHours: row[WEEK_SHEET.COL_TOTAL_HOURS - 1],
+      storedAt: row[WEEK_SHEET.COL_STORED_AT - 1],
+    });
+  });
 
-  // Style the header row to stand out visually from the employee data below it.
-  const headerRange = scheduleSheet.getRange(
-    WEEK_SHEET.COLUMN_HEADER_ROW, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS
-  );
-  headerRange.setBackground(COLORS.HEADER_BG);
-  headerRange.setFontColor(COLORS.HEADER_TEXT);
-  headerRange.setFontWeight("bold");
-  headerRange.setHorizontalAlignment("center");
+  return { employeeRows: employeeRows };
 }
 
 
 /**
- * Writes pool member blocks to the schedule sheet with "POOL" section label.
- * Pool members appear first (above regular employees) in the final sheet.
+ * Detects whether a Week sheet uses the new JSON format or the legacy 5-row format.
+ * Used for backward compatibility during the transition.
  *
- * @param {Sheet} scheduleSheet — The schedule sheet to write to.
- * @param {Array} poolMembers   — Pool members in seniority order.
- * @param {Array} weekGrid      — The generated schedule grid (includes all employees).
- * @param {Array} allEmployees  — Full employee list (for grid indexing).
+ * @param {Sheet} scheduleSheet — The Week sheet.
+ * @returns {'json'|'legacy'} Format identifier.
  */
-function writePoolSection_(scheduleSheet, poolMembers, weekGrid, allEmployees) {
-  const poolStartRow = WEEK_SHEET.DATA_START_ROW;
-
-  poolMembers.forEach(function (employee, poolIndex) {
-    const baseRow = poolStartRow + (poolIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-    const vacationRow = baseRow + WEEK_SHEET.ROW_OFFSET_VAC;
-    const requestedDayOffRow = baseRow + WEEK_SHEET.ROW_OFFSET_RDO;
-    const shiftRow = baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT;
-    const roleRow = baseRow + WEEK_SHEET.ROW_OFFSET_ROLE;
-    const lockRow = baseRow + WEEK_SHEET.ROW_OFFSET_LOCK;
-
-    // Write row labels with "POOL" prefix
-    scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_LABEL).setValue('POOL-VAC');
-    scheduleSheet.getRange(requestedDayOffRow, WEEK_SHEET.COL_LABEL).setValue('POOL-RDO');
-    scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_LABEL).setValue('POOL-SHIFT');
-    scheduleSheet.getRange(roleRow, WEEK_SHEET.COL_LABEL).setValue('POOL-ROLE');
-    scheduleSheet.getRange(lockRow, WEEK_SHEET.COL_LABEL).setValue('POOL-LOCK');
-
-    // Merge and write employee name across all five rows
-    scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_EMPLOYEE_NAME, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1)
-      .merge()
-      .setValue(employee.name)
-      .setVerticalAlignment('middle');
-
-    // Write VAC/RDO checkboxes (empty on first generation)
-    scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).insertCheckboxes();
-    scheduleSheet.getRange(requestedDayOffRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).insertCheckboxes();
-
-    // Write SHIFT and ROLE rows from grid
-    const gridRowIndex = allEmployees.indexOf(employee);
-    if (gridRowIndex >= 0) {
-      const shiftRowValues = [];
-      const roleRowValues = [];
-      for (let dayIndex = 0; dayIndex < WEEK_SHEET.DAYS_IN_WEEK; dayIndex++) {
-        const cell = weekGrid[gridRowIndex][dayIndex];
-        shiftRowValues.push([cell.displayText || '']);
-        roleRowValues.push([cell.role && cell.type === 'SHIFT' ? cell.role : '—']);
-      }
-      scheduleSheet.getRange(shiftRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).setValues([shiftRowValues.map(v => v[0])]);
-      scheduleSheet.getRange(roleRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).setValues([roleRowValues.map(v => v[0])]);
-    }
-
-    // Write LOCK checkboxes (hidden)
-    scheduleSheet.getRange(lockRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK).insertCheckboxes();
-
-    // Apply pool section background color to the entire block (5 rows)
-    scheduleSheet.getRange(baseRow, 1, WEEK_SHEET.ROWS_PER_EMPLOYEE, WEEK_SHEET.COL_TOTAL_HOURS)
-      .setBackground(COLORS.POOL_SECTION_BG); // config.js
-  });
+function detectSheetFormat(scheduleSheet) {
+  const headerCell = scheduleSheet.getRange(WEEK_SHEET.COLUMN_HEADER_ROW, WEEK_SHEET.COL_SCHEDULE_JSON).getValue();
+  return headerCell === 'Schedule' ? 'json' : 'legacy';
 }
-
-
-/**
- * Writes all employee data blocks (VAC row, RDO row, SHIFT row, ROLE row, LOCK row) to the schedule sheet.
- *
- * Each employee occupies five consecutive rows:
- *   Row 1 of block (VAC):   "VAC" label | employee name | checkboxes for Mon–Sun
- *   Row 2 of block (RDO):   "RDO" label | (name merged from VAC row) | checkboxes for Mon–Sun
- *   Row 3 of block (SHIFT): "SHIFT" label | (name merged) | shift text for Mon–Sun | total hours
- *   Row 4 of block (ROLE):  "ROLE" label | (name merged) | role name for working days, "—" otherwise
- *   Row 5 of block (LOCK):  "LOCK" label | (name merged) | hidden lock checkboxes for Mon–Sun
- *
- * The employee name cell is merged across all five rows in the block and vertically centered.
- * This makes it visually clear which rows belong to one employee.
- *
- * RE-GENERATION NOTE: On re-generation (when a manager edits a checkbox), this function
- * writes only the SHIFT and ROLE row values. The VAC, RDO, and LOCK checkboxes are not touched
- * because they represent the manager's explicit decisions. The checkboxes are only cleared
- * and re-inserted on the first generation of a new week sheet.
- *
- * @param {Sheet} scheduleSheet — The schedule sheet to write to.
- * @param {Array} employeeList  — Employees in seniority order.
- * @param {Array} weekGrid      — The generated schedule grid.
- * @param {number} poolRowOffset — (Optional) Number of pool member rows before regular employees.
- */
-function writeEmployeeBlocks(scheduleSheet, employeeList, weekGrid, poolRowOffset) {
-  poolRowOffset = poolRowOffset || 0;
-  // Determine if this is a first-time write or a re-generation.
-  // Check by looking for content in the first REGULAR employee's name cell (accounting for pool offset).
-  const firstEmployeeNameCell = scheduleSheet.getRange(
-    WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + WEEK_SHEET.ROW_OFFSET_VAC,
-    WEEK_SHEET.COL_EMPLOYEE_NAME
-  );
-  const isFirstTimeGeneration = firstEmployeeNameCell.getValue() === "";
-
-  // Collect total hours per employee during the loop; write as one batched call after.
-  // This replaces 57 individual setValue() calls with a single setValues() call,
-  // reducing write time from ~70s to <1s for large departments.
-  const totalHoursCollected = new Array(employeeList.length).fill(0);
-
-  // On first-time generation, collect lock row numbers to batch setRowHeight after loop.
-  const lockRowsToHide = [];
-
-  // On first-time generation, collect checkbox and formatting data to batch after the loop.
-  const vacCheckboxValues = [];
-  const rdoCheckboxValues = [];
-  const lockCheckboxValues = [];
-
-  employeeList.forEach(function (employee, employeeIndex) {
-    const baseRow = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-    const vacationRow = baseRow + WEEK_SHEET.ROW_OFFSET_VAC;
-    const requestedDayOffRow = baseRow + WEEK_SHEET.ROW_OFFSET_RDO;
-    const shiftRow = baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT;
-    const roleRow = baseRow + WEEK_SHEET.ROW_OFFSET_ROLE;
-    const lockRow = baseRow + WEEK_SHEET.ROW_OFFSET_LOCK;
-
-    if (isFirstTimeGeneration) {
-      // --- First-time generation: write all five rows from scratch ---
-
-      // Row label column (A): "VAC", "RDO", "SHIFT", "ROLE", "LOCK" — one batch write for all five labels.
-      scheduleSheet
-        .getRange(vacationRow, WEEK_SHEET.COL_ROW_LABEL, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1)
-        .setValues([["VAC"], ["RDO"], ["SHIFT"], ["ROLE"], ["LOCK"]]);
-
-      // Employee name cell (B): merged across all 5 rows, vertically centered.
-      // WEEK_SHEET.ROWS_PER_EMPLOYEE is 5, so this merges the correct block height.
-      const nameMergeRange = scheduleSheet.getRange(vacationRow, WEEK_SHEET.COL_EMPLOYEE_NAME, WEEK_SHEET.ROWS_PER_EMPLOYEE, 1);
-      nameMergeRange.merge();
-      nameMergeRange.setValue(employee.name);
-      nameMergeRange.setVerticalAlignment("middle");
-      nameMergeRange.setFontWeight("bold");
-
-      // Collect checkbox values for batch insertion after loop (instead of per-employee calls).
-      vacCheckboxValues.push(weekGrid[employeeIndex].map(function (cell) {
-        return cell.type === "VAC";
-      }));
-
-      rdoCheckboxValues.push(weekGrid[employeeIndex].map(function (cell) {
-        return cell.type === "RDO";
-      }));
-
-      lockCheckboxValues.push(weekGrid[employeeIndex].map(function (_cell) {
-        return false; // Fresh generation has no locks
-      }));
-
-      // Collect lock rows to hide after the loop (batched to avoid per-employee API calls).
-      lockRowsToHide.push(lockRow);
-    }
-  });
-
-  // --- Batch insert checkboxes for all employees at once (if first-time generation) ---
-  if (isFirstTimeGeneration && vacCheckboxValues.length > 0) {
-    const vacBlockStart = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + WEEK_SHEET.ROW_OFFSET_VAC;
-    const rdoBlockStart = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + WEEK_SHEET.ROW_OFFSET_RDO;
-    const lockBlockStart = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE) + WEEK_SHEET.ROW_OFFSET_LOCK;
-
-    // Insert checkboxes for entire VAC, RDO, LOCK ranges in 3 batch calls.
-    scheduleSheet.getRange(vacBlockStart, WEEK_SHEET.COL_MONDAY, vacCheckboxValues.length, WEEK_SHEET.DAYS_IN_WEEK)
-      .insertCheckboxes()
-      .setValues(vacCheckboxValues);
-
-    scheduleSheet.getRange(rdoBlockStart, WEEK_SHEET.COL_MONDAY, rdoCheckboxValues.length, WEEK_SHEET.DAYS_IN_WEEK)
-      .insertCheckboxes()
-      .setValues(rdoCheckboxValues);
-
-    scheduleSheet.getRange(lockBlockStart, WEEK_SHEET.COL_MONDAY, lockCheckboxValues.length, WEEK_SHEET.DAYS_IN_WEEK)
-      .insertCheckboxes()
-      .setValues(lockCheckboxValues);
-  }
-
-  /**
-   * --- Batch write: all SHIFT and ROLE rows together ---
-   */
-  const shiftRoleBlockStart = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-  const shiftRoleBlockValues = [];
-  employeeList.forEach(function (employee, employeeIndex) {
-    const shiftRowValues = weekGrid[employeeIndex].map(function (cell) {
-      if (cell.type === "SHIFT") {
-        return cell.displayText || cell.shiftName || "SHIFT";
-      } else if (cell.type === "VAC") {
-        return "VAC";
-      } else if (cell.type === "RDO") {
-        return "RDO";
-      } else {
-        return "OFF";
-      }
-    });
-    shiftRoleBlockValues.push(shiftRowValues);
-
-    const roleRowValues = weekGrid[employeeIndex].map(function (cell) {
-      return (cell.type === "SHIFT" && cell.role) ? cell.role : "\u2014";
-    });
-    shiftRoleBlockValues.push(roleRowValues);
-  });
-
-  scheduleSheet.getRange(shiftRoleBlockStart + WEEK_SHEET.ROW_OFFSET_SHIFT, WEEK_SHEET.COL_MONDAY,
-    employeeList.length * 2, WEEK_SHEET.DAYS_IN_WEEK).setValues(shiftRoleBlockValues);
-
-  /** --- Batch write: total hours column (COL_TOTAL_HOURS) ---
-   * Build a values array covering all employee rows (ROWS_PER_EMPLOYEE rows each).
-   * Only the SHIFT row offset gets a value; other row offsets get an empty string.
-   * This replaces N individual setValue() calls with one setValues() call.
-   */
-  if (employeeList.length > 0) {
-    const totalHoursBlockStart = WEEK_SHEET.DATA_START_ROW + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-    const totalHoursBlockRows = employeeList.length * WEEK_SHEET.ROWS_PER_EMPLOYEE;
-    const totalHoursBlockValues = [];
-    for (let employeeIndex = 0; employeeIndex < employeeList.length; employeeIndex++) {
-      for (let rowOffset = 0; rowOffset < WEEK_SHEET.ROWS_PER_EMPLOYEE; rowOffset++) {
-        totalHoursBlockValues.push(
-          rowOffset === WEEK_SHEET.ROW_OFFSET_SHIFT
-            ? [totalHoursCollected[employeeIndex]]
-            : ['']
-        );
-      }
-    }
-    scheduleSheet
-      .getRange(totalHoursBlockStart, WEEK_SHEET.COL_TOTAL_HOURS, totalHoursBlockRows, 1)
-      .setValues(totalHoursBlockValues);
-  }
-
-  // --- Batch hide: lock row heights (first-time generation only) ---
-  // setRowHeight() has no multi-row API, so we iterate here after all other writes
-  // are done — keeping the per-employee loop free of single-cell API calls.
-  lockRowsToHide.forEach(function (lockRow) {
-    scheduleSheet.setRowHeight(lockRow, 1);
-  });
-}
-
-/**
- * Writes the staffing summary block (REQUIRED / ACTUAL / STATUS rows) below the employee blocks.
-   *
-   * Supports two modes per day, driven by the staffing requirements Settings column C:
-   *
-   *   COUNT mode (default):
-   *     REQUIRED — minimum employee count for that day.
-   *     ACTUAL   — live COUNTIF formula counting shift cells (cells containing ":").
-   *
-   *   HOURS mode:
-   *     REQUIRED — minimum total paid hours for that day (e.g., 40).
-   *     ACTUAL   — computed sum of paidHours for all working employees on that day,
-   *                written as a static value (recalculated on every re-generation).
-   *
-   * STATUS row: "OK" if actual >= required, "UNDER" otherwise. Both modes use the
-   * same formula-driven STATUS row — the cell references work regardless of whether
-   * the ACTUAL value is a formula result or a static number.
-   *
-   * @param {Sheet}  scheduleSheet        — The schedule sheet to write to.
-   * @param {Array}  employeeList         — All employees (includes both pool and regular).
-   * @param {Array}  weekGrid             — The generated schedule grid.
-   * @param {Object} staffingRequirements — { dayName → { value, mode } } from loadStaffingRequirements().
-   * @param {number} poolRowOffset        — (Optional) Number of pool member rows before regular employees.
-   */
-  function writeStaffingSummary(scheduleSheet, employeeList, weekGrid, staffingRequirements, poolRowOffset) {
-    // poolRowOffset is kept for signature compatibility but no longer used — summary rows
-    // are at fixed positions and do not depend on employee count or pool section size.
-    void poolRowOffset;
-
-    // Fixed row positions — never move regardless of employee count.
-    // Rows 6/7/8 are always REQUIRED/ACTUAL/STATUS; employee data starts at row 9.
-    const requiredRow = WEEK_SHEET.SUMMARY_REQUIRED_ROW;
-    const actualRow = WEEK_SHEET.SUMMARY_ACTUAL_ROW;
-    const statusRow = WEEK_SHEET.SUMMARY_STATUS_ROW;
-
-    // Batch write: row labels (column A) — all 3 at once instead of 3 separate calls.
-    scheduleSheet.getRange(requiredRow, WEEK_SHEET.COL_ROW_LABEL, 3, 1)
-      .setValues([["REQUIRED"], ["ACTUAL"], ["STATUS"]])
-      .setFontWeight("bold");
-
-    // Pre-compute all REQUIRED and ACTUAL/STATUS values for all 7 days, then batch write.
-    const requiredValues = []; // Will be [val1, val2, ..., val7]
-    const actualFormulasOrValues = []; // Will be [val/formula1, val/formula2, ..., val/formula7]
-    const statusFormulas = []; // Will be [formula1, formula2, ..., formula7]
-
-    DAY_NAMES_IN_ORDER.forEach(function (dayName, dayIndex) {
-      const columnNumber = WEEK_SHEET.COL_MONDAY + dayIndex;
-      const columnLetter = columnIndexToLetter(columnNumber);
-      const dayRequirement = staffingRequirements[dayName] || { value: 0, mode: STAFFING_MODE.COUNT };
-      const isHoursMode = dayRequirement.mode === STAFFING_MODE.HOURS;
-
-      // REQUIRED: target value — interpreted as head count or hours depending on mode.
-      requiredValues.push(dayRequirement.value);
-
-      if (isHoursMode) {
-        // ACTUAL (Hours mode): sum paid hours for all employees working this day.
-        // Written as a static number because paidHours live in the grid, not cells.
-        // This value is refreshed on every generation/re-generation run.
-        let totalHoursThisDay = 0;
-        employeeList.forEach(function (_employee, employeeIndex) {
-          const cell = weekGrid[employeeIndex][dayIndex];
-          if (cell.type === "SHIFT") {
-            totalHoursThisDay += cell.paidHours || 0;
-          }
-        });
-        actualFormulasOrValues.push(totalHoursThisDay);
-      } else {
-        // ACTUAL (Count mode): live formula counting cells that contain a time-range
-        // string (identified by the colon in "8:45 AM - 9:30 AM").
-        // Role names, OFF/VAC/RDO text, and checkboxes are all excluded by "*:*".
-        // Open-ended range (DATA_START_ROW:10000) automatically includes any hybrid
-        // employee rows appended by a future second-pass run.
-        const countIfFormula =
-          "=COUNTIF(" + columnLetter + WEEK_SHEET.DATA_START_ROW + ":" + columnLetter + "10000,\"*:*\")";
-        actualFormulasOrValues.push(countIfFormula);
-      }
-
-      // STATUS: formula comparing actual to required — works for both modes.
-      const actualCellAddress = columnLetter + actualRow;
-      const requiredCellAddress = columnLetter + requiredRow;
-      const statusFormula =
-        "=IF(" + actualCellAddress + ">=" + requiredCellAddress + ",\"OK\",\"UNDER\")";
-      statusFormulas.push(statusFormula);
-    });
-
-    // Batch write: all REQUIRED values (7 days) in one call.
-    scheduleSheet.getRange(requiredRow, WEEK_SHEET.COL_MONDAY, 1, DAY_NAMES_IN_ORDER.length)
-      .setValues([requiredValues]);
-
-    // Batch write: all ACTUAL values/formulas (7 days) in one call.
-    // Note: setValues works for both static values and formulas; setFormula is formula-only.
-    // Since we have mixed types, we use setValues and then handle formulas separately if needed.
-    // Simpler approach: write formulas via setFormula in a separate batch for count mode.
-    // For now, write actual values/formulas: use a hybrid approach.
-    const actualRange = scheduleSheet.getRange(actualRow, WEEK_SHEET.COL_MONDAY, 1, DAY_NAMES_IN_ORDER.length);
-    // For mixed values/formulas, iterate only to set formulas (values go via setValues on the same range).
-    DAY_NAMES_IN_ORDER.forEach(function (_dayName, dayIndex) {
-      const columnNumber = WEEK_SHEET.COL_MONDAY + dayIndex;
-      const value = actualFormulasOrValues[dayIndex];
-      if (typeof value === 'string' && value.startsWith('=')) {
-        scheduleSheet.getRange(actualRow, columnNumber).setFormula(value);
-      } else {
-        scheduleSheet.getRange(actualRow, columnNumber).setValue(value);
-      }
-    });
-
-    // Batch write: all STATUS formulas (7 days) in one call.
-    statusFormulas.forEach(function (formula, dayIndex) {
-      const columnNumber = WEEK_SHEET.COL_MONDAY + dayIndex;
-      scheduleSheet.getRange(statusRow, columnNumber).setFormula(formula);
-    });
-
-    // Department total hours (STATUS row, column J) — sum of all weekly per-employee totals.
-    // Open-ended range automatically includes hybrid employee rows appended later.
-    const totalHoursColumnLetter = columnIndexToLetter(WEEK_SHEET.COL_TOTAL_HOURS);
-    const departmentTotalFormula =
-      "=SUM(" + totalHoursColumnLetter + WEEK_SHEET.DATA_START_ROW + ":" + totalHoursColumnLetter + "10000)";
-    scheduleSheet.getRange(statusRow, WEEK_SHEET.COL_TOTAL_HOURS)
-      .setFormula(departmentTotalFormula)
-      .setFontWeight("bold");
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // Formatting Functions
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Applies cell background colors to SHIFT row cells based on the assignment type and status.
-   *
-   * Color mapping:
-   *   Combo SHIFT → COLORS.COMBO_SHIFT (deep orange) — shift name contains "Combo"
-   *   FT SHIFT    → COLORS.FT_SHIFT    (blue)
-   *   PT SHIFT    → COLORS.PT_SHIFT    (green)
-   *   VAC         → COLORS.VACATION    (yellow)
-   *   RDO / OFF   → COLORS.DAY_OFF     (gray)
-   *
-   * Only SHIFT row cells receive color. VAC and RDO rows use a neutral background so the
-   * shift row visually pops as the primary information row for each employee.
-   *
-   * @param {Sheet} scheduleSheet — The schedule sheet.
-   * @param {Array} employeeList  — Employees in seniority order.
-   * @param {Array} weekGrid      — The generated schedule grid.
-   */
-  function applyShiftColors(scheduleSheet, employeeList, weekGrid) {
-    // Build all employee color rows at once, then write in a single batch API call.
-    // This reduces N setBackgrounds() calls (one per employee) down to 1.
-    const allShiftRowColors = [];
-    employeeList.forEach(function (employee, employeeIndex) {
-      const rowColors = weekGrid[employeeIndex].map(function (cell) {
-        if (cell.type === "SHIFT") {
-          // Combo shifts (cross-dept handoff) get orange regardless of FT/PT status.
-          // Blue for FT, green for PT/LPT otherwise.
-          if (cell.shiftName && cell.shiftName.indexOf('Combo') !== -1) {
-            return COLORS.COMBO_SHIFT;
-          }
-          return employee.status === "FT" ? COLORS.FT_SHIFT : COLORS.PT_SHIFT;
-        } else if (cell.type === "VAC") {
-          return COLORS.VACATION;
-        } else {
-          // RDO and OFF cells both use the day-off color.
-          return COLORS.DAY_OFF;
-        }
-      });
-      allShiftRowColors.push(rowColors);
-    });
-
-    const shiftRowStart = WEEK_SHEET.DATA_START_ROW + WEEK_SHEET.ROW_OFFSET_SHIFT;
-    scheduleSheet
-      .getRange(shiftRowStart, WEEK_SHEET.COL_MONDAY, employeeList.length, WEEK_SHEET.DAYS_IN_WEEK)
-      .setBackgrounds(allShiftRowColors);
-  }
-
-
-  /**
-   * Applies per-role background colors to ROLE row cells.
-   *
-   * Each role name (Cashier, SCO, PreScan, etc.) maps to a distinct pastel background
-   * defined in the ROLE_COLORS lookup in config.js. This color coding lets supervisors
-   * scan across a day column at a glance to see the role mix without reading every cell.
-   *
-   * Cells for non-working days (OFF, RDO, VAC) receive the generic ROLE_ROW_BG color
-   * (lavender) so the row has a consistent base background even when empty.
-   *
-   * @param {Sheet} scheduleSheet — The schedule sheet.
-   * @param {Array} employeeList  — Employees in seniority order.
-   * @param {Array} weekGrid      — The generated schedule grid.
-   */
-  function applyRoleRowColors(scheduleSheet, employeeList, weekGrid) {
-    // Build all employee role row colors at once, then write in a single batch API call.
-    // This reduces N setBackgrounds() calls (one per employee) down to 1.
-    const allRoleRowColors = [];
-    employeeList.forEach(function (_employee, employeeIndex) {
-      const rowColors = weekGrid[employeeIndex].map(function (cell) {
-        if (cell.type === "SHIFT" && cell.role && ROLE_COLORS[cell.role]) {
-          return ROLE_COLORS[cell.role];
-        }
-        // Non-working days and roles not in the lookup both get the generic row color.
-        return COLORS.ROLE_ROW_BG;
-      });
-      allRoleRowColors.push(rowColors);
-    });
-
-    const roleRowStart = WEEK_SHEET.DATA_START_ROW + WEEK_SHEET.ROW_OFFSET_ROLE;
-    scheduleSheet
-      .getRange(roleRowStart, WEEK_SHEET.COL_MONDAY, employeeList.length, WEEK_SHEET.DAYS_IN_WEEK)
-      .setBackgrounds(allRoleRowColors);
-  }
-
-
-  /**
-   * Highlights the employee name cell to flag hours violations:
-   *   - Red  (UNDER_HOURS)  — employee is below their weekly minimum.
-   *   - Orange (OVER_HOURS_FT) — FT employee is above 40 hours (overtime risk).
-   *
-   * Both flags are informational — they prompt the manager to review without blocking generation.
-   * Common under-hours causes: too many vacation days, no valid shifts in Settings.
-   * Common over-hours cause: gap resolution pulled in an already-full FT employee.
-   *
-   * The highlight is applied to the name cell (column B) on the SHIFT row, which is
-   * the most visible row and ensures the highlight is not obscured by merged cells.
-   *
-   * @param {Sheet} scheduleSheet — The schedule sheet.
-   * @param {Array} employeeList  — Employees in seniority order.
-   * @param {Array} weekGrid      — The generated schedule grid.
-   */
-  function applyUnderHoursHighlight(scheduleSheet, employeeList, weekGrid, poolRowOffset) {
-    poolRowOffset = poolRowOffset || 0;
-
-    const totalEmployeeRows = employeeList.length * WEEK_SHEET.ROWS_PER_EMPLOYEE;
-    if (totalEmployeeRows === 0) return;
-
-    // Sheet row where this employee list's blocks begin (after any pool section).
-    const blockStartSheetRow = WEEK_SHEET.DATA_START_ROW
-      + (poolRowOffset * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-
-    // Build two sparse color arrays — one for column B (name), one for column J (total hours).
-    // Each array covers every row in the employee block range; null = clear existing background.
-    // Only the SHIFT row within each 5-row block receives a color; all others get null.
-    // This reduces 4N individual getRange/setBackground calls to 2 total API calls.
-    const nameColors = [];
-    const hoursColors = [];
-
-    for (let employeeIndex = 0; employeeIndex < employeeList.length; employeeIndex++) {
-      const employee = employeeList[employeeIndex];
-      const weeklyHours = getWeeklyHours(weekGrid, employeeIndex);
-      const weeklyMin = employee.status === 'FT' ? HOUR_RULES.FT_MIN
-        : employee.status === 'LPT' ? HOUR_RULES.LPT_MIN
-          : HOUR_RULES.PT_MIN;
-
-      let nameColor = null;
-      let hoursColor = null;
-
-      if (employee.status === 'FT' && weeklyHours > HOUR_RULES.FT_MAX) {
-        // Orange on the total hours cell flags overtime risk for FT employees.
-        hoursColor = COLORS.OVER_HOURS_FT;
-      } else if (weeklyHours < weeklyMin) {
-        // Red on the name cell flags under-minimum hours.
-        nameColor = COLORS.UNDER_HOURS;
-      }
-      // null on both clears any prior highlight when re-generating (employee now in-hours).
-
-      for (let rowOffset = 0; rowOffset < WEEK_SHEET.ROWS_PER_EMPLOYEE; rowOffset++) {
-        const isShiftRow = rowOffset === WEEK_SHEET.ROW_OFFSET_SHIFT;
-        nameColors.push([isShiftRow ? nameColor : null]);
-        hoursColors.push([isShiftRow ? hoursColor : null]);
-      }
-    }
-
-    // Two API calls total regardless of roster size.
-    scheduleSheet
-      .getRange(blockStartSheetRow, WEEK_SHEET.COL_EMPLOYEE_NAME, totalEmployeeRows, 1)
-      .setBackgrounds(nameColors);
-    scheduleSheet
-      .getRange(blockStartSheetRow, WEEK_SHEET.COL_TOTAL_HOURS, totalEmployeeRows, 1)
-      .setBackgrounds(hoursColors);
-  }
-
-
-  /**
-   * Applies conditional formatting to the STATUS row so that "OK" cells are green
-   * and "UNDER" cells are red.
-   *
-   * IMPORTANT: This function calls clearConditionalFormatRules() before adding new rules.
-   * Without this, conditional formatting rules accumulate on every re-generation, which
-   * eventually causes GAS to apply the wrong rules or silently fail.
-   *
-   * @param {Sheet}  scheduleSheet  — The schedule sheet.
-   * @param {number} employeeCount  — Used to calculate the STATUS row number.
-   */
-  function applyStatusRowConditionalFormat(scheduleSheet) {
-    const statusRow = WEEK_SHEET.SUMMARY_STATUS_ROW; // Fixed position — always row 8
-
-    const statusRange = scheduleSheet.getRange(
-      statusRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK
-    );
-
-    // Clear all existing conditional format rules on this sheet before adding new ones.
-    // Accumulated rules from repeated generations can cause incorrect behavior.
-    scheduleSheet.clearConditionalFormatRules();
-
-    const okRule = SpreadsheetApp.newConditionalFormatRule()
-      .whenTextEqualTo("OK")
-      .setBackground(COLORS.SUMMARY_OK)
-      .setFontColor("#FFFFFF")
-      .setRanges([statusRange])
-      .build();
-
-    const underRule = SpreadsheetApp.newConditionalFormatRule()
-      .whenTextEqualTo("UNDER")
-      .setBackground(COLORS.SUMMARY_UNDER)
-      .setFontColor("#FFFFFF")
-      .setRanges([statusRange])
-      .build();
-
-    scheduleSheet.setConditionalFormatRules([okRule, underRule]);
-  }
-
-
-  /**
-   * Applies structural formatting: column widths, row heights, frozen rows/columns, borders.
-   *
-   * This function is called last because it modifies the sheet's structural properties
-   * rather than cell values, and it relies on the content already being written so that
-   * row height calculations are accurate.
-   *
-   * @param {Sheet}  scheduleSheet  — The schedule sheet.
-   * @param {number} employeeCount  — Number of employee blocks, used to calculate border range.
-   */
-  function applyStructuralFormatting(scheduleSheet, employeeCount) {
-    // --- Column widths ---
-    scheduleSheet.setColumnWidth(WEEK_SHEET.COL_ROW_LABEL, 60);  // "VAC" / "RDO" / "SHIFT"
-    scheduleSheet.setColumnWidth(WEEK_SHEET.COL_EMPLOYEE_NAME, 175); // Employee name
-    // Day columns: Mon–Sun
-    for (let dayColumn = WEEK_SHEET.COL_MONDAY; dayColumn <= WEEK_SHEET.COL_SUNDAY; dayColumn++) {
-      scheduleSheet.setColumnWidth(dayColumn, 100);
-    }
-    scheduleSheet.setColumnWidth(WEEK_SHEET.COL_TOTAL_HOURS, 85); // "Total Hrs"
-
-    // --- Freeze the header rows ---
-    // Freezing rows 1–8 keeps the week label, staffing summary (REQUIRED/ACTUAL/STATUS),
-    // and column headers always visible while scrolling through employee blocks.
-    // Column A is NOT frozen because the week header row (row 1) has a merged cell spanning
-    // all columns (A1:J1). Google Sheets does not allow freezing a column that would split
-    // a merged cell — attempting to do so throws a runtime error.
-    scheduleSheet.setFrozenRows(WEEK_SHEET.SUMMARY_STATUS_ROW);
-
-    // --- Row label column (A) background ---
-    // Light gray background on the label column helps visually separate it from data cells.
-    const totalDataRows = employeeCount * WEEK_SHEET.ROWS_PER_EMPLOYEE;
-    if (totalDataRows > 0) {
-      scheduleSheet
-        .getRange(WEEK_SHEET.DATA_START_ROW, WEEK_SHEET.COL_ROW_LABEL, totalDataRows, 1)
-        .setBackground(COLORS.ROW_LABEL_BG)
-        .setHorizontalAlignment("center")
-        .setFontStyle("italic");
-
-      // Override the ROLE label cell with lavender so it matches the ROLE data cells.
-      for (let employeeIndex = 0; employeeIndex < employeeCount; employeeIndex++) {
-        const roleRow = WEEK_SHEET.DATA_START_ROW +
-          (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE) +
-          WEEK_SHEET.ROW_OFFSET_ROLE;
-        scheduleSheet
-          .getRange(roleRow, WEEK_SHEET.COL_ROW_LABEL)
-          .setBackground(COLORS.ROLE_ROW_BG);
-
-        // Apply italic + center to the ROLE data cells (Mon–Sun).
-        scheduleSheet
-          .getRange(roleRow, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
-          .setFontStyle("italic")
-          .setHorizontalAlignment("center");
-      }
-    }
-
-    // --- Borders between employee blocks ---
-    // A top border on the first row of each employee block provides a clear visual
-    // separator between employees, making the three-row structure easy to scan.
-    for (let employeeIndex = 0; employeeIndex < employeeCount; employeeIndex++) {
-      const blockStartRow = WEEK_SHEET.DATA_START_ROW + (employeeIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-      const blockRange = scheduleSheet.getRange(
-        blockStartRow, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS
-      );
-      blockRange.setBorder(
-        true,  // top
-        null, null, null, null, null,
-        "#CCCCCC",
-        SpreadsheetApp.BorderStyle.SOLID
-      );
-    }
-
-    // --- Center-align all day columns and Total Hrs column ---
-    const dataAndSummaryRowCount = (employeeCount * WEEK_SHEET.ROWS_PER_EMPLOYEE) + 5;
-    scheduleSheet
-      .getRange(WEEK_SHEET.DATA_START_ROW, WEEK_SHEET.COL_MONDAY, dataAndSummaryRowCount, WEEK_SHEET.DAYS_IN_WEEK + 1)
-      .setHorizontalAlignment("center");
-
-    // --- Auto fit only the day columns and total hours columns ---
-    scheduleSheet.autoResizeColumns(WEEK_SHEET.COL_MONDAY, WEEK_SHEET.DAYS_IN_WEEK + 1);
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // Multi-Department Writer
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Generates and formats one schedule sheet per department from a multi-department run.
-   *
-   * This is the multi-department counterpart to the single-department writeAndFormatSchedule()
-   * call. It loops the Map returned by generateAllDepartmentSchedules() and delegates each
-   * department's data to writeAndFormatSchedule(), which handles all content writing and
-   * visual formatting for that sheet.
-   *
-   * Sheet names follow the pattern: Week_MM_DD_YY_DeptName
-   * (e.g., "Week_04_07_26_Morning", "Week_04_07_26_Drivers")
-   *
-   * @param {Map}  allDeptResults — Map<deptName → { weekGrid, employeeList, staffingRequirements }>
-   *                                Returned by generateAllDepartmentSchedules().
-   * @param {Date} weekStartDate  — The Monday of the week being written.
-   */
-  function writeAllDepartmentSchedules_(allDeptResults, weekStartDate) {
-    allDeptResults.forEach(function (deptResult, deptKey) {
-      const sheetName = generateDeptWeekSheetName(weekStartDate, deptKey);
-      const scheduleSheet = getOrCreateWeekSheet(sheetName);
-      writeAndFormatSchedule(
-        scheduleSheet,
-        deptResult.employeeList,
-        deptResult.weekGrid,
-        deptResult.staffingRequirements,
-        weekStartDate,
-        deptResult.displayName || deptKey  // show original name in the header, not the normalized key
-      );
-    });
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // Sheet Management Helpers
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Creates a new schedule sheet with the given name, or clears and returns the existing one.
-   *
-   * On first generation: a new sheet is inserted.
-   * On re-generation (sheet already exists): the SHIFT row cells are cleared but the
-   * VAC and RDO checkbox values are preserved because they represent manager decisions.
-   *
-   * @param {string} weekSheetName — The name for the week sheet (e.g., "Week_04_07_26").
-   * @returns {Sheet} The sheet object to write to.
-   */
-  function getOrCreateWeekSheet(weekSheetName) {
-    const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    let existingSheet = workbook.getSheetByName(weekSheetName);
-
-    if (existingSheet) {
-      // Sheet already exists — clear only SHIFT row cells (every 3rd row starting at row offset 2).
-      // The VAC and RDO rows are intentionally preserved because they hold manager decisions.
-      return existingSheet;
-    }
-
-    // Insert a new sheet at the end of the workbook.
-    return workbook.insertSheet(weekSheetName);
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // Utility
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Converts a 1-indexed column number to its spreadsheet letter notation.
-   *
-   * For example: 1 → "A", 3 → "C", 26 → "Z", 27 → "AA".
-   * This is needed for building formula strings (e.g., COUNTIF range addresses).
-   *
-   * @param {number} columnNumber — 1-indexed column number.
-   * @returns {string} The column letter(s), e.g., "C" or "AB".
-   */
-  function columnIndexToLetter(columnNumber) {
-    let letter = "";
-    let remaining = columnNumber;
-
-    while (remaining > 0) {
-      const remainder = (remaining - 1) % 26;
-      letter = String.fromCharCode(65 + remainder) + letter;
-      remaining = Math.floor((remaining - 1) / 26);
-    }
-
-    return letter;
-  }
-
-
-  // ---------------------------------------------------------------------------
-  // Combo Participant Append
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Writes combo participant rows to the bottom of an existing week sheet.
-   * Idempotent: if a combo participant's rows already exist (matched by name in the
-   * SHIFT row), they are overwritten in place rather than appended again.
-   *
-   * Inserts a blue separator row "─── [HomeDept] Staff ───" before the first combo
-   * participant block (same visual pattern as the pool section separator).
-   *
-   * @param {Sheet}  sheet          — The existing Week schedule sheet.
-   * @param {Array}  weekGrid       — Full grid (primary + combo participant rows).
-   * @param {Array}  employeeList   — Full list (primary + combo participants).
-   * @param {number} primaryCount   — Number of primary employees (pool + regular);
-   *                                   combo participants start at index primaryCount.
-   */
-  function appendComboParticipantsToSheet_(sheet, weekGrid, employeeList, primaryCount) {
-    if (primaryCount >= employeeList.length) return; // Nothing to append
-
-    const comboEmployees = employeeList.slice(primaryCount);
-    if (comboEmployees.length === 0) return;
-
-    // Determine the row where existing primary employee blocks end.
-    // Primary employees occupy ROWS_PER_EMPLOYEE rows each, starting at DATA_START_ROW.
-    const primaryBlockEndRow = WEEK_SHEET.DATA_START_ROW + (primaryCount * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-
-    // Write a visual separator row before the first combo participant block.
-    // Group combo participants by home department for the separator label.
-    const separatorRow = primaryBlockEndRow;
-    const homeDeptLabel = comboEmployees[0].homeDepartment
-      ? ('\u2500\u2500\u2500 ' + comboEmployees[0].homeDepartment.toUpperCase() + ' Staff \u2500\u2500\u2500')
-      : '\u2500\u2500\u2500 Hybrid Staff \u2500\u2500\u2500';
-
-    const separatorRange = sheet.getRange(separatorRow, 1, 1, WEEK_SHEET.COL_TOTAL_HOURS);
-    separatorRange.merge();
-    separatorRange.setValue(homeDeptLabel);
-    separatorRange.setBackground(COLORS.POOL_HEADER_BG || '#1565C0');
-    separatorRange.setFontColor('#FFFFFF');
-    separatorRange.setFontWeight('bold');
-    separatorRange.setHorizontalAlignment('center');
-
-    // Write each combo participant block starting one row after the separator.
-    comboEmployees.forEach(function (employee, comboIndex) {
-      const employeeIndex = primaryCount + comboIndex;
-      // +1 for the separator row
-      const baseRow = separatorRow + 1 + (comboIndex * WEEK_SHEET.ROWS_PER_EMPLOYEE);
-
-      const dayValues = DAY_NAMES_IN_ORDER.map(function (_dayName, dayIndex) {
-        const cell = weekGrid[employeeIndex][dayIndex];
-        if (cell.type === 'SHIFT') return cell.displayText || 'SHIFT';
-        if (cell.type === 'VAC') return 'VAC';
-        if (cell.type === 'RDO') return 'RDO';
-        return 'OFF';
-      });
-
-      // ROW A — employee name (col B) + day values (cols C-I)
-      const nameRow = sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, WEEK_SHEET.COL_EMPLOYEE_NAME);
-      nameRow.setValue(employee.name);
-      sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_SHIFT, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
-        .setValues([dayValues]);
-
-      // ROW B — ROLE row
-      const roleValues = DAY_NAMES_IN_ORDER.map(function (_dayName, dayIndex) {
-        return weekGrid[employeeIndex][dayIndex].role || '';
-      });
-      sheet.getRange(baseRow + WEEK_SHEET.ROW_OFFSET_ROLE, WEEK_SHEET.COL_MONDAY, 1, WEEK_SHEET.DAYS_IN_WEEK)
-        .setValues([roleValues]);
-    });
-
-    SpreadsheetApp.flush();
-  }
