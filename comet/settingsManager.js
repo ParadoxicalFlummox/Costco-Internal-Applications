@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Builds shift timing maps and staffing requirements for the schedule engine.
- * VERSION: 0.5.1
+ * VERSION: 0.5.2
  *
  * In the original autoScheduleGenerator this file read directly from a Settings sheet.
  * In COMET, settings are owned by scheduleSettings.js and stored in Settings_[Dept] sheets.
@@ -33,9 +33,9 @@ function buildShiftTimingMap(deptName) {
   const settingsData = getDeptSettings_(deptName); // scheduleSettings.js
   const shiftTimingMap = {};
 
-  (settingsData.shifts || []).forEach(function(shift) {
-    const shiftName = (shift.name || '').trim();
-    const status    = (shift.ftpt || '').trim();
+  (settingsData.shifts || []).forEach(function (shift) {
+    const shiftName = (shift.name || '').trim().toLowerCase();
+    const status = (shift.ftpt || '').trim();
 
     if (!shiftName || !status) return;
 
@@ -57,21 +57,21 @@ function buildShiftTimingMap(deptName) {
     const mapKey = shiftName + '|' + status;
 
     shiftTimingMap[mapKey] = {
-      name:                 shiftName,
-      status:               status,
-      weekdayStartMinutes:  weekdayStartMinutes,
-      satStartMinutes:      satStartMinutes,
-      sunStartMinutes:      sunStartMinutes,
-      startMinutes:         weekdayStartMinutes,              // backward-compat alias
-      blockMinutes:         blockMinutes,
-      endMinutes:           weekdayStartMinutes + blockMinutes, // backward-compat alias (weekday only)
-      paidHours:            paidHours,
-      blockHours:           blockMinutes / 60,
-      displayText:          displayText,
-      hasLunch:             shift.hasLunch === true,
-      flexEnabled:          shift.flexEnabled !== false,
-      flexWindowEarliest:   shift.flexWindowEarliest || '',
-      flexWindowLatest:     shift.flexWindowLatest   || '',
+      name: shiftName,
+      status: status,
+      weekdayStartMinutes: weekdayStartMinutes,
+      satStartMinutes: satStartMinutes,
+      sunStartMinutes: sunStartMinutes,
+      startMinutes: weekdayStartMinutes,              // backward-compat alias
+      blockMinutes: blockMinutes,
+      endMinutes: weekdayStartMinutes + blockMinutes, // backward-compat alias (weekday only)
+      paidHours: paidHours,
+      blockHours: blockMinutes / 60,
+      displayText: displayText,
+      hasLunch: shift.hasLunch === true,
+      flexEnabled: shift.flexEnabled !== false,
+      flexWindowEarliest: shift.flexWindowEarliest || '',
+      flexWindowLatest: shift.flexWindowLatest || '',
     };
   });
 
@@ -89,7 +89,7 @@ function buildShiftTimingMap(deptName) {
  */
 function getStartMinutesForDay_(shiftDef, dayName) {
   if (dayName === 'Saturday') return shiftDef.satStartMinutes || shiftDef.weekdayStartMinutes || 0;
-  if (dayName === 'Sunday')   return shiftDef.sunStartMinutes || shiftDef.weekdayStartMinutes || 0;
+  if (dayName === 'Sunday') return shiftDef.sunStartMinutes || shiftDef.weekdayStartMinutes || 0;
   return shiftDef.weekdayStartMinutes || 0;
 }
 
@@ -107,17 +107,17 @@ function loadStaffingRequirements(deptName) {
   const settingsData = getDeptSettings_(deptName); // scheduleSettings.js
   const staffingRequirements = {};
 
-  (settingsData.staffingReqs || []).forEach(function(req) {
+  (settingsData.staffingReqs || []).forEach(function (req) {
     const day = (req.day || '').trim();
     if (!day) return;
     staffingRequirements[day] = {
       value: Number(req.count || 0),
-      mode:  (req.mode || STAFFING_MODE.COUNT).trim(), // config.js
+      mode: (req.mode || STAFFING_MODE.COUNT).trim(), // config.js
     };
   });
 
   // Fill in any missing days with zero to avoid undefined access in the engine.
-  DAY_NAMES_IN_ORDER.forEach(function(dayName) { // config.js
+  DAY_NAMES_IN_ORDER.forEach(function (dayName) { // config.js
     if (!staffingRequirements[dayName]) {
       console.warn('settingsManager: No staffing requirement for "' + dayName + '" — defaulting to 0.');
       staffingRequirements[dayName] = { value: 0, mode: STAFFING_MODE.COUNT };
@@ -125,6 +125,32 @@ function loadStaffingRequirements(deptName) {
   });
 
   return staffingRequirements;
+}
+
+
+/**
+ * Loads the engine option flags for a department.
+ * Returns safe defaults (all enabled) if the settings sheet is missing the section.
+ *
+ * @param {string} deptName
+ * @returns {{ enforceRoleMinimums: boolean, gapFillEnabled: boolean }}
+ */
+function loadEngineOptions(deptName) {
+  const settingsData = getDeptSettings_(deptName); // scheduleSettings.js
+  return settingsData.engineOptions || { enforceRoleMinimums: true, gapFillEnabled: true };
+}
+
+
+/**
+ * Loads the role minimums map for a department.
+ * Returns an empty object if no role minimums are configured.
+ *
+ * @param {string} deptName
+ * @returns {{ [roleName: string]: { Low: number, Moderate: number, High: number } }}
+ */
+function loadRoleMinimums(deptName) {
+  const settingsData = getDeptSettings_(deptName); // scheduleSettings.js
+  return settingsData.roleMinimums || {};
 }
 
 
@@ -253,8 +279,8 @@ function formatMinutesAsTimeRange(startMinutes, endMinutes) {
  */
 function formatMinutesAsTimeString(totalMinutes) {
   const totalHours = Math.floor(totalMinutes / 60);
-  const minutes    = totalMinutes % 60;
-  const period     = totalHours >= 12 ? 'PM' : 'AM';
-  const twelve     = totalHours % 12 === 0 ? 12 : totalHours % 12;
+  const minutes = totalMinutes % 60;
+  const period = totalHours >= 12 ? 'PM' : 'AM';
+  const twelve = totalHours % 12 === 0 ? 12 : totalHours % 12;
   return twelve + ':' + String(minutes).padStart(2, '0') + ' ' + period;
 }

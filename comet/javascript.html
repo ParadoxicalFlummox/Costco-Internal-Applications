@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.4.1
+     VERSION: 0.5.1
   
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -134,7 +134,7 @@
       setTimeout(function () {
         toast.classList.remove('show');
         toast.style.display = 'none';
-      }, 4000);
+      }, 8000); // change this to increase or decrease how long the message stays on screen.
     }
 
     /**
@@ -269,18 +269,29 @@
           _staffingRequirements = null;
           _currentMonday = null;
           _currentDept = null;
-          var gridInner = document.getElementById('scheduleGridInner');
-          if (gridInner) gridInner.innerHTML = '';
+
+          // Clear the entire schedule table container (week tabs + grid) so no
+          // stale content from the previous dept remains visible.
+          var tableContainer = document.getElementById('scheduleTableContainer');
+          if (tableContainer) {
+            tableContainer.innerHTML = '<div class="p-3 text-comet-muted small">Loading schedule…</div>';
+          }
 
           if (dept) {
             _currentDept = dept;
             loadDeptSettings(dept);
             loadTrafficHeatmapConfig(dept);
             tabsContainer.style.display = '';
-            // Initialize tab switching after tabs appear
             initializeScheduleTabs();
+
+            // Auto-load the most recent schedule for this dept so the manager
+            // sees something immediately without having to click Load Existing.
+            _autoLoadLatestSchedule(dept);
           } else {
             tabsContainer.style.display = 'none';
+            if (tableContainer) {
+              tableContainer.innerHTML = '<div class="p-3 text-comet-muted small">Select a week and click Generate.</div>';
+            }
           }
         };
       } else {
@@ -310,8 +321,8 @@
 
               // If switching to heatmap tab, trigger canvas resize and redraw
               if (targetId === '#tab-supervisor') {
-                requestAnimationFrame(function() {
-                  _dayNamesInOrder.forEach(function(day) {
+                requestAnimationFrame(function () {
+                  _dayNamesInOrder.forEach(function (day) {
                     var canvas = document.getElementById('heatmap_canvas_' + day);
                     if (canvas) {
                       resizeCanvas(canvas);
@@ -408,6 +419,59 @@
         _currentHeatmapConfig.pool.schedulingCounts.High = parseInt(document.getElementById('poolCountHigh').value, 10) || 0;
         UI.callServer('saveTrafficHeatmapConfig', [dept, _currentHeatmapConfig], function () {
           UI.showToast('Heatmap configuration saved.', 'success');
+        });
+      };
+
+      document.getElementById('btnSaveEngineOptions').onclick = function () {
+        var dept = document.getElementById('scheduleDept').value;
+        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
+        var engineOptions = {
+          enforceRoleMinimums: document.getElementById('engineEnforceRoleMin').checked,
+          gapFillEnabled: document.getElementById('engineGapFillEnabled').checked,
+        };
+        UI.callServer('saveDeptSettings', [dept, { engineOptions: engineOptions }], function () {
+          UI.showToast('Engine options saved.', 'success');
+        });
+      };
+
+      document.getElementById('btnAddRoleMinimum').onclick = function () {
+        var newRow = '<tr>'
+          + '<td><input type="text" class="form-control form-control-sm" placeholder="Role name"></td>'
+          + '<td><input type="number" class="form-control form-control-sm" value="0" min="0"></td>'
+          + '<td><input type="number" class="form-control form-control-sm" value="0" min="0"></td>'
+          + '<td><input type="number" class="form-control form-control-sm" value="0" min="0"></td>'
+          + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
+          + '</tr>';
+        document.getElementById('roleMinimumsBody').insertAdjacentHTML('beforeend', newRow);
+      };
+
+      document.getElementById('btnSaveRoleMinimums').onclick = function () {
+        var dept = document.getElementById('scheduleDept').value;
+        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
+        var roleMinimums = collectRoleMinimumsFromDom();
+        UI.callServer('saveDeptSettings', [dept, { roleMinimums: roleMinimums }], function () {
+          UI.showToast('Role minimums saved.', 'success');
+        });
+      };
+
+      document.getElementById('btnAddHybridStaff').onclick = function () {
+        var dept = document.getElementById('scheduleDept').value;
+        // Use _currentMonday (set when a schedule is loaded/auto-loaded) rather than the
+        // date picker, which may be empty when the schedule was loaded via auto-load.
+        var monday = _currentMonday || document.getElementById('scheduleWeek').value;
+        if (!dept || !monday) { UI.showToast('Select a department and week first.', 'error'); return; }
+        UI.showToast('Adding hybrid staff...', 'info');
+        UI.callServer('appendHybridEmployees', [dept, monday], function (data) {
+          _weekGrid = data.weekGrid;
+          _employeeList = data.employeeList;
+          renderScheduleGrid();
+          var msg = data.added + ' hybrid employee(s) added.';
+          if (data.skipped && data.skipped.length > 0) {
+            msg += ' Skipped: ' + data.skipped.map(function (s) {
+              return s.name + ' (' + s.homeDept + ' not yet generated)';
+            }).join(', ') + '.';
+          }
+          UI.showToast(msg, data.skipped && data.skipped.length > 0 ? 'warning' : 'success');
         });
       };
 
@@ -559,42 +623,75 @@
       );
     }
 
+    /**
+     * Called automatically when a dept is selected. Fetches all available weeks
+     * and loads the most recent one into the grid without requiring user action.
+     * Falls back gracefully if no schedules exist yet.
+     */
+    function _autoLoadLatestSchedule(dept) {
+      var today = new Date();
+      var anchor = today.toISOString().slice(0, 10);
+      UI.callServer('getScheduleWeeksForMonth', [dept, anchor], function (data) {
+        var weeks = data.weeks || [];
+        var tableContainer = document.getElementById('scheduleTableContainer');
+        if (weeks.length === 0) {
+          if (tableContainer) {
+            tableContainer.innerHTML = '<div class="p-3 text-comet-muted small">No schedules found for ' + esc(dept) + '. Click Generate to create one.</div>';
+          }
+          return;
+        }
+        // Weeks are sorted newest-first by the API — load the most recent one.
+        _buildWeekTabBar(dept, weeks, weeks[0].mondayDate);
+      });
+    }
+
     function handleLoadExisting() {
       var dept = document.getElementById('scheduleDept').value;
       var monday = document.getElementById('scheduleWeek').value;
       if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-      if (!monday) { UI.showToast('Select a week first.', 'error'); return; }
 
       _currentDept = dept;
-      _currentMonday = monday;
+      _currentMonday = monday || new Date().toISOString().slice(0, 10);
 
-      // Load all existing weeks for the selected dept in the same calendar month
-      UI.callServer('getScheduleWeeksForMonth', [dept, monday], function (data) {
+      // Load all existing weeks for the selected dept (no longer restricted to one month)
+      UI.callServer('getScheduleWeeksForMonth', [dept, _currentMonday], function (data) {
         var weeks = data.weeks || [];
         if (weeks.length === 0) {
-          UI.showToast('No schedules found for ' + dept + ' this month. Click Generate to create one.', 'info');
+          UI.showToast('No schedules found for ' + dept + '. Click Generate to create one.', 'info');
           return;
         }
-
-        // Build week-tab buttons above the grid
-        var container = document.getElementById('scheduleTableContainer');
-        var tabHtml = '<div class="d-flex gap-2 flex-wrap p-2 border-bottom mb-0" id="weekTabBar">';
-        weeks.forEach(function (w) {
-          var d = new Date(w.mondayDate + 'T00:00:00');
-          var label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          var active = w.mondayDate === monday ? ' btn-primary' : ' btn-outline-secondary';
-          tabHtml += '<button class="btn btn-sm' + active + '" '
-            + 'data-monday="' + esc(w.mondayDate) + '" '
-            + 'onclick="Schedule._onWeekTabClick(this)">'
-            + 'Week of ' + label + '</button>';
-        });
-        tabHtml += '</div><div id="scheduleGridInner"></div>';
-        container.innerHTML = tabHtml;
-
-        // Auto-load the first week (or the selected one if present)
-        var toLoad = weeks.find(function (w) { return w.mondayDate === monday; }) || weeks[0];
-        _loadWeekIntoGrid(toLoad.mondayDate);
+        _buildWeekTabBar(dept, weeks, monday);
       });
+    }
+
+    /**
+     * Renders the week-tab bar and loads the selected (or most recent) week into the grid.
+     * Used by both handleLoadExisting and _autoLoadLatestSchedule so the two code paths
+     * stay in sync.
+     *
+     * @param {string} dept          — Department name
+     * @param {Array}  weeks         — Array of { mondayDate } objects, newest-first
+     * @param {string} selectedMonday — "YYYY-MM-DD" of the week to pre-select; falls back to weeks[0]
+     */
+    function _buildWeekTabBar(dept, weeks, selectedMonday) {
+      _currentDept = dept;
+      var container = document.getElementById('scheduleTableContainer');
+      var tabHtml = '<div class="d-flex gap-2 flex-wrap p-2 border-bottom mb-0" id="weekTabBar">';
+      weeks.forEach(function (w) {
+        var d = new Date(w.mondayDate + 'T00:00:00');
+        var label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        var active = w.mondayDate === selectedMonday ? ' btn-primary' : ' btn-outline-secondary';
+        tabHtml += '<button class="btn btn-sm' + active + '" '
+          + 'data-monday="' + esc(w.mondayDate) + '" '
+          + 'onclick="Schedule._onWeekTabClick(this)">'
+          + 'Week of ' + label + '</button>';
+      });
+      tabHtml += '</div><div id="scheduleGridInner"></div>';
+      container.innerHTML = tabHtml;
+
+      // Auto-load the selected week, or the most recent one (weeks[0]) if no match.
+      var toLoad = weeks.find(function (w) { return w.mondayDate === selectedMonday; }) || weeks[0];
+      _loadWeekIntoGrid(toLoad.mondayDate);
     }
 
     function _loadWeekIntoGrid(mondayDate) {
@@ -762,7 +859,7 @@
       }
 
       // Parse the employee's role list — first entry is their priority role
-      var roleList = (emp.primaryRole || '').split(',').map(function(r) { return r.trim(); }).filter(Boolean);
+      var roleList = (emp.primaryRole || '').split(',').map(function (r) { return r.trim(); }).filter(Boolean);
       var priorityRole = roleList[0] || '';
       var priorityRoleCssClass = 'role-priority-badge role-badge-' + priorityRole.toLowerCase().replace(/\s+/g, '-');
       var priorityRoleBadge = priorityRole
@@ -1189,7 +1286,7 @@
     UI.callServer('getDeptSettings', dept, function (data) {
       console.log('loadDeptSettings: success callback received data, calling renderDeptSettings');
       renderDeptSettings(data);
-    }, function(error) {
+    }, function (error) {
       console.log('loadDeptSettings: error callback —', error);
     });
   }
@@ -1221,6 +1318,31 @@
       return buildShiftDefRow(s, i);
     }).join('');
     wireDeleteButtons();
+
+    // Engine Options toggles
+    var engineOptions = data.engineOptions || { enforceRoleMinimums: true, gapFillEnabled: true };
+    document.getElementById('engineEnforceRoleMin').checked = engineOptions.enforceRoleMinimums !== false;
+    document.getElementById('engineGapFillEnabled').checked = engineOptions.gapFillEnabled !== false;
+
+    // Role Minimums table
+    var roleMinimums = data.roleMinimums || {};
+    var roleMinimumsBody = document.getElementById('roleMinimumsBody');
+    roleMinimumsBody.innerHTML = Object.keys(roleMinimums).map(function (roleName) {
+      var entry = roleMinimums[roleName] || {};
+      return '<tr>'
+        + '<td><input type="text" class="form-control form-control-sm" value="' + esc(roleName) + '"></td>'
+        + '<td><input type="number" class="form-control form-control-sm" value="' + (entry.Low || 0) + '" min="0"></td>'
+        + '<td><input type="number" class="form-control form-control-sm" value="' + (entry.Moderate || 0) + '" min="0"></td>'
+        + '<td><input type="number" class="form-control form-control-sm" value="' + (entry.High || 0) + '" min="0"></td>'
+        + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
+        + '</tr>';
+    }).join('');
+
+    // Show "Add Hybrid Staff" button only when this dept has combo participants
+    var hybridBtn = document.getElementById('btnAddHybridStaff');
+    if (hybridBtn) {
+      hybridBtn.style.display = data.hasComboParticipants ? '' : 'none';
+    }
   }
 
   function buildShiftDefRow(s, i) {
@@ -1264,17 +1386,17 @@
   function collectShiftsFromDom() {
     var shifts = [];
     document.querySelectorAll('#shiftDefsBody tr').forEach(function (tr) {
-      var name         = tr.querySelector('.shift-name').value.trim();
-      var ftpt         = tr.querySelector('.shift-ftpt').value;
+      var name = tr.querySelector('.shift-name').value.trim();
+      var ftpt = tr.querySelector('.shift-ftpt').value;
       var weekdayStart = tr.querySelector('.shift-weekday-start').value || '';
-      var satStart     = tr.querySelector('.shift-sat-start').value     || '';
-      var sunStart     = tr.querySelector('.shift-sun-start').value     || '';
-      var paidHours    = parseFloat(tr.querySelector('.shift-hours').value) || 0;
-      var hasLunch     = tr.querySelector('.shift-lunch').checked;
-      var flexEnabledEl        = tr.querySelector('.shift-flex-enabled');
-      var flexEnabled          = flexEnabledEl ? flexEnabledEl.checked : true;
-      var flexWindowEarliest   = tr.querySelector('.shift-flex-earliest').value || '';
-      var flexWindowLatest     = tr.querySelector('.shift-flex-latest').value   || '';
+      var satStart = tr.querySelector('.shift-sat-start').value || '';
+      var sunStart = tr.querySelector('.shift-sun-start').value || '';
+      var paidHours = parseFloat(tr.querySelector('.shift-hours').value) || 0;
+      var hasLunch = tr.querySelector('.shift-lunch').checked;
+      var flexEnabledEl = tr.querySelector('.shift-flex-enabled');
+      var flexEnabled = flexEnabledEl ? flexEnabledEl.checked : true;
+      var flexWindowEarliest = tr.querySelector('.shift-flex-earliest').value || '';
+      var flexWindowLatest = tr.querySelector('.shift-flex-latest').value || '';
       if (name) {
         shifts.push({
           name, ftpt, weekdayStart, satStart, sunStart, paidHours, hasLunch,
@@ -1283,6 +1405,21 @@
       }
     });
     return shifts;
+  }
+
+  function collectRoleMinimumsFromDom() {
+    var roleMinimums = {};
+    document.querySelectorAll('#roleMinimumsBody tr').forEach(function (tr) {
+      var inputs = tr.querySelectorAll('input');
+      var roleName = inputs[0] ? inputs[0].value.trim() : '';
+      if (!roleName) return;
+      roleMinimums[roleName] = {
+        Low: parseInt((inputs[1] || {}).value, 10) || 0,
+        Moderate: parseInt((inputs[2] || {}).value, 10) || 0,
+        High: parseInt((inputs[3] || {}).value, 10) || 0,
+      };
+    });
+    return roleMinimums;
   }
 
   function collectDeptSettingsFromDom() {
@@ -1593,13 +1730,13 @@
     thresholds: { low: 100, high: 300 },
     trafficCurves: {
       //           12a 1  2  3  4  5  6  7  8   9am  10   11  12p   1    2    3    4   5pm   6   7pm   8  9pm 10 11
-      Monday:    [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-      Tuesday:   [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-      Wednesday: [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-      Thursday:  [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-      Friday:    [0, 0, 0, 0, 0, 0, 0, 0, 0,  80, 110, 140, 200, 155, 140, 200, 180, 250, 195, 205, 170,   0, 0, 0],
-      Saturday:  [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 320, 330, 330, 320, 330, 320, 310, 200,   0,   0,   0, 0, 0],
-      Sunday:    [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 310, 330, 325, 320, 320, 300, 250,   0,   0,   0,   0, 0, 0],
+      Monday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+      Tuesday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+      Wednesday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+      Thursday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+      Friday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 80, 110, 140, 200, 155, 140, 200, 180, 250, 195, 205, 170, 0, 0, 0],
+      Saturday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 320, 330, 330, 320, 330, 320, 310, 200, 0, 0, 0, 0, 0],
+      Sunday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 310, 330, 325, 320, 320, 300, 250, 0, 0, 0, 0, 0, 0],
     },
     pool: {
       schedulingCounts: { Low: 1, Moderate: 3, High: 5 },
@@ -1749,7 +1886,7 @@
     // Allow dragging into the bottom padding so the user can reach 0 — relativeY is
     // clamped to [0, graphHeight] below, so values below the baseline map cleanly to 0.
     if (mouseX < leftPadding || mouseX > cssWidth - rightPadding ||
-        mouseY < topPadding || mouseY > cssHeight) return;
+      mouseY < topPadding || mouseY > cssHeight) return;
 
     // Find nearest of 24 control points
     var pointSpacing = graphWidth / 24;
@@ -1839,7 +1976,7 @@
       var v0 = (p2 - p0) * 0.5;
       var v1 = (p3 - p1) * 0.5;
       var t2 = t * t, t3 = t2 * t;
-      return (2*p1 - 2*p2 + v0 + v1)*t3 + (-3*p1 + 3*p2 - 2*v0 - v1)*t2 + v0*t + p1;
+      return (2 * p1 - 2 * p2 + v0 + v1) * t3 + (-3 * p1 + 3 * p2 - 2 * v0 - v1) * t2 + v0 * t + p1;
     }
 
     // ===== Draw color zone bands (below low=green, mid=yellow, above high=red) =====
@@ -1940,7 +2077,7 @@
     }
 
     // ===== X-axis labels (every 3 hours: 12a, 3a, 6a, 9a, 12p, 3p, 6p, 9p) =====
-    var xLabels = ['12a','3a','6a','9a','12p','3p','6p','9p'];
+    var xLabels = ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'];
     ctx.fillStyle = '#888';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';

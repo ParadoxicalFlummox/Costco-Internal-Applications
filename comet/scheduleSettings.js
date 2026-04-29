@@ -1,12 +1,21 @@
 /**
  * scheduleSettings.js — Per-department schedule settings read/write for COMET.
- * VERSION: 0.5.2
+ * VERSION: 0.6.0
  *
  * Each department has its own Settings sheet tab named "Settings_[DeptName]"
  * (e.g., "Settings_Maintenance"). This file owns all reads and writes to those sheets.
  *
  * SHEET LAYOUT (Settings_[Dept]):
+ *   A1:D1   — Section header row (Day | Count | Mode | spacer)
  *   A2:C8   — Staffing requirements: Day | Count | Mode ("Count" or "Hours")
+ *   A10:B10 — ENGINE OPTIONS section header (merged)
+ *   A11:B12 — Engine option rows: Label | TRUE/FALSE
+ *               Row 11: Enforce Role Minimums
+ *               Row 12: Enable Gap Fill
+ *   A14:D14 — ROLE MINIMUMS section header (merged)
+ *   A15:D15 — Column labels: Role | Low | Moderate | High
+ *   A16:D*  — Role minimum rows: one per role
+ *   E1:N1   — Shift definitions header
  *   E2:N50  — Shift definitions:
  *             E: Name | F: FT/PT | G: WkdyStart | H: SatStart | I: SunStart |
  *             J: PaidHours | K: HasLunch | L: FlexEnabled | M: FlexWindowEarliest | N: FlexWindowLatest
@@ -14,9 +23,11 @@
  * RETURN SHAPES:
  *   getDeptSettings_() returns:
  *   {
- *     staffingReqs: [{ day, count, mode }],     // 7 entries, Mon–Sun
- *     shifts:       [{ name, ftpt, weekdayStart, satStart, sunStart, paidHours, hasLunch,
- *                      flexEnabled, flexWindowEarliest, flexWindowLatest }],
+ *     staffingReqs:  [{ day, count, mode }],        // 7 entries, Mon–Sun
+ *     shifts:        [{ name, ftpt, weekdayStart, satStart, sunStart, paidHours, hasLunch,
+ *                       flexEnabled, flexWindowEarliest, flexWindowLatest }],
+ *     engineOptions: { enforceRoleMinimums: bool, gapFillEnabled: bool },
+ *     roleMinimums:  { RoleName: { Low: n, Moderate: n, High: n }, ... },
  *   }
  *
  *   Time values in the shifts array are stored as "HH:MM" strings (24-hour)
@@ -34,7 +45,7 @@
  * Creates the Settings sheet with defaults if it doesn't exist yet.
  *
  * @param {string} deptName
- * @returns {{ staffingReqs: Array, shifts: Array }}
+ * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object }}
  */
 function getDeptSettings_(deptName) {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
@@ -43,13 +54,16 @@ function getDeptSettings_(deptName) {
 }
 
 /**
- * Writes shift definitions and staffing requirements for a department back to its Settings sheet.
+ * Writes shift definitions, staffing requirements, engine options, and role minimums
+ * for a department back to its Settings sheet.
  *
  * @param {string} deptName
  * @param {{
- *   staffingReqs: Array<{ day: string, count: number, mode: string }>,
- *   shifts:       Array<{ name: string, ftpt: string, startTime: string, endTime: string,
- *                          paidHours: number, hasLunch: boolean }>,
+ *   staffingReqs:  Array<{ day: string, count: number, mode: string }>,
+ *   shifts:        Array<{ name: string, ftpt: string, weekdayStart: string,
+ *                           paidHours: number, hasLunch: boolean }>,
+ *   engineOptions: { enforceRoleMinimums: boolean, gapFillEnabled: boolean },
+ *   roleMinimums:  { [roleName: string]: { Low: number, Moderate: number, High: number } },
  * }} data
  * @returns {{ saved: boolean }}
  */
@@ -62,6 +76,12 @@ function saveDeptSettings_(deptName, data) {
   // Omitting shifts (e.g. from the pre-gen modal) must NOT clear the shift table.
   if (data.shifts !== undefined && data.shifts !== null) {
     writeShiftDefinitions_(sheet, data.shifts);
+  }
+  if (data.engineOptions !== undefined && data.engineOptions !== null) {
+    writeEngineOptions_(sheet, data.engineOptions);
+  }
+  if (data.roleMinimums !== undefined && data.roleMinimums !== null) {
+    writeRoleMinimums_(sheet, data.roleMinimums);
   }
 
   SpreadsheetApp.flush();
@@ -122,14 +142,22 @@ function writeDefaultDeptSettings_(sheet, _deptName) {
   ];
   sheet.getRange(2, 5, defaultShifts.length, 10).setValues(defaultShifts);
 
+  // --- Engine Options section (rows 10–12, cols A–B) ---
+  writeEngineOptionsSectionHeader_(sheet);
+  writeEngineOptions_(sheet, { enforceRoleMinimums: true, gapFillEnabled: true });
+
+  // --- Role Minimums section (rows 14+, cols A–D) ---
+  writeRoleMinimumsSectionHeader_(sheet);
+  // No default role rows — managers add these via the UI.
+
   sheet.setTabColor('#005DAA');
   sheet.setFrozenRows(1);
 
   // Column widths
-  sheet.setColumnWidth(1, 110);  // Day
-  sheet.setColumnWidth(2, 80);   // Count
-  sheet.setColumnWidth(3, 80);   // Mode
-  sheet.setColumnWidth(4, 20);   // spacer
+  sheet.setColumnWidth(1, 140);  // Day / Role
+  sheet.setColumnWidth(2, 80);   // Count / Low
+  sheet.setColumnWidth(3, 90);   // Mode / Moderate
+  sheet.setColumnWidth(4, 70);   // spacer / High
   sheet.setColumnWidth(5, 140);  // Shift Name
   sheet.setColumnWidth(6, 70);   // FT/PT
   sheet.setColumnWidth(7, 90);   // Wkdy Start
@@ -151,7 +179,7 @@ function writeDefaultDeptSettings_(sheet, _deptName) {
  * Reads a Settings sheet and returns the settings as a plain serializable object.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @returns {{ staffingReqs: Array, shifts: Array }}
+ * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object }}
  */
 function readDeptSettingsFromSheet_(sheet) {
   console.log('readDeptSettingsFromSheet_: reading staffing requirements...');
@@ -162,9 +190,14 @@ function readDeptSettingsFromSheet_(sheet) {
   const shifts = readShiftDefinitions_(sheet);
   console.log('readDeptSettingsFromSheet_: shifts = ' + shifts.length + ' rows');
 
+  const engineOptions = readEngineOptions_(sheet);
+  const roleMinimums  = readRoleMinimums_(sheet);
+
   return {
-    staffingReqs: staffingReqs,
-    shifts:       shifts,
+    staffingReqs:  staffingReqs,
+    shifts:        shifts,
+    engineOptions: engineOptions,
+    roleMinimums:  roleMinimums,
   };
 }
 
@@ -254,13 +287,9 @@ function writeStaffingRequirements_(sheet, staffingReqs) {
     return [day, Number(entry.count || 0), entry.mode || STAFFING_MODE.COUNT];
   });
 
+  // Staffing requirements are always exactly 7 rows (Mon–Sun). Write them directly.
+  // Do NOT clear below row 8 — the engine options and role minimums sections live there.
   sheet.getRange(2, 1, rows.length, 3).setValues(rows);
-
-  // Clear any leftover rows below (in case someone had more than 7)
-  const lastRow = sheet.getLastRow();
-  if (lastRow > 8) {
-    sheet.getRange(9, 1, lastRow - 8, 3).clearContent();
-  }
 }
 
 /**
@@ -291,6 +320,148 @@ function writeShiftDefinitions_(sheet, shifts) {
   ]);
 
   sheet.getRange(2, 5, rows.length, 10).setValues(rows);  // E2 onwards, 10 columns
+}
+
+
+// ---------------------------------------------------------------------------
+// Engine Options — Read / Write
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the engine options block from rows 11–12, cols A–B.
+ * Defaults to all-enabled if rows are missing or values are not boolean.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @returns {{ enforceRoleMinimums: boolean, gapFillEnabled: boolean }}
+ */
+function readEngineOptions_(sheet) {
+  try {
+    const startRow = SETTINGS_ROWS.ENGINE_OPTIONS_START; // config.js
+    const values   = sheet.getRange(startRow, 1, SETTINGS_ROWS.ENGINE_OPTIONS_COUNT, 2).getValues();
+    // Row 0 = enforceRoleMinimums, Row 1 = gapFillEnabled
+    // Column B (index 1) holds the boolean value.
+    const enforceRoleMinimums = values[0] ? values[0][1] !== false : true;
+    const gapFillEnabled      = values[1] ? values[1][1] !== false : true;
+    return { enforceRoleMinimums: enforceRoleMinimums, gapFillEnabled: gapFillEnabled };
+  } catch (_error) {
+    return { enforceRoleMinimums: true, gapFillEnabled: true };
+  }
+}
+
+/**
+ * Writes the engine options block to rows 11–12, col B (preserves labels in col A).
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {{ enforceRoleMinimums: boolean, gapFillEnabled: boolean }} options
+ */
+function writeEngineOptions_(sheet, options) {
+  const startRow = SETTINGS_ROWS.ENGINE_OPTIONS_START;
+  sheet.getRange(startRow, 1, 2, 2).setValues([
+    ['Enforce Role Minimums', options.enforceRoleMinimums !== false],
+    ['Enable Gap Fill',       options.gapFillEnabled      !== false],
+  ]);
+}
+
+/**
+ * Writes the bold blue section header for the engine options block (row 10, cols A–B merged).
+ * Only called during initial sheet creation.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ */
+function writeEngineOptionsSectionHeader_(sheet) {
+  const headerRow = SETTINGS_ROWS.ENGINE_OPTIONS_HEADER;
+  const headerRange = sheet.getRange(headerRow, 1, 1, 2);
+  headerRange.merge();
+  headerRange.setValue('ENGINE OPTIONS');
+  headerRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
+  // Blank spacer above (row 9)
+  sheet.getRange(9, 1, 1, 4).clearContent();
+  // Blank spacer between options and role minimums (row 13)
+  sheet.getRange(13, 1, 1, 4).clearContent();
+}
+
+
+// ---------------------------------------------------------------------------
+// Role Minimums — Read / Write
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads the role minimums table from row ROLE_MINIMUMS_START downward.
+ * Returns an empty object if no roles are configured.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @returns {{ [roleName: string]: { Low: number, Moderate: number, High: number } }}
+ */
+function readRoleMinimums_(sheet) {
+  try {
+    const startRow = SETTINGS_ROWS.ROLE_MINIMUMS_START;
+    const lastRow  = sheet.getLastRow();
+    if (lastRow < startRow) return {};
+
+    const numRows = lastRow - startRow + 1;
+    const values  = sheet.getRange(startRow, 1, numRows, 4).getValues();
+    const result  = {};
+
+    values.forEach(function(row) {
+      const roleName = String(row[0] || '').trim();
+      if (!roleName) return;
+      result[roleName] = {
+        Low:      Number(row[1] || 0),
+        Moderate: Number(row[2] || 0),
+        High:     Number(row[3] || 0),
+      };
+    });
+
+    return result;
+  } catch (_error) {
+    return {};
+  }
+}
+
+/**
+ * Writes the role minimums table starting at ROLE_MINIMUMS_START, clearing stale rows.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {{ [roleName: string]: { Low: number, Moderate: number, High: number } }} roleMinimums
+ */
+function writeRoleMinimums_(sheet, roleMinimums) {
+  const startRow = SETTINGS_ROWS.ROLE_MINIMUMS_START;
+  const lastRow  = sheet.getLastRow();
+
+  // Clear everything from startRow downward in cols A–D (stale role rows).
+  if (lastRow >= startRow) {
+    sheet.getRange(startRow, 1, lastRow - startRow + 1, 4).clearContent();
+  }
+
+  const roleNames = Object.keys(roleMinimums);
+  if (roleNames.length === 0) return;
+
+  const rows = roleNames.map(function(roleName) {
+    const entry = roleMinimums[roleName] || {};
+    return [roleName, Number(entry.Low || 0), Number(entry.Moderate || 0), Number(entry.High || 0)];
+  });
+
+  sheet.getRange(startRow, 1, rows.length, 4).setValues(rows);
+}
+
+/**
+ * Writes the bold blue section header and column labels for the role minimums block.
+ * Only called during initial sheet creation.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ */
+function writeRoleMinimumsSectionHeader_(sheet) {
+  const headerRow = SETTINGS_ROWS.ROLE_MINIMUMS_HEADER;
+  const labelRow  = SETTINGS_ROWS.ROLE_MINIMUMS_LABELS;
+
+  const sectionHeaderRange = sheet.getRange(headerRow, 1, 1, 4);
+  sectionHeaderRange.merge();
+  sectionHeaderRange.setValue('ROLE MINIMUMS');
+  sectionHeaderRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
+
+  const columnLabelRange = sheet.getRange(labelRow, 1, 1, 4);
+  columnLabelRange.setValues([['Role', 'Low', 'Moderate', 'High']]);
+  columnLabelRange.setFontWeight('bold').setBackground('#D9E8F5').setFontColor('#003366');
 }
 
 

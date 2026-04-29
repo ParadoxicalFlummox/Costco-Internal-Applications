@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.5
+ * VERSION: 0.5.6
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -117,10 +117,27 @@ const STAFFING_MODE = {
  *   SHIFT_DEFINITIONS_TABLE     — E2:N50 (Name | FT/PT | WkdyStart | SatStart | SunStart |
  *                                          PaidHours | HasLunch | FlexEnabled | FlexEarliest | FlexLatest)
  *                                 Column D is a visual spacer; not read.
+ *
+ * New sections added below the staffing requirements block (rows 9–onward, cols A–D):
+ *   ENGINE_OPTIONS_HEADER_ROW   — Row 10: section title
+ *   ENGINE_OPTIONS_START_ROW    — Row 11: first option (Enforce Role Minimums)
+ *   ENGINE_OPTIONS_COUNT        — 2 options (enforceRoleMinimums, gapFillEnabled)
+ *   ROLE_MINIMUMS_HEADER_ROW    — Row 14: section title
+ *   ROLE_MINIMUMS_LABEL_ROW     — Row 15: column headers (Role | Low | Moderate | High)
+ *   ROLE_MINIMUMS_START_ROW     — Row 16: first data row
  */
 const SETTINGS_RANGE = {
   STAFFING_REQUIREMENTS_TABLE: 'A2:C8',
   SHIFT_DEFINITIONS_TABLE:     'E2:N50',
+};
+
+const SETTINGS_ROWS = {
+  ENGINE_OPTIONS_HEADER: 10,  // merged section label
+  ENGINE_OPTIONS_START:  11,  // row 11 = Enforce Role Minimums, row 12 = Enable Gap Fill
+  ENGINE_OPTIONS_COUNT:  2,
+  ROLE_MINIMUMS_HEADER:  14,  // merged section label
+  ROLE_MINIMUMS_LABELS:  15,  // Role | Low | Moderate | High column headers
+  ROLE_MINIMUMS_START:   16,  // first role data row
 };
 
 /**

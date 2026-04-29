@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.4
+ * VERSION: 0.5.5
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -81,7 +81,11 @@ function getScheduleForWeek(deptName, mondayDate) {
     }
     // Re-run Phase 4 role assignment so roles are visible when loading an existing sheet.
     // readExistingWeekSchedule_ reads VAC/RDO/SHIFT state but does not populate cell.role.
-    runPhaseFourRoleAssignment_(result.weekGrid, result.employeeList, deptName); // scheduleEngine.js
+    const getWeekEngineOptions = loadEngineOptions(deptName); // settingsManager.js
+    const getWeekRoleMinimums  = loadRoleMinimums(deptName);  // settingsManager.js
+    const getWeekTrafficLevels = {};
+    DAY_NAMES_IN_ORDER.forEach(function(dayName) { getWeekTrafficLevels[dayName] = 'Moderate'; });
+    runPhaseRoleAssignment_(result.weekGrid, result.employeeList, deptName, getWeekTrafficLevels, getWeekRoleMinimums, getWeekEngineOptions); // scheduleEngine.js
     const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
     return {
       ok: true,
@@ -121,8 +125,11 @@ function generateSchedule(deptName, mondayDate) {
     // than silently writing garbled interleaved data.
     return withDocumentLock_(10000, function() {
 
+    const engineOptions = loadEngineOptions(deptName); // settingsManager.js
+    const roleMinimums  = loadRoleMinimums(deptName);  // settingsManager.js
+
     const { result } = logExecutionTime_('generateWeeklySchedule_', function() {
-      return generateWeeklySchedule_(deptName, weekStartDate); // scheduleEngine.js
+      return generateWeeklySchedule_(deptName, weekStartDate, engineOptions, roleMinimums); // scheduleEngine.js
     });
 
     // Write to sheet via formatter.
@@ -149,7 +156,7 @@ function generateSchedule(deptName, mondayDate) {
     }
 
     const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
-    writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName, result.poolMemberIds); // formatter.js
+    writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName, result.poolMemberIds, result.comboParticipantIds); // formatter.js
 
     // Sort workbook tabs and clean up stale Week sheets.
     logExecutionTime_('Cleanup and sort sheets', function() {
@@ -178,6 +185,48 @@ function generateSchedule(deptName, mondayDate) {
     return { ok: false, error: error.message };
   }
 }
+
+/**
+ * Appends combo participant rows to an already-generated secondary dept schedule.
+ * Idempotent — safe to call multiple times; existing combo rows are overwritten, not duplicated.
+ *
+ * @param {string} deptName   — Secondary department name.
+ * @param {string} mondayDate — ISO date string "YYYY-MM-DD".
+ * @returns {{ ok: boolean, data?: { added, skipped, weekGrid, employeeList }, error?: string }}
+ */
+function appendHybridEmployees(deptName, mondayDate) {
+  try {
+    if (!deptName || !mondayDate) throw new Error('deptName and mondayDate are required.');
+    const weekStartDate = new Date(mondayDate + 'T00:00:00');
+
+    return withDocumentLock_(10000, function() {
+      const result = appendHybridEmployees_(deptName, weekStartDate); // scheduleEngine.js
+
+      // Re-write the combo participant rows in the sheet via formatter
+      const workbook = SpreadsheetApp.getActiveSpreadsheet();
+      const weekSheetName = generateWeekSheetName_(weekStartDate, deptName); // scheduleEngine.js
+      const sheet = workbook.getSheetByName(weekSheetName);
+      if (sheet) {
+        const primaryCount = result.employeeList.filter(function(emp) { return !emp.isComboParticipant; }).length;
+        appendComboParticipantsToSheet_(sheet, result.weekGrid, result.employeeList, primaryCount); // formatter.js
+      }
+
+      return {
+        ok: true,
+        data: {
+          added:        result.added,
+          skipped:      result.skipped,
+          weekGrid:     serializeWeekGrid_(result.weekGrid, result.employeeList),
+          employeeList: serializeEmployeeList_(result.employeeList, result.weekGrid),
+        },
+      };
+    }); // end withDocumentLock_
+  } catch (error) {
+    console.error('api: appendHybridEmployees failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
 
 /**
  * Returns hours already scheduled for an employee across all departments for a given week.
@@ -301,11 +350,39 @@ function getDeptSettings(deptName) {
       }
     }
 
+    // Determine whether this dept has any combo participants (employees with this dept in col N).
+    // Used by the frontend to conditionally show the "Add Hybrid Staff" button.
+    const allActiveEmployees = getActiveEmployees_(); // ukgImport.js
+    const normalizedTarget = deptName.toString().trim().toLowerCase().replace(/\s+/g, ' ');
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const employeesSheet = workbook.getSheetByName(EMPLOYEES_SHEET_NAME);
+    const employeesData = employeesSheet ? employeesSheet.getDataRange().getValues() : [];
+    const secondaryDeptByEmployeeId = {};
+    for (let rowIdx = EMPLOYEES_DATA_START_ROW - 1; rowIdx < employeesData.length; rowIdx++) {
+      const sheetRow = employeesData[rowIdx];
+      const rowEmpId = sheetRow[EMPLOYEE_COLUMN.ID - 1];
+      if (rowEmpId) {
+        secondaryDeptByEmployeeId[rowEmpId.toString().trim()] =
+          (sheetRow[EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS - 1] || '').toString().trim();
+      }
+    }
+    const hasComboParticipants = allActiveEmployees.some(function(rawEmployee) {
+      if (rawEmployee.department.toString().trim().toLowerCase().replace(/\s+/g, ' ') === normalizedTarget) return false;
+      const secondaryRaw = secondaryDeptByEmployeeId[rawEmployee.id.toString().trim()] || '';
+      if (!secondaryRaw) return false;
+      return secondaryRaw.split(',').some(function(d) {
+        return d.trim().toLowerCase().replace(/\s+/g, ' ') === normalizedTarget;
+      });
+    });
+
     const response = {
       ok: true,
       data: {
-        staffingReqs: staffingReqsArray,
-        shifts: shiftsArray
+        staffingReqs:        staffingReqsArray,
+        shifts:              shiftsArray,
+        engineOptions:       settings.engineOptions  || { enforceRoleMinimums: true, gapFillEnabled: true },
+        roleMinimums:        settings.roleMinimums   || {},
+        hasComboParticipants: hasComboParticipants,
       }
     };
     console.log('getDeptSettings: returning response with ok=true, data has ' + staffingReqsArray.length + ' reqs and ' + shiftsArray.length + ' shifts');
@@ -478,7 +555,11 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
 
     // Do NOT re-run phases. The override is now in place and locked, so phases will skip it.
     // Just run Phase 4 to assign roles to any SHIFT cells.
-    runPhaseFourRoleAssignment_(weekGrid, employeeList, deptName);
+    const overrideEngineOptions = loadEngineOptions(deptName); // settingsManager.js
+    const overrideRoleMinimums  = loadRoleMinimums(deptName);  // settingsManager.js
+    const overrideTrafficLevels = {};
+    DAY_NAMES_IN_ORDER.forEach(function(dayName) { overrideTrafficLevels[dayName] = 'Moderate'; });
+    runPhaseRoleAssignment_(weekGrid, employeeList, deptName, overrideTrafficLevels, overrideRoleMinimums, overrideEngineOptions); // scheduleEngine.js
 
     // Flush updated grid back to the sheet to reflect the role assignments.
     writeAndFormatSchedule(sheet, employeeList, weekGrid, staffingReqs, weekStartDate, deptName); // formatter.js
@@ -894,41 +975,47 @@ function getAttendanceSheetUrl(employeeId) {
 function getScheduleWeeksForMonth(deptName, monthDate) {
   try {
     if (!deptName) throw new Error('deptName is required.');
-    const anchor    = new Date((monthDate || new Date().toISOString().slice(0, 10)) + 'T00:00:00');
-    const year      = anchor.getFullYear();
-    const month     = anchor.getMonth(); // 0-based
 
-    const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const prefix   = 'Week_';
-    const weeks    = [];
+    // Determine the anchor month (used to highlight the "current" month in the UI),
+    // but we always return ALL weeks for this dept so the manager can navigate freely.
+    const anchor = monthDate
+      ? new Date(monthDate + 'T00:00:00')
+      : new Date();
+    const currentMonth = anchor.getMonth(); // 0-based, for sorting hint only
+    const currentYear  = anchor.getFullYear();
+
+    const workbook       = SpreadsheetApp.getActiveSpreadsheet();
+    const normalizedDept = deptName.toString().trim().toLowerCase().replace(/\s+/g, ' ');
+    const weeks          = [];
 
     workbook.getSheets().forEach(function(sheet) {
       const name = sheet.getName();
-      if (!name.startsWith(prefix)) return;
+      if (!name.startsWith('Week_')) return;
 
       // Sheet name format: Week_MM_DD_YY_DeptName
-      const parts = name.split('_');
-      if (parts.length < 5) return;
+      // Split only on the first 4 underscores so dept names with underscores survive.
+      const firstUnderscore = name.indexOf('_');
+      const rest = name.slice(firstUnderscore + 1); // "MM_DD_YY_DeptName"
+      const datePart = rest.slice(0, 8);  // "MM_DD_YY"
+      const dateParts = datePart.split('_');
+      if (dateParts.length < 3) return;
 
-      // Check department suffix matches
-      const sheetDept = parts.slice(4).join('_');
-      if (sheetDept.toLowerCase() !== deptName.toLowerCase()) return;
+      const sheetDeptRaw = rest.slice(9); // everything after "MM_DD_YY_"
+      const sheetDept = sheetDeptRaw.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (sheetDept !== normalizedDept) return;
 
-      // Parse date from Week_MM_DD_YY
-      const sheetDate = new Date('20' + parts[3] + '-' + parts[1] + '-' + parts[2] + 'T00:00:00');
+      const sheetDate = new Date('20' + dateParts[2] + '-' + dateParts[0] + '-' + dateParts[1] + 'T00:00:00');
       if (isNaN(sheetDate.getTime())) return;
 
-      // Include if the Monday falls within the target month
-      if (sheetDate.getFullYear() === year && sheetDate.getMonth() === month) {
-        weeks.push({
-          weekSheetName: name,
-          mondayDate:    sheetDate.toISOString().slice(0, 10),
-        });
-      }
+      weeks.push({
+        weekSheetName: name,
+        mondayDate:    sheetDate.toISOString().slice(0, 10),
+        inCurrentMonth: sheetDate.getMonth() === currentMonth && sheetDate.getFullYear() === currentYear,
+      });
     });
 
-    // Sort chronologically
-    weeks.sort(function(a, b) { return a.mondayDate.localeCompare(b.mondayDate); });
+    // Sort newest first so the most recent week is auto-loaded
+    weeks.sort(function(a, b) { return b.mondayDate.localeCompare(a.mondayDate); });
     return { ok: true, data: { weeks } };
   } catch (error) {
     console.error('api: getScheduleWeeksForMonth failed —', error);

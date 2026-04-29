@@ -86,6 +86,18 @@
               Traffic Heatmap
             </button>
           </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-engine-options-btn" data-bs-toggle="tab" data-bs-target="#tab-engine-options"
+              type="button" role="tab">
+              Engine Options
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-role-minimums-btn" data-bs-toggle="tab" data-bs-target="#tab-role-minimums"
+              type="button" role="tab">
+              Role Minimums
+            </button>
+          </li>
         </ul>
 
         <!-- Tab Content -->
@@ -100,6 +112,7 @@
               <div class="col-auto">
                 <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
                 <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
+                <button id="btnAddHybridStaff" class="btn btn-outline-primary btn-sm ms-1" style="display:none;">+ Add Hybrid Staff</button>
               </div>
             </div>
             <div id="scheduleTableContainer" class="comet-table-container">
@@ -218,6 +231,47 @@
               <button id="btnSaveHeatmapConfig" class="btn btn-primary btn-sm ms-1">Save Heatmap Configuration</button>
             </div>
           </div>
+
+          <!-- Tab 5: Engine Options -->
+          <div class="tab-pane fade" id="tab-engine-options" role="tabpanel">
+            <p class="small text-muted mb-3">Control which scheduling phases are active for this department.</p>
+            <div class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" id="engineEnforceRoleMin" checked>
+              <label class="form-check-label small fw-semibold" for="engineEnforceRoleMin">
+                Enforce Role Minimums
+              </label>
+              <div class="text-muted small">When enabled, Phase 4 ensures each role meets its configured minimum headcount per traffic level.</div>
+            </div>
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" id="engineGapFillEnabled" checked>
+              <label class="form-check-label small fw-semibold" for="engineGapFillEnabled">
+                Enable Gap Fill (Phase 2)
+              </label>
+              <div class="text-muted small">When disabled, Phase 2 is skipped entirely and only preference assignments from Phase 1 are used.</div>
+            </div>
+            <button id="btnSaveEngineOptions" class="btn btn-primary btn-sm">Save Engine Options</button>
+          </div>
+
+          <!-- Tab 6: Role Minimums -->
+          <div class="tab-pane fade" id="tab-role-minimums" role="tabpanel">
+            <p class="small text-muted mb-2">Set the minimum number of employees per role for each traffic level. When Traffic Heatmap is disabled, the Moderate column is used as a static daily minimum.</p>
+            <table class="table table-sm mb-2" id="roleMinimumsTable">
+              <thead>
+                <tr>
+                  <th>Role Name</th>
+                  <th>Low</th>
+                  <th>Moderate</th>
+                  <th>High</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="roleMinimumsBody"></tbody>
+            </table>
+            <button id="btnAddRoleMinimum" class="btn btn-outline-secondary btn-sm mb-2">+ Add Role</button>
+            <br>
+            <button id="btnSaveRoleMinimums" class="btn btn-primary btn-sm">Save Role Minimums</button>
+          </div>
+
         </div>
       </div>
     </div>
