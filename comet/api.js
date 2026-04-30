@@ -198,15 +198,7 @@ function appendHybridEmployees(deptName, mondayDate) {
 
     return withDocumentLock_(10000, function() {
       const result = appendHybridEmployees_(deptName, weekStartDate); // scheduleEngine.js
-
-      // Re-write the combo participant rows in the sheet via formatter
-      const workbook = SpreadsheetApp.getActiveSpreadsheet();
-      const weekSheetName = generateWeekSheetName_(weekStartDate, deptName); // scheduleEngine.js
-      const sheet = workbook.getSheetByName(weekSheetName);
-      if (sheet) {
-        const primaryCount = result.employeeList.filter(function(emp) { return !emp.isComboParticipant; }).length;
-        appendComboParticipantsToSheet_(sheet, result.weekGrid, result.employeeList, primaryCount); // formatter.js
-      }
+      // appendHybridEmployees_ already writes the full updated schedule back to the sheet
 
       return {
         ok: true,

@@ -763,7 +763,8 @@
       _employeeList.forEach(function (emp, ei) {
         var isFt = emp.status === 'FT';
         var isLpt = emp.status === 'LPT';
-        var rowClass = isFt ? 'schedule-row-ft' : (isLpt ? 'schedule-row-lpt' : 'schedule-row-pt');
+        var isHybrid = emp.isComboParticipant;
+        var rowClass = isHybrid ? 'schedule-row-hybrid' : (isFt ? 'schedule-row-ft' : (isLpt ? 'schedule-row-lpt' : 'schedule-row-pt'));
         html += '<tr class="' + rowClass + '">';
         html += '<td class="schedule-cell">' + buildNameCellHtml(emp) + '</td>';
 

@@ -168,7 +168,9 @@ function readExistingWeekSchedule_(deptName, weekStartDate) {
   const sheet = workbook.getSheetByName(sheetName);
   if (!sheet) return null;
 
-  const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate, null);
+  // Preload all week sheets so combo participants can resolve their home dept scheduled days
+  const preloadedSheets = preloadAllWeekSheets_(workbook);
+  const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate, preloadedSheets);
   if (employeeList.length === 0) return null;
 
   // Read from JSON format (new) or legacy format (if this sheet was generated before the refactor)
@@ -1289,6 +1291,8 @@ function serializeEmployeeList_(employeeList, weekGrid) {
       weeklyHours: weeklyHours,
       underHours: weeklyHours < minHours,
       secondaryDepartments: emp.secondaryDepartments || [],
+      isComboParticipant: emp.isComboParticipant || false,
+      homeDepartment: emp.homeDepartment || null,
     };
   });
 }
@@ -1503,7 +1507,7 @@ function readJsonScheduleFromSheet_(weekSheet, employeeList) {
  *   2. Load only combo participants for this dept (employees with this dept in col N)
  *   3. For each combo participant: mirror home dept scheduled days with secondary shift
  *   4. Re-run role stamp (Phase 4a) on all employees so role counts reflect the additions
- *   5. Delegate write to formatter.js: appendComboParticipantsToSheet_()
+ *   5. Write full updated schedule back to sheet (JSON format: one batch call)
  *
  * @param {string} deptName
  * @param {Date}   weekStartDate
@@ -1528,7 +1532,7 @@ function appendHybridEmployees_(deptName, weekStartDate) {
   const comboParticipants = employeeList.filter(function (emp) { return emp.isComboParticipant; });
 
   // Reconstruct the grid from the existing sheet for primary employees
-  const weekGrid = readCheckboxStateFromSheet_(weekSheet, primaryEmployees.length);
+  const weekGrid = readJsonScheduleFromSheet_(weekSheet, primaryEmployees);
 
   // Add placeholder rows for combo participants (initialized to OFF)
   comboParticipants.forEach(function (_employee, comboIndex) {
@@ -1575,9 +1579,11 @@ function appendHybridEmployees_(deptName, weekStartDate) {
   DAY_NAMES_IN_ORDER.forEach(function (dayName) { dayTrafficLevels[dayName] = 'Moderate'; });
   runPhaseRoleAssignment_(weekGrid, employeeList, deptName, dayTrafficLevels, roleMinimums, engineOptions);
 
-  // Write combo participant rows to the sheet (formatter.js)
+  // Write the full updated schedule (including newly-added combo participants) back to the sheet
+  // In JSON format, this is just one batch write call that covers all employees
   if (comboParticipants.length > 0 && skipped.length < comboParticipants.length) {
-    appendComboParticipantsToSheet_(weekSheet, weekGrid, employeeList, primaryEmployees.length); // formatter.js
+    const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
+    writeAndFormatSchedule(weekSheet, employeeList, weekGrid, staffingRequirements, weekStartDate, deptName); // formatter.js
   }
 
   const comboParticipantIdSet = new Set();
