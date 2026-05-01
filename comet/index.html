@@ -3,6 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <?!= include('stylesheet') ?>
 </head>
 
@@ -24,7 +25,7 @@
           <a class="nav-link" data-view="schedule" href="#">Schedule</a>
         </li>
         <li class="nav-item">
-          <a class="nav-link" data-view="infractions" href="#">Infractions</a>
+          <a class="nav-link" data-view="attendance" href="#">Attendance Dashboard</a>
         </li>
         <li class="nav-item">
           <a class="nav-link" data-view="admin" href="#">Admin</a>
@@ -285,7 +286,9 @@
         <h1 class="comet-view-title">Absence Log</h1>
         <div class="d-flex align-items-center gap-2">
           <label class="form-label mb-0 small fw-semibold" for="absenceDate">Date</label>
+          <button id="btnPrevDay" class="btn btn-outline-secondary btn-sm" title="Previous day">&#8592;</button>
           <input type="date" id="absenceDate" class="form-control form-control-sm" style="width:auto;">
+          <button id="btnNextDay" class="btn btn-outline-secondary btn-sm" title="Next day">&#8594;</button>
           <button id="btnNewAbsence" class="btn btn-primary btn-sm">+ New Entry</button>
         </div>
       </div>
@@ -319,51 +322,107 @@
     <!-- -------------------------------------------------------------------
          Infractions View
          ------------------------------------------------------------------- -->
-    <div id="view-infractions" class="comet-view" style="display:none;">
-      <div class="comet-view-header d-flex align-items-center justify-content-between">
-        <h1 class="comet-view-title">CN Dashboard</h1>
-        <div class="d-flex gap-2">
-          <div class="form-check form-switch mb-0 d-flex align-items-center me-2">
-            <input class="form-check-input" type="checkbox" id="dryRunToggle" checked>
-            <label class="form-check-label ms-2 small" for="dryRunToggle">Dry Run</label>
+    <div id="view-attendance" class="comet-view" style="display:none;">
+      <div class="comet-view-header">
+        <h1 class="comet-view-title">Attendance Dashboard</h1>
+      </div>
+
+      <!-- Tabs -->
+      <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="tab-attendance-cn-btn" data-bs-toggle="tab"
+            data-bs-target="#tab-attendance-cn" type="button" role="tab">
+            Active Infractions
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-attendance-calendar-btn" data-bs-toggle="tab"
+            data-bs-target="#tab-attendance-calendar" type="button" role="tab">
+            Employee Calendar
+          </button>
+        </li>
+      </ul>
+
+      <!-- Tab Content -->
+      <div class="tab-content">
+
+        <!-- Tab 1: Active Infractions -->
+        <div class="tab-pane fade show active" id="tab-attendance-cn" role="tabpanel">
+          <div class="d-flex gap-2 mb-3 align-items-center">
+            <div class="form-check form-switch mb-0 d-flex align-items-center">
+              <input class="form-check-input" type="checkbox" id="dryRunToggle" checked>
+              <label class="form-check-label ms-2 small" for="dryRunToggle">Dry Run</label>
+            </div>
+            <div class="form-check form-switch mb-0 d-flex align-items-center">
+              <input class="form-check-input" type="checkbox" id="sendEmailToggle">
+              <label class="form-check-label ms-2 small" for="sendEmailToggle">Send Email</label>
+            </div>
+            <button id="btnRunScan" class="btn btn-primary btn-sm">Run CN Scan</button>
+            <button id="btnRunExpiry" class="btn btn-outline-secondary btn-sm">Run Expiry Check</button>
           </div>
-          <div class="form-check form-switch mb-0 d-flex align-items-center me-2">
-            <input class="form-check-input" type="checkbox" id="sendEmailToggle">
-            <label class="form-check-label ms-2 small" for="sendEmailToggle">Send Email</label>
+
+          <div class="alert alert-info small py-2 mb-3" role="alert">
+            <strong>Note:</strong> CN scans read employee attendance data from their individual tabs.
+            Run "Generate Tabs" in Admin first if new employees were added. Active CNs from previous scans are always shown below.
           </div>
-          <button id="btnRunScan" class="btn btn-primary btn-sm">Run CN Scan</button>
-          <button id="btnRunExpiry" class="btn btn-outline-secondary btn-sm">Run Expiry Check</button>
+
+          <div class="comet-table-container">
+            <table class="table table-hover mb-0">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Dept</th>
+                  <th>Rule</th>
+                  <th>Count</th>
+                  <th>Window Start</th>
+                  <th>Window End</th>
+                  <th>Issued At</th>
+                  <th>Days Left</th>
+                </tr>
+              </thead>
+              <tbody id="cnTableBody">
+                <tr>
+                  <td colspan="8" class="text-comet-muted small p-3">Loading…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      <div class="alert alert-info small py-2 mb-3" role="alert">
-        <strong>Note:</strong> CN scans read individual employee attendance controller tabs (named
-        <em>Last, First - EmployeeNumber</em>) in this workbook. If no tabs exist yet, the scan
-        will find no infractions. Active CNs from previous scans are always shown below regardless.
-      </div>
+        <!-- Tab 2: Employee Calendar -->
+        <div class="tab-pane fade" id="tab-attendance-calendar" role="tabpanel">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold mb-2">Find Employee</label>
+            <div class="comet-employee-picker mb-3">
+              <input type="text" id="calendarEmployeeSearch" class="form-control form-control-sm"
+                placeholder="Type name or ID…" style="max-width:300px;">
+              <div class="comet-employee-results" id="calendarEmployeeResults" style="display:none;"></div>
+            </div>
+            <div id="calendarSelectedEmployee" style="display:none;">
+              <span id="calendarSelectedBadge" class="badge bg-secondary me-2"></span>
+              <button id="btnClearEmployee" class="btn btn-sm btn-outline-secondary">Clear</button>
+            </div>
+          </div>
 
-      <div class="comet-table-container">
-        <table class="table table-hover mb-0">
-          <thead>
-            <tr>
-              <th>Employee</th>
-              <th>Dept</th>
-              <th>Rule</th>
-              <th>Count</th>
-              <th>Window Start</th>
-              <th>Window End</th>
-              <th>Issued At</th>
-              <th>Days Left</th>
-            </tr>
-          </thead>
-          <tbody id="cnTableBody">
-            <tr>
-              <td colspan="8" class="text-comet-muted small p-3">Loading…</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+          <div id="calendarContainer" style="display:none;">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <button id="btnPrevYear" class="btn btn-sm btn-outline-secondary">← Prev Year</button>
+              <div class="comet-year-display" id="calendarYearDisplay">2026</div>
+              <button id="btnNextYear" class="btn btn-sm btn-outline-secondary">Next Year →</button>
+            </div>
+
+            <div id="calendarGrid" class="comet-calendar-grid">
+              <!-- 12-month grid will be inserted here -->
+            </div>
+          </div>
+
+          <div id="calendarEmpty" class="text-comet-muted small" style="padding:2rem 0;">
+            Select an employee to view their attendance calendar.
+          </div>
+        </div>
+
+      </div><!-- /.tab-content -->
+    </div><!-- /#view-attendance -->
 
 
     <!-- -------------------------------------------------------------------
@@ -494,7 +553,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">New Absence Entry</h5>
-          <button type="button" class="btn-close" onclick="closeModal('absenceModal')"></button>
+          <button type="button" class="btn-close" data-modal="absenceModal"></button>
         </div>
         <div class="modal-body">
           <div class="mb-2">
@@ -549,7 +608,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary btn-sm" onclick="closeModal('absenceModal')">Cancel</button>
+          <button class="btn btn-secondary btn-sm" data-modal="absenceModal">Cancel</button>
           <button class="btn btn-primary btn-sm" id="btnSaveAbsence">Save Entry</button>
         </div>
       </div>
@@ -565,7 +624,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">Edit Employee — Schedule Fields</h5>
-          <button type="button" class="btn-close" onclick="closeModal('employeeEditModal')"></button>
+          <button type="button" class="btn-close" data-modal="employeeEditModal"></button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="editEmployeeId">
@@ -641,7 +700,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-secondary btn-sm" onclick="closeModal('employeeEditModal')">Cancel</button>
+          <button class="btn btn-secondary btn-sm" data-modal="employeeEditModal">Cancel</button>
           <button class="btn btn-primary btn-sm" id="btnSaveEmployee">Save</button>
         </div>
       </div>
@@ -657,7 +716,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="cellOverrideModalTitle">Edit Cell</h5>
-          <button type="button" class="btn-close" onclick="closeModal('cellOverrideModal')"></button>
+          <button type="button" class="btn-close" data-modal="cellOverrideModal"></button>
         </div>
         <div class="modal-body d-flex flex-column gap-2">
           <!-- Shift selector -->
@@ -678,11 +737,10 @@
             <input type="number" id="customShiftHours" class="form-control form-control-sm" min="1" max="12" step="0.5">
           </div>
 
-          <button class="btn btn-primary btn-sm" data-override-type="SHIFT" onclick="handleCellOverride('SHIFT')">Assign
+          <button class="btn btn-primary btn-sm" data-override-type="SHIFT">Assign
             Shift</button>
-          <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC"
-            onclick="handleCellOverride('VAC')">Mark Vacation</button>
-          <button class="btn btn-secondary btn-sm" data-override-type="RDO" onclick="handleCellOverride('RDO')">Mark
+          <button class="btn btn-warning btn-sm text-dark" data-override-type="VAC">Mark Vacation</button>
+          <button class="btn btn-secondary btn-sm" data-override-type="RDO">Mark
             RDO</button>
         </div>
       </div>
@@ -695,7 +753,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="preGenModalTitle">Generate Schedule</h5>
-          <button type="button" class="btn-close" onclick="closeModal('preGenModal')"></button>
+          <button type="button" class="btn-close" data-modal="preGenModal"></button>
         </div>
         <div class="modal-body">
           <p class="small text-muted mb-2">Review and adjust staffing requirements below, then click Generate.</p>
@@ -714,8 +772,8 @@
           </div>
         </div>
         <div class="modal-footer gap-2">
-          <button type="button" class="btn btn-secondary" onclick="closeModal('preGenModal')">Cancel</button>
-          <button type="button" class="btn btn-primary" onclick="Schedule._handlePreGenerate()">Generate</button>
+          <button type="button" class="btn btn-secondary" data-modal="preGenModal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btnPreGenerate">Generate</button>
         </div>
       </div>
     </div>
@@ -725,6 +783,9 @@
   <div id="modalBackdrop" class="modal-backdrop fade" style="display:none;"></div>
 
 
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmT5J0HiITui/r8bQRubh/hB5K3"
+          crossorigin="anonymous"></script>
   <?!= include('javascript') ?>
 </body>
 

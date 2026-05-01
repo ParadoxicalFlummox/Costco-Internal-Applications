@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.7
+ * VERSION: 0.5.8
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -624,6 +624,22 @@ const ATTENDANCE_TEMPLATE_SHEET_NAME = '_AC_TEMPLATE_';
  * Format: "Last, First - EmployeeNumber"  e.g. "Le, Tony - 1234578"
  */
 const EMPLOYEE_TAB_PATTERN = /^.+,\s*.+\s*-\s*\d+$/;
+
+/**
+ * Attendance controller JSON format constants (Phase 2).
+ * Per-employee tabs now use a simple 3-column JSON layout instead of complex grid geometry:
+ *   Col A (1) — Year (numeric)
+ *   Col B (2) — Codes JSON (sparse ISO-date-keyed object)
+ *   Col C (3) — StoredAt (ISO timestamp)
+ */
+const ATTENDANCE_JSON = {
+  HEADER_ROW:      1,
+  DATA_START_ROW:  2,
+  COL_YEAR:        1,        // A
+  COL_CODES_JSON:  2,        // B
+  COL_STORED_AT:   3,        // C
+  SCHEMA_VERSION:  1,
+};
 
 /** CN_Log sheet tab name. */
 const CN_LOG_SHEET_NAME = 'CN_Log';

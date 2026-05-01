@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.6
+ * VERSION: 0.5.9
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -44,10 +44,11 @@
  *     logAbsenceEntry(data)                    → { rowNumber }
  *     sendNotificationForRow(sheetName, row)   → { sent }
  *
- *   Infractions:
+ *   Attendance Dashboard:
  *     getActiveCNs()                           → { cns }
  *     runCNScan(dryRun)                        → { proposals, issued }
  *     runExpiryCheck()                         → { expired }
+ *     getAttendanceCalendar(employeeId, year)  → { codes, employeeName, year }
  *
  *   Admin:
  *     importFromUKG(rows)                      → { added, updated, skipped }
@@ -597,7 +598,13 @@ function updateEmployeeScheduleFields(id, fields) {
 function getAbsenceLogForDay(dateString) {
   try {
     // Strip dateRaw (a Date object) — google.script.run only serializes primitives.
-    const entries = getCallLogEntriesForDate_(dateString).map(e => ({ // callLog.js
+    const rawEntries = getCallLogEntriesForDate_(dateString); // callLog.js
+    // Diagnostic: log to GAS Execution Log so absence display issues can be traced.
+    // Check Apps Script > Executions to see these logs.
+    console.log('[ABSENCE] getAbsenceLogForDay: date=' + dateString
+      + ', rawEntries=' + rawEntries.length
+      + ', firstRaw=' + (rawEntries[0] ? JSON.stringify({ dateRaw: String(rawEntries[0].dateRaw), name: rawEntries[0].name }) : 'none'));
+    const entries = rawEntries.map(e => ({
       name: e.name,
       employeeId: e.employeeId,
       isCallout: e.isCallout,
@@ -714,6 +721,74 @@ function runExpiryCheck() {
     return { ok: true, data: { expired: 0 } };
   } catch (error) {
     console.error('api: runExpiryCheck failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Reads an employee's attendance codes for a given year and returns the raw JSON.
+ *
+ * @param {string} employeeId
+ * @param {number} year
+ * @returns {{ ok: boolean, data?: { codes, employeeName, year }, error?: string }}
+ */
+function getAttendanceCalendar(employeeId, year) {
+  try {
+    if (!employeeId) throw new Error('employeeId is required.');
+    if (!year) year = new Date().getFullYear();
+
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const allSheets = workbook.getSheets();
+
+    let employeeSheet = null;
+    for (let i = 0; i < allSheets.length; i++) {
+      const sheetName = allSheets[i].getName();
+      if (sheetName.endsWith(' - ' + employeeId)) {
+        employeeSheet = allSheets[i];
+        break;
+      }
+    }
+
+    if (!employeeSheet) {
+      throw new Error('No attendance tab found for employee ' + employeeId);
+    }
+
+    // Find the row for this year
+    const lastRow = employeeSheet.getLastRow();
+    if (lastRow < ATTENDANCE_JSON.DATA_START_ROW) {
+      return { ok: true, data: { codes: {}, employeeName: '', year: year } };
+    }
+
+    const numDataRows = lastRow - ATTENDANCE_JSON.DATA_START_ROW + 1;
+    const dataRange = employeeSheet.getRange(ATTENDANCE_JSON.DATA_START_ROW,
+                                            ATTENDANCE_JSON.COL_YEAR,
+                                            numDataRows, 3);
+    const allRows = dataRange.getValues();
+
+    let codesJson = null;
+    for (let i = 0; i < allRows.length; i++) {
+      if (allRows[i][0] === year || String(allRows[i][0]) === String(year)) {
+        codesJson = allRows[i][ATTENDANCE_JSON.COL_CODES_JSON - 1];
+        break;
+      }
+    }
+
+    let codes = {};
+    if (codesJson) {
+      try {
+        codes = JSON.parse(codesJson);
+      } catch (e) {
+        Logger.log('getAttendanceCalendar: Invalid JSON for ' + employeeId + ': ' + e);
+      }
+    }
+
+    // Get employee name from Employees sheet
+    const employeeRecord = getEmployeeById_(employeeId);
+    const employeeName = employeeRecord ? employeeRecord.name : '';
+
+    return { ok: true, data: { codes: codes, employeeName: employeeName, year: year } };
+  } catch (error) {
+    console.error('api: getAttendanceCalendar failed —', error);
     return { ok: false, error: error.message };
   }
 }
@@ -906,7 +981,7 @@ function setEmployeeStatus(id, status) {
 function generateAttendanceTabs(year) {
   try {
     if (!year) year = new Date().getFullYear();
-    const result = generateAttendanceControllerTabs_(Number(year)); // tabManager.js
+    const result = initAttendanceJsonTabs_(Number(year)); // tabManager.js
     return { ok: true, data: result };
   } catch (error) {
     console.error('api: generateAttendanceTabs failed —', error);
@@ -941,6 +1016,67 @@ function getAttendanceSheetUrl(employeeId) {
     return { ok: true, data: { url } };
   } catch (error) {
     console.error('api: getAttendanceSheetUrl failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Imports attendance data from the migration project output (Phase 2).
+ *
+ * Accepts an array of employee attendance records and upserts them into the
+ * corresponding employee tabs. This is the entry point called by the UI when
+ * a manager uploads migrated legacy attendance data.
+ *
+ * @param {Array<{ employeeId, employeeName, years: Array<{ year, codes }> }>} payload
+ * @returns {{ ok: boolean, data?: { imported: number, failed: number, results: Array }, error?: string }}
+ */
+function importAttendanceData(payload) {
+  try {
+    if (!payload || !Array.isArray(payload)) {
+      throw new Error('payload must be an array of employee records');
+    }
+
+    const results = [];
+    let imported = 0;
+    let failed = 0;
+
+    payload.forEach(function(record) {
+      try {
+        const result = importAttendanceJson_(record); // tabManager.js
+        results.push({
+          employeeId: record.employeeId,
+          employeeName: record.employeeName,
+          success: result.success,
+          message: result.message,
+          yearsImported: result.yearsImported || 0,
+        });
+        if (result.success) {
+          imported += result.yearsImported || 0;
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        results.push({
+          employeeId: record.employeeId,
+          employeeName: record.employeeName,
+          success: false,
+          message: e.toString(),
+          yearsImported: 0,
+        });
+        failed++;
+      }
+    });
+
+    return {
+      ok: true,
+      data: {
+        imported: imported,
+        failed: failed,
+        results: results,
+      },
+    };
+  } catch (error) {
+    console.error('api: importAttendanceData failed —', error);
     return { ok: false, error: error.message };
   }
 }

@@ -1,292 +1,180 @@
 /**
- * calendarParser.js — Reads individual employee tabs from the attendance controller.
- * VERSION: 0.2.3
+ * calendarParser.js — Reads JSON attendance data and produces CalendarEvent objects.
+ * VERSION: 0.3.0
  *
- * This file owns all logic for turning a raw attendance controller sheet into
+ * This file owns all logic for turning JSON attendance data (Phase 2) into
  * structured event objects that the infraction detector can work with.
  *
- * Two responsibilities:
+ * SINGLE RESPONSIBILITY:
+ *   Parse JSON attendance records and normalize codes into CalendarEvent objects.
+ *   All geometry and grid parsing is eliminated. The shape of CalendarEvent
+ *   remains unchanged so downstream consumers (infractionDetector, etc.) need
+ *   no modifications.
  *
- *   1. EMPLOYEE CONTEXT: Reading the employee's name, ID, department, hire date,
- *      and the fiscal year from the fixed metadata cells defined in EMPLOYEE_FIELDS
- *      (config.js). These fields are standardized across Costco warehouses.
- *
- *   2. CALENDAR GRID PARSING: The attendance controller lays out each month as a
- *      grid of columns (one per day of the week) across three horizontal bands.
- *      Within each band there are four month blocks side by side. Within each
- *      month block, cells contain either a day number (1–31) or an attendance
- *      code (TD, NS, etc.). Day numbers act as anchors — a code cell "belongs to"
- *      the most recently seen day number in its column.
- *
- *      The parser iterates every band × every month block × every cell, builds
- *      a date for each code from the month name + anchor day + year extracted
- *      from D1, and emits one CalendarEvent object per code.
- *
- * OUTPUT SHAPE — CalendarEvent:
+ * OUTPUT SHAPE — CalendarEvent (unchanged):
  *   {
- *     employeeName:  string  — From EMPLOYEE_FIELDS.employeeName (cell X1)
- *     employeeId:    string  — From EMPLOYEE_FIELDS.employeeId (cell X3)
- *     department:    string  — From EMPLOYEE_FIELDS.department (cell R3)
- *     hireDate:      Date    — From EMPLOYEE_FIELDS.hireDate (cell AD3)
- *     month:         string  — Month name from the grid header row
- *     date:          Date    — Resolved date for this event
- *     code:          string  — Normalized attendance code (uppercase, letters only)
- *     isInfraction:  boolean — True if the code is in INFRACTION_CODES or CODE_RULES
+ *     employeeName:  string  — From the tab name or import payload
+ *     employeeId:    string  — From the tab name or import payload
+ *     department:    string  — From employee record
+ *     hireDate:      Date    — From employee record
+ *     month:         string  — Month name derived from the date
+ *     date:          Date    — Parsed from ISO date string in JSON
+ *     code:          string  — Normalized attendance code
+ *     isInfraction:  boolean — True if the code is an infraction
  *     isIgnored:     boolean — True if the code is in IGNORE_CODES
- *     a1:            string  — A1 address of the cell (e.g. "B12") for debugging
+ *     a1:            string  — "source:JSONkey" for debugging
  *   }
  */
 
 
 // ---------------------------------------------------------------------------
-// Public Entry Points
+// Public Entry Point
 // ---------------------------------------------------------------------------
 
 /**
- * Reads the employee metadata cells from a single attendance controller tab.
+ * Parses all calendar events from a single employee's attendance JSON tab.
  *
- * The returned context object is passed through to every downstream function
- * so that employee identity fields do not need to be re-read from the sheet
- * multiple times per scan.
+ * Reads the sheet, finds the row for the requested year, parses the JSON,
+ * and emits one CalendarEvent per code per date.
  *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet — One employee tab.
- * @returns {{ sheetName, employeeName, employeeId, department, hireDate, yearTitle }}
- */
-function readEmployeeContext_(sheet) {
-  const fields = EMPLOYEE_FIELDS; // defined in config.js
-  return {
-    sheetName: sheet.getName(),
-    employeeName: String(sheet.getRange(fields.employeeName).getDisplayValue() || '').trim(),
-    employeeId: String(sheet.getRange(fields.employeeId).getDisplayValue() || '').trim(),
-    department: String(sheet.getRange(fields.department).getDisplayValue() || '').trim(),
-    hireDate: sheet.getRange(fields.hireDate).getValue(),
-    yearTitle: String(sheet.getRange(fields.yearTitle).getDisplayValue() || '').trim(),
-  };
-}
-
-/**
- * Parses all calendar events from a single attendance controller tab.
- *
- * Iterates all three data bands and all four month blocks within each band.
- * For each non-empty cell that is not a day number, one CalendarEvent is
- * emitted per attendance code found in that cell (cells may contain multiple
- * codes separated by spaces, commas, or slashes).
- *
- * Events whose codes appear in IGNORE_CODES are included in the returned
- * array with isIgnored=true so callers can log them if needed, but the
- * infraction detector filters them out before counting.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet — The employee tab to parse.
- * @param {number} year   — The fiscal year (from parseYearFromTitle_).
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet — The employee's attendance tab.
+ * @param {number} year   — The calendar year to read (e.g. 2026).
  * @param {string} timeZone — The script time zone string.
- * @param {{ employeeName, employeeId, department, hireDate }} ctx — Employee context.
  * @returns {CalendarEvent[]}
  */
-function parseCalendarEvents_(sheet, year, timeZone, ctx) {
-  const lastRow = sheet.getLastRow();
+function parseCalendarEventsFromJson_(sheet, year, timeZone) {
+  const sheetName = sheet.getName();
   const events = [];
 
-  DATA_BANDS.forEach((band, bandIndex) => { // DATA_BANDS defined in config.js
-    // The grid for this band runs from firstGridRow up to lastGridRow (explicit
-    // boundary defined in config.js). If lastGridRow is not set, fall back to
-    // the next band's monthRow - 1, or the sheet's last row for the final band.
-    const nextBandStart = band.lastGridRow
-      ? band.lastGridRow + 1
-      : (bandIndex + 1 < DATA_BANDS.length)
-        ? DATA_BANDS[bandIndex + 1].monthRow
-        : lastRow + 1;
+  // Extract employeeId from tab name: "Last, First - ID" → ID
+  const idMatch = sheetName.match(/-\s*(\d+)\s*$/);
+  const employeeId = idMatch ? idMatch[1] : 'unknown';
 
-    const gridStartRow = band.firstGridRow;
-    const gridEndRow = nextBandStart - 1;
-    const numRows = Math.max(0, gridEndRow - gridStartRow + 1);
-    if (numRows <= 0) return;
+  // Read all year rows in one call
+  const lastRow = sheet.getLastRow();
+  if (lastRow < ATTENDANCE_JSON.DATA_START_ROW) {
+    return events; // No data rows
+  }
 
-    START_COLUMNS.forEach(startColA1 => { // START_COLUMNS defined in config.js
-      const startColIndex = colLetterToIndex_(startColA1); // 1-based
+  const dataRange = sheet.getRange(ATTENDANCE_JSON.DATA_START_ROW, 1,
+                                   lastRow - ATTENDANCE_JSON.DATA_START_ROW + 1, 3);
+  const allRows = dataRange.getValues();
 
-      // Read the month name from the header row of this block
-      const monthName = String(
-        sheet.getRange(band.monthRow, startColIndex).getDisplayValue() || ''
-      ).trim();
-      const monthIndex = monthNameToIndex_(monthName); // 0–11, or null
-      if (monthIndex === null) return; // blank or unrecognized month — skip block
+  // Find the row for this year
+  let codesJson = null;
+  for (let i = 0; i < allRows.length; i++) {
+    if (allRows[i][ATTENDANCE_JSON.COL_YEAR - 1] === year ||
+        String(allRows[i][ATTENDANCE_JSON.COL_YEAR - 1]) === String(year)) {
+      codesJson = allRows[i][ATTENDANCE_JSON.COL_CODES_JSON - 1];
+      break;
+    }
+  }
 
-      // Read the entire grid block in one call (numRows × DAY_COLS_PER_BLOCK)
-      const values = sheet
-        .getRange(gridStartRow, startColIndex, numRows, DAY_COLS_PER_BLOCK)
-        .getDisplayValues();
+  if (!codesJson) {
+    return events; // Year not found
+  }
 
-      // lastDayByCol tracks the most recently seen day number for each column
-      // so that code cells can be anchored to the correct calendar date.
-      const lastDayByCol = new Array(DAY_COLS_PER_BLOCK).fill(null);
+  // Parse the JSON
+  let schedule = {};
+  try {
+    schedule = JSON.parse(codesJson);
+  } catch (e) {
+    Logger.log('calendarParser: Failed to parse JSON for ' + sheetName + ': ' + e.toString());
+    return events;
+  }
 
-      for (let rowOffset = 0; rowOffset < numRows; rowOffset++) {
-        for (let colOffset = 0; colOffset < DAY_COLS_PER_BLOCK; colOffset++) {
-          const cellValue = String(values[rowOffset][colOffset] == null ? '' : values[rowOffset][colOffset]).trim();
-          if (!cellValue) continue;
+  // Get employee metadata from the Employees sheet
+  const employeeRecord = getEmployeeById_(employeeId);
+  if (!employeeRecord) {
+    Logger.log('calendarParser: Employee not found: ' + employeeId);
+    return events;
+  }
 
-          const absRow = gridStartRow + rowOffset;
-          const absCol = startColIndex + colOffset;
-          const a1Addr = colIndexToLetter_(absCol) + absRow;
+  // Iterate over each date in the sparse JSON object
+  for (const isoDate in schedule) {
+    if (!schedule.hasOwnProperty(isoDate)) continue;
 
-          // If this cell is a day number (1–31), update the anchor for this column
-          const parsed = parseInt(cellValue, 10);
-          if (!isNaN(parsed) && parsed >= 1 && parsed <= 31) {
-            lastDayByCol[colOffset] = parsed;
-            continue;
-          }
+    const codesArray = schedule[isoDate];
+    if (!Array.isArray(codesArray)) continue;
 
-          // Not a day number — treat as one or more attendance codes
-          const dayNum = lastDayByCol[colOffset];
-          if (dayNum === null) continue; // no anchor day yet; skip
+    const date = new Date(isoDate);
+    const monthIndex = date.getMonth();
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+    const monthName = monthNames[monthIndex];
 
-          const codes = normalizeAndSplitCodes_(cellValue);
-          codes.forEach(code => {
-            if (!code) return;
+    codesArray.forEach(function(code) {
+      if (!code) return;
 
-            const isIgnored = IGNORE_CODES.indexOf(code) >= 0;          // config.js
-            const inInfractionList = INFRACTION_CODES.indexOf(code) >= 0;    // config.js
-            const hasCodeRule = !!(CODE_RULES && CODE_RULES[code]);        // config.js
-            const isInfraction = (inInfractionList || hasCodeRule) && !isIgnored;
+      const normalizedCode = normalizeAndSplitCodes_(code)[0]; // normalizeAndSplitCodes_ already handles splitting
+      if (!normalizedCode) return;
 
-            events.push({
-              employeeName: ctx.employeeName,
-              employeeId: ctx.employeeId,
-              department: ctx.department,
-              hireDate: ctx.hireDate,
-              month: monthName,
-              date: new Date(year, monthIndex, dayNum),
-              code: code,
-              isInfraction: isInfraction,
-              isIgnored: isIgnored,
-              a1: a1Addr,
-            });
-          });
-        }
-      }
+      const isIgnored = IGNORE_CODES.indexOf(normalizedCode) >= 0;
+      const inInfractionList = INFRACTION_CODES.indexOf(normalizedCode) >= 0;
+      const hasCodeRule = !!(CODE_RULES && CODE_RULES[normalizedCode]);
+      const isInfraction = (inInfractionList || hasCodeRule) && !isIgnored;
+
+      events.push({
+        employeeName: employeeRecord.name,
+        employeeId: employeeId,
+        department: employeeRecord.department,
+        hireDate: employeeRecord.hireDate,
+        month: monthName,
+        date: date,
+        code: normalizedCode,
+        isInfraction: isInfraction,
+        isIgnored: isIgnored,
+        a1: 'JSON:' + isoDate,
+      });
     });
-  });
+  }
 
   return events;
 }
 
+
 /**
  * Returns true if the given sheet tab looks like an individual employee
- * attendance controller tab (not an instruction or summary tab).
- *
- * Employee tabs follow the pattern "Last, First - EmployeeNumber"
- * e.g. "Le, Tony - 1234578". The EMPLOYEE_TAB_PATTERN regex in config.js
- * is the authoritative definition of this format.
+ * attendance tab (matches the EMPLOYEE_TAB_PATTERN).
  *
  * @param {string} sheetName — The tab name to test.
  * @returns {boolean}
  */
 function isEmployeeTab_(sheetName) {
-  return EMPLOYEE_TAB_PATTERN.test(sheetName); // EMPLOYEE_TAB_PATTERN defined in config.js
-}
-
-/**
- * Extracts a four-digit calendar year from the year title string in cell D1.
- *
- * e.g. "2026 Attendance Controller" → 2026
- * Returns null if no four-digit year is found; callers fall back to the
- * current calendar year.
- *
- * @param {string} titleString — The raw string from cell D1.
- * @returns {number|null}
- */
-function parseYearFromTitle_(titleString) {
-  if (!titleString) return null;
-  const match = String(titleString).match(/\b(19|20)\d{2}\b/);
-  return match ? parseInt(match[0], 10) : null;
+  return EMPLOYEE_TAB_PATTERN.test(sheetName);
 }
 
 
 // ---------------------------------------------------------------------------
-// Code Normalization
+// Helper: Employee Record Lookup
 // ---------------------------------------------------------------------------
 
 /**
- * Splits a cell value into individual attendance codes and normalizes each one.
+ * Looks up an employee record from the master Employees sheet by ID.
  *
- * Cells may contain multiple codes separated by spaces, commas, slashes, or
- * semicolons (e.g. "TD/SE" or "NS, TD"). Each token is uppercased and stripped
- * of any non-letter characters so that the output is always clean uppercase
- * alpha strings suitable for comparison against INFRACTION_CODES and CODE_RULES.
- *
- * @param {string} cellValue — The raw display value from a grid cell.
- * @returns {string[]} Array of normalized uppercase code strings (may be empty).
+ * @param {string} employeeId — The employee ID to search for.
+ * @returns {{ name: string, id: string, department: string, hireDate: Date }|null}
  */
-function normalizeAndSplitCodes_(cellValue) {
-  return String(cellValue)
-    .split(/[\s,\/;|]+/)
-    .map(token => token.trim().toUpperCase().replace(/[^A-Z]/g, ''))
-    .filter(Boolean);
-}
+function getEmployeeById_(employeeId) {
+  const employeeSheet = SpreadsheetApp.getActiveSpreadsheet()
+    .getSheetByName(EMPLOYEES_SHEET_NAME);
+  if (!employeeSheet) return null;
 
+  const data = employeeSheet.getRange(EMPLOYEES_DATA_START_ROW, 1,
+                                      employeeSheet.getLastRow() - EMPLOYEES_DATA_START_ROW + 1, 5)
+    .getValues();
 
-// ---------------------------------------------------------------------------
-// Month Name Lookup
-// ---------------------------------------------------------------------------
-
-/**
- * Converts a month name string to its 0-based JavaScript month index.
- *
- * Matching is case-insensitive. Returns null for blank or unrecognized strings
- * so the caller can skip the block.
- *
- * @param {string} monthName — e.g. "January", "JANUARY", "january"
- * @returns {number|null} 0 for January … 11 for December, or null.
- */
-function monthNameToIndex_(monthName) {
-  if (!monthName) return null;
-  const lookup = {
-    'JANUARY': 0, 'FEBRUARY': 1, 'MARCH': 2, 'APRIL': 3,
-    'MAY': 4, 'JUNE': 5, 'JULY': 6, 'AUGUST': 7,
-    'SEPTEMBER': 8, 'OCTOBER': 9, 'NOVEMBER': 10, 'DECEMBER': 11,
-  };
-  return lookup.hasOwnProperty(String(monthName).trim().toUpperCase())
-    ? lookup[String(monthName).trim().toUpperCase()]
-    : null;
-}
-
-
-// ---------------------------------------------------------------------------
-// Column Index / A1 Utilities
-// ---------------------------------------------------------------------------
-
-/**
- * Converts a column letter string to a 1-based column index.
- * "A" → 1, "B" → 2, "Z" → 26, "AA" → 27, etc.
- *
- * @param {string} letter — e.g. "A", "I", "Q", "Y"
- * @returns {number} 1-based column index.
- */
-function colLetterToIndex_(letter) {
-  const s = String(letter).toUpperCase();
-  let index = 0;
-  for (let i = 0; i < s.length; i++) {
-    const charCode = s.charCodeAt(i);
-    if (charCode < 65 || charCode > 90) continue;
-    index = index * 26 + (charCode - 64);
+  for (let i = 0; i < data.length; i++) {
+    const id = String(data[i][EMPLOYEE_COLUMN.ID - 1] || '').trim();
+    if (id === employeeId || id === String(employeeId)) {
+      return {
+        name: String(data[i][EMPLOYEE_COLUMN.NAME - 1] || '').trim(),
+        id: id,
+        department: String(data[i][EMPLOYEE_COLUMN.DEPARTMENT - 1] || '').trim(),
+        hireDate: data[i][EMPLOYEE_COLUMN.HIRE_DATE - 1],
+      };
+    }
   }
-  return index;
-}
 
-/**
- * Converts a 1-based column index to its A1-notation letter string.
- * 1 → "A", 26 → "Z", 27 → "AA", etc.
- *
- * @param {number} index — 1-based column index.
- * @returns {string} A1-notation column letter(s).
- */
-function colIndexToLetter_(index) {
-  let result = '';
-  let remaining = index;
-  while (remaining > 0) {
-    const remainder = (remaining - 1) % 26;
-    result = String.fromCharCode(65 + remainder) + result;
-    remaining = Math.floor((remaining - 1) / 26);
-  }
-  return result;
+  return null;
 }

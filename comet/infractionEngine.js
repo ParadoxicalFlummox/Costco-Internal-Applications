@@ -1,6 +1,6 @@
 /**
  * infractionEngine.js — Main orchestrator for the infraction detection pipeline.
- * VERSION: 0.2.3
+ * VERSION: 0.2.4
  *
  * This file contains a single public function: scanAndIssueCNs(). Its only
  * job is to call the other files in the correct order and pass data between
@@ -117,24 +117,38 @@ function scanAndIssueCNs(options) {
     if (!isEmployeeTab_(sheetName)) return; // calendarParser.js — skip non-employee tabs
 
     try {
-      const ctx = readEmployeeContext_(sheet);   // calendarParser.js
+      // Extract employeeId from tab name: "Last, First - ID" → ID
+      const idMatch = sheetName.match(/-\s*(\d+)\s*$/);
+      const employeeId = idMatch ? idMatch[1] : null;
+
+      if (!employeeId) {
+        console.log(`infractionEngine: Could not extract employee ID from tab "${sheetName}"`);
+        return;
+      }
 
       // Skip tabs whose employee is not in the active roster.
       // This respects the Archived status set via the COMET Admin panel without
       // requiring the tab itself to be hidden.
-      if (activeEmployeeIds.size > 0 && ctx.employeeId && !activeEmployeeIds.has(ctx.employeeId)) {
+      if (activeEmployeeIds.size > 0 && !activeEmployeeIds.has(employeeId)) {
         console.log(`infractionEngine: Skipping archived employee — "${sheetName}"`);
         return;
       }
 
-      const year = parseYearFromTitle_(ctx.yearTitle) || new Date().getFullYear();
+      const year = new Date().getFullYear();
 
-      const allEvents = parseCalendarEvents_(sheet, year, timeZone, ctx); // calendarParser.js
+      const allEvents = parseCalendarEventsFromJson_(sheet, year, timeZone); // calendarParser.js
       const infractionEvents = allEvents
         .filter(e => e.isInfraction && !e.isIgnored)
         .sort((a, b) => a.date.getTime() - b.date.getTime());
 
       if (infractionEvents.length === 0) return;
+
+      // Build context from the first event (all events have same employee identity)
+      const ctx = allEvents.length > 0 ? {
+        employeeId: allEvents[0].employeeId,
+        employeeName: allEvents[0].employeeName,
+        department: allEvents[0].department,
+      } : { employeeId, employeeName: sheetName, department: '' };
 
       const proposals = buildAllCNProposals_(infractionEvents, timeZone, ctx); // infractionDetector.js
       if (proposals.length === 0) return;

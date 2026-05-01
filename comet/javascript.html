@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.5.1
+     VERSION: 0.5.9
   
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -11,7 +11,7 @@
 
 
   // ------------------------------------------------------------
-  // Modal Helpers (global, used by inline onclick attributes)
+  // Modal Helpers
   // ------------------------------------------------------------
 
   function openModal(modalId) {
@@ -31,13 +31,37 @@
     if (!modal) return;
     modal.style.display = 'none';
     modal.classList.remove('show');
-    // Only hide backdrop if no other modals are open
     var anyOpen = document.querySelectorAll('.modal.show').length > 0;
     if (!anyOpen) {
       backdrop.style.display = 'none';
       backdrop.classList.remove('show');
       document.body.classList.remove('modal-open');
     }
+  }
+
+  function setupModalButtons() {
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-modal]');
+      if (btn) {
+        e.preventDefault();
+        closeModal(btn.dataset.modal);
+      }
+
+      var overrideBtn = e.target.closest('[data-override-type]');
+      if (overrideBtn) {
+        e.preventDefault();
+        var overrideType = overrideBtn.dataset.overrideType;
+        if (typeof handleCellOverride === 'function') {
+          handleCellOverride(overrideType);
+        }
+      }
+
+      var preGenBtn = document.getElementById('btnPreGenerate');
+      if (e.target === preGenBtn && typeof Schedule._handlePreGenerate === 'function') {
+        e.preventDefault();
+        Schedule._handlePreGenerate();
+      }
+    });
   }
 
 
@@ -52,6 +76,8 @@
     function init() {
       _loadingEl = document.getElementById('loadingOverlay');
       _toastEl = document.getElementById('cometToast');
+
+      setupModalButtons();
 
       // Nav link routing
       document.querySelectorAll('.nav-link[data-view]').forEach(function (link) {
@@ -84,7 +110,7 @@
           // Notify each module that its view became active
           if (viewName === 'schedule' && Schedule.onShow) Schedule.onShow();
           if (viewName === 'absences' && Absences.onShow) Absences.onShow();
-          if (viewName === 'infractions' && Infractions.onShow) Infractions.onShow();
+          if (viewName === 'attendance' && AttendanceCalendar.onShow) AttendanceCalendar.onShow();
           if (viewName === 'admin' && Admin.onShow) Admin.onShow();
         });
       });
@@ -1076,9 +1102,22 @@
         openModal('absenceModal');
       };
       document.getElementById('btnSaveAbsence').onclick = handleSaveAbsence;
-
-      // Autofill when employee name is selected
       document.getElementById('absenceName').oninput = handleEmployeeNameChange;
+
+      document.getElementById('btnPrevDay').onclick = function () {
+        var input = document.getElementById('absenceDate');
+        var d = new Date(input.value + 'T00:00:00');
+        d.setDate(d.getDate() - 1);
+        input.value = d.toISOString().slice(0, 10);
+        loadEntriesForDate(input.value);
+      };
+      document.getElementById('btnNextDay').onclick = function () {
+        var input = document.getElementById('absenceDate');
+        var d = new Date(input.value + 'T00:00:00');
+        d.setDate(d.getDate() + 1);
+        input.value = d.toISOString().slice(0, 10);
+        loadEntriesForDate(input.value);
+      };
     }
 
     function handleEmployeeNameChange() {
@@ -1214,9 +1253,79 @@
   // Infractions Module
   // ------------------------------------------------------------
 
-  var Infractions = (function () {
+  var AttendanceCalendar = (function () {
+    var currentEmployeeId = null;
+    var currentYear = new Date().getFullYear();
+    var employeeCache = [];
+    var calendarYearCache = {}; // Cache: { empId_year: codesObject }
+    var searchInputEl = null;
+    var resultsContainerEl = null;
+    var _tabsInitialized = false;
+    var _buttonsInitialized = false;
+
     function onShow() {
       loadActiveCNs();
+      setupCNScanHandlers();
+      setupCalendarSearch();
+      setupCalendarButtons();
+      initializeTabs();
+    }
+
+    function initializeTabs() {
+      if (_tabsInitialized) return;
+      _tabsInitialized = true;
+
+      var tabButtons = document.querySelectorAll('#view-attendance .nav-link[data-bs-toggle="tab"]');
+
+      if (typeof bootstrap !== 'undefined' && bootstrap.Tab) {
+        tabButtons.forEach(function (button) {
+          bootstrap.Tab.getOrCreateInstance(button);
+        });
+      } else {
+        // Bootstrap JS not loaded: wire manual click handlers using CSS class toggling.
+        tabButtons.forEach(function (button) {
+          button.addEventListener('click', function (e) {
+            e.preventDefault();
+            switchAttendanceTab_(button);
+          });
+        });
+      }
+    }
+
+    // Switches tabs by toggling Bootstrap CSS classes directly, without needing Bootstrap JS.
+    function switchAttendanceTab_(activeButton) {
+      var targetSelector = activeButton.dataset.bsTarget;
+      var tabPane = targetSelector ? document.querySelector(targetSelector) : null;
+      if (!tabPane) return;
+
+      document.querySelectorAll('#view-attendance .nav-link[data-bs-toggle="tab"]').forEach(function (btn) {
+        btn.classList.remove('active');
+      });
+      document.querySelectorAll('#view-attendance .tab-pane').forEach(function (pane) {
+        pane.classList.remove('show', 'active');
+      });
+
+      activeButton.classList.add('active');
+      tabPane.classList.add('show', 'active');
+    }
+
+    function setupCalendarButtons() {
+      // Use onclick (not addEventListener) so repeated onShow calls don't accumulate handlers.
+      if (_buttonsInitialized) return;
+      _buttonsInitialized = true;
+
+      var btnClear = document.getElementById('btnClearEmployee');
+      var btnPrev = document.getElementById('btnPrevYear');
+      var btnNext = document.getElementById('btnNextYear');
+
+      if (btnClear) btnClear.onclick = clearSelection;
+      if (btnPrev) btnPrev.onclick = prevYear;
+      if (btnNext) btnNext.onclick = nextYear;
+    }
+
+    // ---- Tab 1: Active Infractions ----
+
+    function setupCNScanHandlers() {
       document.getElementById('btnRunScan').onclick = function () {
         var dryRun = document.getElementById('dryRunToggle').checked;
         var sendEmail = document.getElementById('sendEmailToggle').checked;
@@ -1252,6 +1361,8 @@
 
     function renderCNTable(cns) {
       var tbody = document.getElementById('cnTableBody');
+      if (!tbody) return;
+
       if (cns.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-comet-muted small p-3">No active CNs.</td></tr>';
         return;
@@ -1261,20 +1372,262 @@
         var exClass = days <= 30 ? 'cn-expiry-red'
           : days <= 60 ? 'cn-expiry-amber'
             : 'cn-expiry-green';
-        return '<tr class="' + exClass + '">'
-          + '<td>' + esc(cn.employeeName) + '</td>'
-          + '<td>' + esc(cn.department) + '</td>'
-          + '<td>' + esc(cn.rule) + '</td>'
-          + '<td class="text-center">' + cn.count + '</td>'
-          + '<td>' + esc(cn.windowStart) + '</td>'
-          + '<td>' + esc(cn.windowEnd) + '</td>'
-          + '<td>' + esc(cn.issuedAt) + '</td>'
-          + '<td class="text-center fw-semibold">' + days + '</td>'
-          + '</tr>';
+        return `<tr class="${exClass}">
+          <td>${esc(cn.employeeName)}</td>
+          <td>${esc(cn.department)}</td>
+          <td>${esc(cn.rule)}</td>
+          <td class="text-center">${cn.count}</td>
+          <td>${esc(cn.windowStart)}</td>
+          <td>${esc(cn.windowEnd)}</td>
+          <td>${esc(cn.issuedAt)}</td>
+          <td class="text-center fw-semibold">${days}</td>
+        </tr>`;
       }).join('');
     }
 
-    return { onShow, loadActiveCNs };
+    // ---- Tab 2: Employee Calendar ----
+
+    function setupCalendarSearch() {
+      searchInputEl = document.getElementById('calendarEmployeeSearch');
+      resultsContainerEl = document.getElementById('calendarEmployeeResults');
+      if (!searchInputEl || !resultsContainerEl) return;
+
+      searchInputEl.addEventListener('input', function () {
+        var query = searchInputEl.value.toLowerCase().trim();
+
+        if (query.length === 0) {
+          resultsContainerEl.style.display = 'none';
+          return;
+        }
+
+        var filtered = employeeCache.filter(function (emp) {
+          return emp.name.toLowerCase().includes(query) || emp.id.toString().includes(query);
+        });
+
+        if (filtered.length === 0) {
+          resultsContainerEl.innerHTML = '<div class="comet-employee-result-item text-muted small">No matches</div>';
+          resultsContainerEl.style.display = 'block';
+          return;
+        }
+
+        var fragment = document.createDocumentFragment();
+        filtered.forEach(function (emp) {
+          var item = document.createElement('div');
+          item.className = 'comet-employee-result-item';
+          item.textContent = esc(emp.name) + ' (' + esc(emp.id) + ')';
+          item.addEventListener('click', function () {
+            selectEmployee(emp.id, emp.name);
+          });
+          fragment.appendChild(item);
+        });
+        resultsContainerEl.innerHTML = '';
+        resultsContainerEl.appendChild(fragment);
+        resultsContainerEl.style.display = 'block';
+      });
+
+      searchInputEl.addEventListener('blur', function () {
+        setTimeout(function () {
+          if (resultsContainerEl) resultsContainerEl.style.display = 'none';
+        }, 200);
+      });
+    }
+
+    function selectEmployee(employeeId, employeeName) {
+      var emp = employeeCache.find(function (e) { return e.id === employeeId; });
+      if (!emp) {
+        UI.showToast('Employee not found in cache.', 'error');
+        return;
+      }
+
+      currentEmployeeId = employeeId;
+      currentYear = new Date().getFullYear();
+
+      if (searchInputEl) searchInputEl.value = employeeName;
+      if (resultsContainerEl) resultsContainerEl.style.display = 'none';
+
+      var badge = document.getElementById('calendarSelectedBadge');
+      var selected = document.getElementById('calendarSelectedEmployee');
+      var empty = document.getElementById('calendarEmpty');
+      var container = document.getElementById('calendarContainer');
+      var yearDisplay = document.getElementById('calendarYearDisplay');
+
+      if (badge) badge.textContent = employeeName;
+      if (selected) selected.style.display = 'block';
+      if (empty) empty.style.display = 'none';
+      if (container) container.style.display = 'block';
+      if (yearDisplay) yearDisplay.textContent = currentYear;
+
+      var calendarTabBtn = document.getElementById('tab-attendance-calendar-btn');
+      if (calendarTabBtn) {
+        if (typeof bootstrap !== 'undefined' && bootstrap.Tab) {
+          bootstrap.Tab.getOrCreateInstance(calendarTabBtn).show();
+        } else {
+          switchAttendanceTab_(calendarTabBtn);
+        }
+      }
+
+      loadCalendarForEmployee(employeeId, currentYear);
+    }
+
+    function clearSelection() {
+      currentEmployeeId = null;
+      document.getElementById('calendarEmployeeSearch').value = '';
+      document.getElementById('calendarSelectedEmployee').style.display = 'none';
+      document.getElementById('calendarContainer').style.display = 'none';
+      document.getElementById('calendarEmpty').style.display = 'block';
+      document.getElementById('calendarGrid').innerHTML = '';
+    }
+
+    function loadCalendarForEmployee(employeeId, year) {
+      var cacheKey = employeeId + '_' + year;
+      if (calendarYearCache[cacheKey]) {
+        renderCalendarGrid(calendarYearCache[cacheKey], year);
+        return;
+      }
+
+      UI.callServer('getAttendanceCalendar', [employeeId, year], function (data) {
+        if (!data || !data.codes) {
+          UI.showToast('Could not load calendar.', 'error');
+          return;
+        }
+        calendarYearCache[cacheKey] = data.codes;
+        renderCalendarGrid(data.codes, year);
+      });
+    }
+
+    function renderCalendarGrid(codesObject, year) {
+      var months = ['January', 'February', 'March', 'April', 'May', 'June',
+                    'July', 'August', 'September', 'October', 'November', 'December'];
+      var daysOfWeek = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+      var grid = document.getElementById('calendarGrid');
+      if (!grid) return;
+
+      grid.innerHTML = '';
+      var fragment = document.createDocumentFragment();
+
+      for (var m = 0; m < 12; m++) {
+        var monthCard = document.createElement('div');
+        monthCard.className = 'comet-month-card';
+
+        var monthHeader = document.createElement('div');
+        monthHeader.className = 'comet-month-header';
+        monthHeader.textContent = months[m];
+        monthCard.appendChild(monthHeader);
+
+        var dowRow = document.createElement('div');
+        dowRow.className = 'comet-dow-row';
+        var dowFragment = document.createDocumentFragment();
+        daysOfWeek.forEach(function (day) {
+          var dowCell = document.createElement('div');
+          dowCell.className = 'comet-dow-cell';
+          dowCell.textContent = day;
+          dowFragment.appendChild(dowCell);
+        });
+        dowRow.appendChild(dowFragment);
+        monthCard.appendChild(dowRow);
+
+        var daysRow = document.createElement('div');
+        daysRow.className = 'comet-dow-row';
+        var daysFragment = document.createDocumentFragment();
+
+        var firstDay = new Date(year, m, 1);
+        var lastDay = new Date(year, m + 1, 0);
+        var startOffset = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
+        var daysInMonth = lastDay.getDate();
+
+        for (var i = 0; i < startOffset; i++) {
+          var emptyCell = document.createElement('div');
+          emptyCell.className = 'comet-day-cell';
+          daysFragment.appendChild(emptyCell);
+        }
+
+        for (var d = 1; d <= daysInMonth; d++) {
+          var dayCell = document.createElement('div');
+          dayCell.className = 'comet-day-cell';
+
+          var isoDate = year + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+          var codes = codesObject[isoDate] || [];
+
+          // Day number — always top-left
+          var dayNum = document.createElement('div');
+          dayNum.className = 'comet-day-number';
+          dayNum.textContent = d;
+          dayCell.appendChild(dayNum);
+
+          // Code indicators (colored dots)
+          if (codes.length > 0) {
+            dayCell.classList.add('has-codes');
+            var codesContainer = document.createElement('div');
+            codesContainer.className = 'comet-codes-container';
+
+            // Show up to 3 code dots; each dot is color-coded by absence type
+            codes.slice(0, 3).forEach(function (code) {
+              var dot = document.createElement('div');
+              dot.className = 'comet-code-dot attn-badge-' + code.toLowerCase();
+              dot.title = code; // Tooltip on hover
+              codesContainer.appendChild(dot);
+            });
+
+            // If >3 codes, show "+N more" indicator
+            if (codes.length > 3) {
+              var moreIndicator = document.createElement('div');
+              moreIndicator.className = 'comet-code-more';
+              moreIndicator.textContent = '+' + (codes.length - 3);
+              moreIndicator.title = codes.slice(3).join(', ');
+              codesContainer.appendChild(moreIndicator);
+            }
+
+            dayCell.appendChild(codesContainer);
+          }
+
+          daysFragment.appendChild(dayCell);
+        }
+
+        daysRow.appendChild(daysFragment);
+        monthCard.appendChild(daysRow);
+        fragment.appendChild(monthCard);
+      }
+
+      grid.appendChild(fragment);
+    }
+
+    function prevYear() {
+      if (!currentEmployeeId) return;
+      currentYear--;
+      var yearDisplay = document.getElementById('calendarYearDisplay');
+      if (yearDisplay) yearDisplay.textContent = currentYear;
+      loadCalendarForEmployee(currentEmployeeId, currentYear);
+    }
+
+    function nextYear() {
+      if (!currentEmployeeId) return;
+      currentYear++;
+      var yearDisplay = document.getElementById('calendarYearDisplay');
+      if (yearDisplay) yearDisplay.textContent = currentYear;
+      loadCalendarForEmployee(currentEmployeeId, currentYear);
+    }
+
+    function openAttendanceCalendar(employeeId) {
+      var emp = employeeCache.find(function (e) { return e.id === employeeId; });
+      if (!emp) {
+        UI.showToast('Employee not found.', 'error');
+        return;
+      }
+
+      var attendanceLink = document.querySelector('.nav-link[data-view="attendance"]');
+      if (!attendanceLink) return;
+
+      attendanceLink.click();
+      setTimeout(function () {
+        AttendanceCalendar.selectEmployee(emp.id, emp.name);
+      }, 0);
+    }
+
+    function setEmployeeCache(employees) {
+      employeeCache = employees;
+    }
+
+    return { onShow, loadActiveCNs, selectEmployee, clearSelection, loadCalendarForEmployee, prevYear, nextYear, openAttendanceCalendar, setEmployeeCache };
   })();
 
 
@@ -1283,35 +1636,25 @@
   // ============================================================================
 
   function loadDeptSettings(dept) {
-    console.log('loadDeptSettings: calling getDeptSettings for', dept);
     UI.callServer('getDeptSettings', dept, function (data) {
-      console.log('loadDeptSettings: success callback received data, calling renderDeptSettings');
       renderDeptSettings(data);
-    }, function (error) {
-      console.log('loadDeptSettings: error callback —', error);
     });
   }
 
   function renderDeptSettings(data) {
-    console.log('>>> renderDeptSettings CALLED with data:', data);
-    console.log('>>> data type:', typeof data);
-    console.log('>>> data.staffingReqs:', data ? data.staffingReqs : 'data is null');
-    console.log('>>> data.shifts:', data ? data.shifts : 'data is null');
-
-    // Staffing requirements table
     var reqBody = document.getElementById('staffingReqsBody');
-    console.log('>>> reqBody element found:', reqBody ? 'YES' : 'NO');
-    reqBody.innerHTML = (data.staffingReqs || []).map(function (req) {
-      return '<tr>'
-        + '<td>' + esc(req.day) + '</td>'
-        + '<td><input type="number" class="form-control form-control-sm staffing-count" '
-        + 'value="' + (req.count || 0) + '" data-day="' + esc(req.day) + '" style="width:70px;"></td>'
-        + '<td><select class="form-select form-select-sm staffing-mode" data-day="' + esc(req.day) + '">'
-        + '<option value="Count"' + (req.mode === 'Count' ? ' selected' : '') + '>Count</option>'
-        + '<option value="Hours"' + (req.mode === 'Hours' ? ' selected' : '') + '>Hours</option>'
-        + '</select></td>'
-        + '</tr>';
-    }).join('');
+    if (reqBody) {
+      reqBody.innerHTML = (data.staffingReqs || []).map(function (req) {
+        return `<tr>
+          <td>${esc(req.day)}</td>
+          <td><input type="number" class="form-control form-control-sm staffing-count" value="${req.count || 0}" data-day="${esc(req.day)}" style="width:70px;"></td>
+          <td><select class="form-select form-select-sm staffing-mode" data-day="${esc(req.day)}">
+            <option value="Count"${req.mode === 'Count' ? ' selected' : ''}>Count</option>
+            <option value="Hours"${req.mode === 'Hours' ? ' selected' : ''}>Hours</option>
+          </select></td>
+        </tr>`;
+      }).join('');
+    }
 
     // Shift definitions table
     var shiftBody = document.getElementById('shiftDefsBody');
@@ -1484,6 +1827,7 @@
         _allEmployees = data.employees || [];
         renderEmployeeList(_allEmployees);
         Absences.setEmployees(_allEmployees);
+        AttendanceCalendar.setEmployeeCache(_allEmployees);
       });
     }
 
@@ -1498,13 +1842,10 @@
         var statusClass = emp.status === 'Archived' ? 'text-muted' : (emp.status === 'LOA' ? 'text-warning' : '');
         var toggleLabel = emp.status === 'Active' ? 'Archive' : 'Restore';
         var toggleClass = emp.status === 'Active' ? 'btn-outline-secondary' : 'btn-outline-success';
-        // View button: render as direct <a> link using URL pre-fetched in getEmployeeList.
-        // Using window.open() after an async callback is blocked by popup blockers.
-        var viewHtml = emp.attendanceSheetUrl
-          ? '<a href="' + esc(emp.attendanceSheetUrl) + '" target="_blank" rel="noopener" '
-          + 'class="btn btn-sm btn-outline-info">View</a>'
-          : '<button class="btn btn-sm btn-outline-secondary" disabled '
-          + 'title="Generate Attendance Tabs first">View</button>';
+        // Calendar button: opens Attendance Dashboard with employee pre-selected
+        var calendarHtml = '<button class="btn btn-sm btn-outline-secondary" '
+          + 'onclick="Admin.openAttendanceCalendar(\'' + esc(emp.id) + '\')">'
+          + 'Calendar</button>';
         return '<tr class="' + statusClass + '">'
           + '<td>' + esc(emp.name) + '</td>'
           + '<td>' + esc(emp.id) + '</td>'
@@ -1512,7 +1853,7 @@
           + '<td>' + esc(emp.department) + '</td>'
           + '<td>' + esc(emp.status) + '</td>'
           + '<td>' + esc(emp.ftpt || '') + '</td>'
-          + '<td>' + viewHtml + '</td>'
+          + '<td>' + calendarHtml + '</td>'
           // Use index (i) rather than JSON.stringify(emp) — embedded JSON breaks HTML
           // attribute quoting because JSON uses double-quotes.
           + '<td class="d-flex gap-1">'
@@ -1672,14 +2013,9 @@
       return result;
     }
 
-    function openAttendanceSheet(employeeId) {
-      UI.callServer('getAttendanceSheetUrl', employeeId, function (data) {
-        if (!data.url) {
-          UI.showToast(data.message || 'No attendance controller tab found.', 'error');
-          return;
-        }
-        window.open(data.url, '_blank');
-      });
+    function openAttendanceCalendar(employeeId) {
+      // Delegate to AttendanceCalendar module
+      AttendanceCalendar.openAttendanceCalendar(employeeId);
     }
 
     // Datalist population moved to Absences.setEmployees()
@@ -1688,7 +2024,7 @@
       Absences.setEmployees(employees);
     }
 
-    return { onShow, loadEmployeeList, openEmployeeEditModal, toggleStatus, openAttendanceSheet };
+    return { onShow, loadEmployeeList, openEmployeeEditModal, toggleStatus, openAttendanceCalendar };
   })();
 
 

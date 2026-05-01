@@ -380,4 +380,274 @@
     border-color: var(--comet-blue-hover);
   }
 
+
+  /* -------------------------------------------------------------------------
+     Attendance Calendar (12-month grid)
+     ------------------------------------------------------------------------- */
+
+  .comet-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+
+  .comet-month-card {
+    border: 1px solid var(--comet-border);
+    border-radius: 6px;
+    padding: 0.75rem;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+
+  .comet-month-header {
+    font-weight: 700;
+    font-size: 0.9rem;
+    text-align: center;
+    margin-bottom: 0.5rem;
+    color: var(--comet-text);
+  }
+
+  .comet-dow-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    margin-bottom: 0.25rem;
+  }
+
+  .comet-dow-cell {
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--comet-text);
+    padding: 3px 0;
+  }
+
+  .comet-day-cell {
+    aspect-ratio: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    border: 1px solid var(--comet-border);
+    border-radius: 4px;
+    padding: 0;
+    cursor: default;
+    background: #FAFAFA;
+    color: var(--comet-text);
+  }
+
+  .comet-day-cell:hover {
+    background: #EFF6FF;
+  }
+
+  .comet-day-cell.has-codes {
+    cursor: pointer;
+    background: #F8F9FB;
+  }
+
+  /* Day number — top-left corner, small */
+  .comet-day-number {
+    position: absolute;
+    top: 2px;
+    left: 3px;
+    font-weight: 700;
+    font-size: 0.65rem;
+    line-height: 1;
+    color: var(--comet-text);
+  }
+
+  /* Container for code indicators (dots) */
+  .comet-codes-container {
+    display: flex;
+    gap: 2px;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    margin-top: 3px;
+    max-width: calc(100% - 4px);
+    padding: 0 2px;
+  }
+
+  /* Code dot — small colored circle */
+  .comet-code-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+    cursor: help;
+  }
+
+  /* "More" indicator when >3 codes */
+  .comet-code-more {
+    font-size: 0.5rem;
+    font-weight: 700;
+    color: var(--comet-muted);
+    line-height: 1;
+    cursor: help;
+  }
+
+  /* Code color scheme (reused for dots) */
+  .attn-badge-td { background: #DC2626; }
+  .attn-badge-ns { background: #991B1B; }
+  .attn-badge-se { background: #F59E0B; }
+  .attn-badge-mp { background: #16A34A; }
+  .attn-badge-sz { background: #7C3AED; }
+  .attn-badge-vac { background: #D97706; }
+  .attn-badge-default { background: #9CA3AF; }
+
+  /* Legacy badge styling (kept for compatibility if needed elsewhere) */
+  .attn-badge {
+    display: inline-block;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+
+  /* Year navigation */
+  .comet-year-display {
+    font-weight: 700;
+    font-size: 1.1rem;
+    min-width: 60px;
+    text-align: center;
+  }
+
+  /* Employee search / picker */
+  .comet-employee-picker {
+    position: relative;
+    max-width: 360px;
+  }
+
+  .comet-employee-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid var(--comet-border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 100;
+  }
+
+  .comet-employee-result-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    border-bottom: 1px solid var(--comet-border);
+  }
+
+  .comet-employee-result-item:last-child {
+    border-bottom: none;
+  }
+
+  .comet-employee-result-item:hover {
+    background: #EFF6FF;
+  }
+
+  /* Responsive: 2 columns on tablet, 1 on mobile */
+  @media (max-width: 768px) {
+    .comet-calendar-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .comet-calendar-grid {
+      grid-template-columns: 1fr;
+    }
+    .comet-month-card {
+      padding: 0.5rem;
+    }
+  }
+
+
+  /* -------------------------------------------------------------------------
+     Mobile & Touch Optimizations
+     ------------------------------------------------------------------------- */
+
+  /* Allow navbar items to wrap on small screens instead of overflowing */
+  @media (max-width: 768px) {
+    .comet-navbar .container-fluid {
+      flex-wrap: wrap;
+      row-gap: 0.4rem;
+    }
+
+    .comet-navbar .navbar-nav {
+      flex-wrap: wrap;
+      width: 100%;
+      margin-left: 0 !important;
+      justify-content: center;
+      gap: 0.25rem;
+    }
+
+    .comet-navbar .nav-link {
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    /* Ensure tables scroll horizontally rather than clipping */
+    .comet-table-container {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Minimum 44 px touch targets for all buttons */
+    .btn {
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Header toolbar wraps on small screens */
+    .comet-view-header {
+      flex-wrap: wrap;
+      row-gap: 0.5rem;
+    }
+
+    /* Modal fills more of the screen */
+    .modal-dialog {
+      margin: 0.5rem;
+      max-width: calc(100vw - 1rem);
+    }
+
+    /* Calendar day cells — slightly taller for touch */
+    .comet-day-cell {
+      min-height: 30px;
+    }
+
+    /* Refresh button — hide label on very small screens */
+    #btnRefresh {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+    }
+  }
+
+  @media (max-width: 576px) {
+    /* Stack view header controls vertically */
+    .comet-view-header > div {
+      flex-wrap: wrap;
+    }
+
+    /* Full-width form controls in modals */
+    .modal-body .form-control,
+    .modal-body .form-select {
+      font-size: 1rem; /* Prevents iOS zoom-on-focus */
+    }
+
+    /* Year navigation stays inline but compact */
+    .comet-year-display {
+      font-size: 0.95rem;
+      min-width: 50px;
+    }
+  }
+
 </style>
