@@ -444,8 +444,10 @@
   }
 
   .comet-day-cell.has-codes {
-    cursor: pointer;
     background: #F8F9FB;
+  }
+  .comet-day-cell[data-date] {
+    cursor: pointer;
   }
 
   /* Day number — top-left corner, small */
@@ -459,26 +461,33 @@
     color: var(--comet-text);
   }
 
-  /* Container for code indicators (dots) */
+  /* Container for code bubbles */
   .comet-codes-container {
     display: flex;
-    gap: 2px;
+    gap: 4px;
     flex-wrap: wrap;
     justify-content: center;
     align-items: center;
-    margin-top: 3px;
+    margin-top: 2px;
     max-width: calc(100% - 4px);
     padding: 0 2px;
   }
 
-  /* Code dot — small colored circle */
+  /* Code bubble — displays code type text inside */
   .comet-code-dot {
-    width: 6px;
-    height: 6px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
     cursor: help;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   }
 
   /* "More" indicator when >3 codes */
@@ -490,14 +499,49 @@
     cursor: help;
   }
 
-  /* Code color scheme (reused for dots) */
-  .attn-badge-td { background: #DC2626; }
-  .attn-badge-ns { background: #991B1B; }
-  .attn-badge-se { background: #F59E0B; }
-  .attn-badge-mp { background: #16A34A; }
-  .attn-badge-sz { background: #7C3AED; }
-  .attn-badge-vac { background: #D97706; }
+  /* Code color scheme — matched to official Costco attendance controller palette */
+  .attn-badge-td-1 { background: #f4a460; }  /* sandy/light orange — Tardy 4-29 min */
+  .attn-badge-td-2 { background: #e69138; }  /* dark orange 1      — Tardy 30-119 min */
+  .attn-badge-td-3 { background: #c65911; }  /* burnt orange       — Tardy 120+ min */
+  .attn-badge-ns  { background: #cc0000; }  /* red             — No Show */
+  .attn-badge-se  { background: #ffcc00; }  /* yellow          — Swiping Error */
+  .attn-badge-mp  { background: #b45f06; }  /* dark orange 3   — Meal Period */
+  .attn-badge-sz  { background: #741b47; }  /* dark magenta 3  — Suspension */
+  .attn-badge-bl  { background: #b6d7a8; }  /* light green 1   — Bereavement Leave */
+  .attn-badge-lp  { background: #6fa8dc; }  /* light cornflower blue 3 — Personal Leave */
+  .attn-badge-cn  { background: #bb0000; }  /* dark red        — Counseling Notice */
+  .attn-badge-fh  { background: #34a853; }  /* green           — Floating Holiday */
+  .attn-badge-h   { background: #3deb00; }  /* bright lime     — Holiday */
+  .attn-badge-jd  { background: #1155cc; }  /* dark blue 1     — Jury Duty */
+  .attn-badge-spf { background: #351c75; }  /* dark purple 1   — Sick Paid Full */
+  .attn-badge-sph { background: #b4a7d6; }  /* light purple 2  — Sick Paid Half */
+  .attn-badge-suf { background: #ea9999; }  /* light red 1     — Sick Unpaid Full */
+  .attn-badge-suh { background: #e06666; }  /* light red 2     — Sick Unpaid Half */
+  .attn-badge-vac { background: #D97706; }  /* gold            — Vacation */
   .attn-badge-default { background: #9CA3AF; }
+
+  /* Code picker toggle buttons inside the attendance code editor modal */
+  .comet-code-toggle {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    opacity: 0.4;
+    border: none !important;
+  }
+  /* Light-background codes need dark text */
+  .comet-code-toggle.attn-badge-bl,
+  .comet-code-toggle.attn-badge-lp,
+  .comet-code-toggle.attn-badge-sph,
+  .comet-code-toggle.attn-badge-suf,
+  .comet-code-toggle.attn-badge-se  { color: #1E293B; text-shadow: none; }
+  /* Active (highlighted) state */
+  .comet-code-toggle.active {
+    opacity: 1;
+  }
 
   /* Legacy badge styling (kept for compatibility if needed elsewhere) */
   .attn-badge {

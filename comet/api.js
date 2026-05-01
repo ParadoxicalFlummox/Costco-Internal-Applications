@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.9
+ * VERSION: 0.5.12
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -48,15 +48,17 @@
  *     getActiveCNs()                           → { cns }
  *     runCNScan(dryRun)                        → { proposals, issued }
  *     runExpiryCheck()                         → { expired }
- *     getAttendanceCalendar(employeeId, year)  → { codes, employeeName, year }
+ *     getAttendanceCalendar(employeeId, year)         → { codes, employeeName, year }
+ *     updateAttendanceCode(employeeId, isoDate, codes) → { updatedCodes }
  *
  *   Admin:
- *     importFromUKG(rows)                      → { added, updated, skipped }
- *     getEmployeeList()                        → { employees }
- *     setEmployeeStatus(id, status)            → { updated }
- *     generateNextYearWorkbook()               → { url }
- *     getConfig()                              → { config }
- *     updateConfig(key, value)                 → { updated }
+ *     importFromUKG(rows)                        → { added, updated, skipped }
+ *     getEmployeeList()                          → { employees }
+ *     setEmployeeStatus(id, status)              → { updated }
+ *     generateNextYearWorkbook()                 → { url }
+ *     getConfig()                                → { config }
+ *     updateConfig(key, value)                   → { updated }
+ *     appendHolidaysToAllEmployees(holidayDates) → { count }
  */
 
 
@@ -766,15 +768,21 @@ function getAttendanceCalendar(employeeId, year) {
     const allRows = dataRange.getValues();
 
     let codesJson = null;
+    let yearRowFound = false;
     for (let i = 0; i < allRows.length; i++) {
       if (allRows[i][0] === year || String(allRows[i][0]) === String(year)) {
         codesJson = allRows[i][ATTENDANCE_JSON.COL_CODES_JSON - 1];
+        yearRowFound = true;
         break;
       }
     }
 
     let codes = {};
-    if (codesJson) {
+    if (!yearRowFound) {
+      // Auto-create missing year row
+      employeeSheet.appendRow([year, '{}', new Date().toISOString()]);
+      SpreadsheetApp.flush();
+    } else if (codesJson) {
       try {
         codes = JSON.parse(codesJson);
       } catch (e) {
@@ -790,6 +798,34 @@ function getAttendanceCalendar(employeeId, year) {
   } catch (error) {
     console.error('api: getAttendanceCalendar failed —', error);
     return { ok: false, error: error.message };
+  }
+}
+
+
+/**
+ * Writes attendance codes for a specific employee and date.
+ * Replaces any existing codes for that date; pass an empty array to clear.
+ *
+ * @param {string}   employeeId — Employee ID (matched against sheet tab names)
+ * @param {string}   isoDate    — ISO date string, e.g. "2026-01-15"
+ * @param {string[]} codes      — Attendance code array, e.g. ["TD", "SE"]
+ * @returns {{ ok: boolean, data?: { updatedCodes: object }, error?: string }}
+ */
+function updateAttendanceCode(employeeId, isoDate, codes) {
+  try {
+    console.log('api: updateAttendanceCode called —', { employeeId, isoDate, codes });
+    const result = updateAttendanceCode_(employeeId, isoDate, codes);
+    console.log('api: updateAttendanceCode result —', result);
+    if (!result.success) {
+      const errorMsg = result.message || 'Unknown error from updateAttendanceCode_';
+      console.error('api: updateAttendanceCode failed —', errorMsg);
+      return { ok: false, error: errorMsg };
+    }
+    return { ok: true, data: { updatedCodes: result.updatedCodes } };
+  } catch (error) {
+    const errorMsg = error.message || error.toString();
+    console.error('api: updateAttendanceCode exception —', errorMsg, error);
+    return { ok: false, error: errorMsg };
   }
 }
 
@@ -1245,6 +1281,38 @@ function updateConfig(key, value) {
     return { ok: true, data: { updated: false } };
   } catch (error) {
     console.error('api: updateConfig failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+
+/**
+ * Appends company holiday codes to all active employees for specified dates.
+ * For each date, adds 'H' code if not already present.
+ *
+ * @param {string[]} holidayDates — ISO date array, e.g. ["2026-01-01", "2026-12-25"]
+ * @returns {{ ok: boolean, data?: { count: number }, error?: string }}
+ */
+function appendHolidaysToAllEmployees(holidayDates) {
+  try {
+    if (!Array.isArray(holidayDates) || holidayDates.length === 0) {
+      return { ok: false, error: 'holidayDates must be a non-empty array' };
+    }
+
+    const employees = getActiveEmployees_();
+    let count = 0;
+
+    holidayDates.forEach(function (isoDate) {
+      const year = parseInt(isoDate.split('-')[0]);
+      employees.forEach(function (emp) {
+        const result = updateAttendanceCode_(emp.id, isoDate, ['H']);
+        if (result.success) count++;
+      });
+    });
+
+    return { ok: true, data: { count: count } };
+  } catch (error) {
+    console.error('api: appendHolidaysToAllEmployees failed —', error);
     return { ok: false, error: error.message };
   }
 }

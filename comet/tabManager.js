@@ -1,6 +1,6 @@
 /**
  * tabManager.js — Attendance controller JSON tab management.
- * VERSION: 0.4.2
+ * VERSION: 0.4.3
  *
  * Manages per-employee attendance tabs in JSON format (Phase 2).
  * Each employee tab contains one row per year with attendance codes stored as JSON.
@@ -136,67 +136,75 @@ function sheetsRangeA1_(tabName, range) {
  * @returns {{ success: boolean, message: string, updatedCodes: object|null }}
  */
 function updateAttendanceCode_(employeeId, isoDate, codes) {
-  const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const date = new Date(isoDate);
-  const year = date.getFullYear();
-
-  // Find the employee's tab
-  const allSheets = workbook.getSheets();
-  let employeeSheet = null;
-  for (let i = 0; i < allSheets.length; i++) {
-    const sheetName = allSheets[i].getName();
-    if (sheetName.endsWith(' - ' + employeeId)) {
-      employeeSheet = allSheets[i];
-      break;
-    }
-  }
-
-  if (!employeeSheet) {
-    return { success: false, message: 'Employee tab not found: ' + employeeId, updatedCodes: null };
-  }
-
-  // Find the row for this year
-  const lastRow = employeeSheet.getLastRow();
-  if (lastRow < ATTENDANCE_JSON.DATA_START_ROW) {
-    return { success: false, message: 'No data rows in tab for ' + employeeId, updatedCodes: null };
-  }
-
-  const numDataRows = lastRow - ATTENDANCE_JSON.DATA_START_ROW + 1;
-  const dataRange = employeeSheet.getRange(ATTENDANCE_JSON.DATA_START_ROW,
-                                          ATTENDANCE_JSON.COL_YEAR,
-                                          numDataRows, 3);
-  const allRows = dataRange.getValues();
-
-  let yearRowIndex = -1;
-  for (let i = 0; i < allRows.length; i++) {
-    if (allRows[i][0] === year || String(allRows[i][0]) === String(year)) {
-      yearRowIndex = i;
-      break;
-    }
-  }
-
-  if (yearRowIndex === -1) {
-    return { success: false, message: 'Year row not found for ' + year, updatedCodes: null };
-  }
-
-  // Parse the JSON, update the date, write back
-  const codesJson = allRows[yearRowIndex][1];
-  let schedule = {};
   try {
-    schedule = codesJson ? JSON.parse(codesJson) : {};
-  } catch (e) {
-    return { success: false, message: 'Failed to parse JSON: ' + e.toString(), updatedCodes: null };
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const date = new Date(isoDate);
+    const year = date.getFullYear();
+
+    Logger.log('updateAttendanceCode_: ' + employeeId + ' on ' + isoDate + ' codes=' + JSON.stringify(codes));
+
+    // Find the employee's tab
+    const allSheets = workbook.getSheets();
+    let employeeSheet = null;
+    for (let i = 0; i < allSheets.length; i++) {
+      const sheetName = allSheets[i].getName();
+      if (sheetName.endsWith(' - ' + employeeId)) {
+        employeeSheet = allSheets[i];
+        break;
+      }
+    }
+
+    if (!employeeSheet) {
+      return { success: false, message: 'Employee tab not found: ' + employeeId, updatedCodes: null };
+    }
+
+    // Find the row for this year
+    const lastRow = employeeSheet.getLastRow();
+    if (lastRow < ATTENDANCE_JSON.DATA_START_ROW) {
+      return { success: false, message: 'No data rows in tab for ' + employeeId, updatedCodes: null };
+    }
+
+    const numDataRows = lastRow - ATTENDANCE_JSON.DATA_START_ROW + 1;
+    const dataRange = employeeSheet.getRange(ATTENDANCE_JSON.DATA_START_ROW,
+                                            ATTENDANCE_JSON.COL_YEAR,
+                                            numDataRows, 3);
+    const allRows = dataRange.getValues();
+
+    let yearRowIndex = -1;
+    for (let i = 0; i < allRows.length; i++) {
+      if (allRows[i][0] === year || String(allRows[i][0]) === String(year)) {
+        yearRowIndex = i;
+        break;
+      }
+    }
+
+    if (yearRowIndex === -1) {
+      return { success: false, message: 'Year row not found for ' + year, updatedCodes: null };
+    }
+
+    // Parse the JSON, update the date, write back
+    const codesJson = allRows[yearRowIndex][1];
+    let schedule = {};
+    try {
+      schedule = codesJson ? JSON.parse(codesJson) : {};
+    } catch (e) {
+      return { success: false, message: 'Failed to parse JSON: ' + e.toString(), updatedCodes: null };
+    }
+
+    schedule[isoDate] = codes;
+
+    // Write back to the sheet
+    const actualRow = ATTENDANCE_JSON.DATA_START_ROW + yearRowIndex;
+    const updatedJson = JSON.stringify(schedule);
+    employeeSheet.getRange(actualRow, ATTENDANCE_JSON.COL_CODES_JSON).setValue(updatedJson);
+
+    SpreadsheetApp.flush();
+    Logger.log('updateAttendanceCode_: success');
+    return { success: true, message: 'Updated', updatedCodes: schedule };
+  } catch (error) {
+    Logger.log('updateAttendanceCode_ exception: ' + error.toString());
+    return { success: false, message: 'Exception: ' + error.toString(), updatedCodes: null };
   }
-
-  schedule[isoDate] = codes;
-
-  // Write back to the sheet
-  const actualRow = ATTENDANCE_JSON.DATA_START_ROW + yearRowIndex;
-  const updatedJson = JSON.stringify(schedule);
-  employeeSheet.getRange(actualRow, ATTENDANCE_JSON.COL_CODES_JSON).setValue(updatedJson);
-
-  SpreadsheetApp.flush();
-  return { success: true, message: 'Updated', updatedCodes: schedule };
 }
 
 

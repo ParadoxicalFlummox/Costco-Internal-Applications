@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.5.9
+     VERSION: 0.5.14
   
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -1262,11 +1262,42 @@
     var resultsContainerEl = null;
     var _tabsInitialized = false;
     var _buttonsInitialized = false;
+    var _codeModalDate = null; // ISO date currently open in the code editor modal
+
+    var INFRACTION_CODE_LABELS = {
+      'TD-1': 'TD-1 — Tardy 4–29 min',
+      'TD-2': 'TD-2 — Tardy 30–119 min',
+      'TD-3': 'TD-3 — Tardy 120+ min',
+      NS: 'NS — No Show',
+      SE: 'SE — Swipe Error',
+      MP: 'MP — Meal Period',
+      SZ: 'SZ — Suspension',
+    };
+    var OTHER_CODE_LABELS = {
+      BL: 'BL — Bereavement',
+      LP: 'LP — Personal Leave',
+      CN: 'CN — Counseling Notice',
+      FH: 'FH — Floating Holiday',
+      H: 'H — Holiday',
+      JD: 'JD — Jury Duty',
+      SPF: 'SPF — Sick Paid Full',
+      SPH: 'SPH — Sick Paid Half',
+      SUF: 'SUF — Sick Unpaid Full',
+      SUH: 'SUH — Sick Unpaid Half',
+    };
 
     function onShow() {
       loadActiveCNs();
       setupCNScanHandlers();
-      setupCalendarSearch();
+      // Ensure employee cache is populated for the search dropdown
+      if (employeeCache.length === 0) {
+        UI.callServer('getEmployeeList', [], function (data) {
+          setEmployeeCache((data && data.employees) || []);
+          setupCalendarSearch();
+        });
+      } else {
+        setupCalendarSearch();
+      }
       setupCalendarButtons();
       initializeTabs();
     }
@@ -1321,6 +1352,22 @@
       if (btnClear) btnClear.onclick = clearSelection;
       if (btnPrev) btnPrev.onclick = prevYear;
       if (btnNext) btnNext.onclick = nextYear;
+
+      // Code editor modal buttons
+      var btnSave = document.getElementById('btnSaveAttendanceCodes');
+      var btnClearCodes = document.getElementById('btnClearAttendanceCodes');
+      if (btnSave) btnSave.onclick = saveCodeModal_;
+      if (btnClearCodes) btnClearCodes.onclick = clearCodeModal_;
+
+      // Delegated click on the calendar grid — open code editor for any day cell
+      var grid = document.getElementById('calendarGrid');
+      if (grid) {
+        grid.addEventListener('click', function (event) {
+          var cell = event.target.closest('.comet-day-cell[data-date]');
+          if (!cell || !currentEmployeeId) return;
+          openCodeModal_(cell.dataset.date);
+        });
+      }
     }
 
     // ---- Tab 1: Active Infractions ----
@@ -1497,7 +1544,7 @@
 
     function renderCalendarGrid(codesObject, year) {
       var months = ['January', 'February', 'March', 'April', 'May', 'June',
-                    'July', 'August', 'September', 'October', 'November', 'December'];
+        'July', 'August', 'September', 'October', 'November', 'December'];
       var daysOfWeek = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
       var grid = document.getElementById('calendarGrid');
       if (!grid) return;
@@ -1546,6 +1593,7 @@
           dayCell.className = 'comet-day-cell';
 
           var isoDate = year + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+          dayCell.dataset.date = isoDate;
           var codes = codesObject[isoDate] || [];
 
           // Day number — always top-left
@@ -1554,27 +1602,25 @@
           dayNum.textContent = d;
           dayCell.appendChild(dayNum);
 
-          // Code indicators (colored dots)
+          // Code indicators (colored bubbles)
           if (codes.length > 0) {
             dayCell.classList.add('has-codes');
             var codesContainer = document.createElement('div');
             codesContainer.className = 'comet-codes-container';
 
-            // Show up to 3 code dots; each dot is color-coded by absence type
+            // Show up to 3 code bubbles; each displays the code text and is color-coded by type
             codes.slice(0, 3).forEach(function (code) {
               var dot = document.createElement('div');
-              dot.className = 'comet-code-dot attn-badge-' + code.toLowerCase();
+              var cssClass = 'comet-code-dot attn-badge-' + code.toLowerCase();
+              dot.className = cssClass;
+              dot.textContent = code; // Display code text inside bubble
               dot.title = code; // Tooltip on hover
               codesContainer.appendChild(dot);
             });
 
-            // If >3 codes, show "+N more" indicator
+            // Cap display at 3 dots; full list is visible in the code editor modal
             if (codes.length > 3) {
-              var moreIndicator = document.createElement('div');
-              moreIndicator.className = 'comet-code-more';
-              moreIndicator.textContent = '+' + (codes.length - 3);
-              moreIndicator.title = codes.slice(3).join(', ');
-              codesContainer.appendChild(moreIndicator);
+              codesContainer.title = 'Codes: ' + codes.join(', ') + ' — click to edit';
             }
 
             dayCell.appendChild(codesContainer);
@@ -1605,6 +1651,203 @@
       var yearDisplay = document.getElementById('calendarYearDisplay');
       if (yearDisplay) yearDisplay.textContent = currentYear;
       loadCalendarForEmployee(currentEmployeeId, currentYear);
+    }
+
+    // ---- Code Editor Modal ----
+
+    function openCodeModal_(isoDate) {
+      _codeModalDate = isoDate;
+      var title = document.getElementById('attendanceCodeModalTitle');
+      var dateLabel = document.getElementById('attendanceCodeModalDate');
+      if (title) title.textContent = 'Edit Codes';
+      if (dateLabel) dateLabel.textContent = isoDate;
+
+      var cacheKey = currentEmployeeId + '_' + currentYear;
+      var codesObj = calendarYearCache[cacheKey] || {};
+      var codeList = codesObj[isoDate] || [];
+
+      // Count occurrences of each code (e.g., two TD-1s → count[TD-1] = 2)
+      var codeCounts = {};
+      codeList.forEach(function (code) {
+        codeCounts[code] = (codeCounts[code] || 0) + 1;
+      });
+
+      var infractionPicker = document.getElementById('infractionCodePicker');
+      var otherPicker = document.getElementById('otherCodePicker');
+      if (infractionPicker) {
+        infractionPicker.innerHTML = '';
+        // Tardy codes: use counters (can have multiple per day)
+        ['TD-1', 'TD-2', 'TD-3'].forEach(function (code) {
+          var count = codeCounts[code] || 0;
+          infractionPicker.appendChild(makeCodeCounter_(code, INFRACTION_CODE_LABELS[code], count));
+        });
+        // Other infraction codes: use toggle buttons
+        ['NS', 'SE', 'MP', 'SZ'].forEach(function (code) {
+          var isActive = (codeCounts[code] || 0) > 0;
+          infractionPicker.appendChild(makeCodeToggle_(code, INFRACTION_CODE_LABELS[code], isActive));
+        });
+      }
+      if (otherPicker) {
+        otherPicker.innerHTML = '';
+        Object.keys(OTHER_CODE_LABELS).forEach(function (code) {
+          var isActive = (codeCounts[code] || 0) > 0;
+          otherPicker.appendChild(makeCodeToggle_(code, OTHER_CODE_LABELS[code], isActive));
+        });
+      }
+
+      openModal('attendanceCodeModal');
+    }
+
+    function makeCodeCounter_(code, label, count) {
+      var container = document.createElement('div');
+      container.style.display = 'inline-flex';
+      container.style.alignItems = 'center';
+      container.style.gap = '4px';
+      container.style.marginBottom = '4px';
+      container.style.padding = '4px 8px';
+      container.style.borderRadius = '4px';
+      container.style.backgroundColor = '#f0f0f0';
+
+      // Code label
+      var label_ = document.createElement('span');
+      label_.textContent = code;
+      label_.style.fontWeight = '700';
+      label_.style.minWidth = '50px';
+      label_.title = label;
+      label_.className = 'attn-badge-' + code.toLowerCase().replace(/\./g, '-');
+      label_.style.padding = '2px 6px';
+      label_.style.borderRadius = '3px';
+      label_.style.color = '#fff';
+      label_.style.textShadow = '0 1px 2px rgba(0,0,0,0.3)';
+      container.appendChild(label_);
+
+      // Minus button
+      var btnMinus = document.createElement('button');
+      btnMinus.type = 'button';
+      btnMinus.textContent = '−';
+      btnMinus.style.minWidth = '28px';
+      btnMinus.style.padding = '2px 4px';
+      btnMinus.className = 'btn btn-sm btn-outline-secondary';
+      btnMinus.addEventListener('click', function () {
+        if (parseInt(countDisplay.textContent) > 0) {
+          countDisplay.textContent = parseInt(countDisplay.textContent) - 1;
+        }
+      });
+      container.appendChild(btnMinus);
+
+      // Count display
+      var countDisplay = document.createElement('span');
+      countDisplay.textContent = count;
+      countDisplay.style.minWidth = '20px';
+      countDisplay.style.textAlign = 'center';
+      countDisplay.style.fontWeight = '700';
+      countDisplay.title = 'Count for this code';
+      countDisplay.dataset.code = code;
+      container.appendChild(countDisplay);
+
+      // Plus button
+      var btnPlus = document.createElement('button');
+      btnPlus.type = 'button';
+      btnPlus.textContent = '+';
+      btnPlus.style.minWidth = '28px';
+      btnPlus.style.padding = '2px 4px';
+      btnPlus.className = 'btn btn-sm btn-outline-secondary';
+      btnPlus.addEventListener('click', function () {
+        countDisplay.textContent = parseInt(countDisplay.textContent) + 1;
+      });
+      container.appendChild(btnPlus);
+
+      return container;
+    }
+
+    function makeCodeToggle_(code, label, isActive) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.code = code;
+      btn.textContent = code;
+      btn.title = label;
+      btn.className = 'btn btn-sm comet-code-toggle attn-badge-' + code.toLowerCase().replace(/\./g, '-');
+      btn.style.marginRight = '4px';
+      btn.style.marginBottom = '4px';
+      if (isActive) btn.classList.add('active');
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        btn.classList.toggle('active');
+      });
+      return btn;
+    }
+
+    function clearCodeModal_() {
+      // Clear counters (set to 0)
+      document.querySelectorAll('#infractionCodePicker span[data-code], #otherCodePicker span[data-code]')
+        .forEach(function (span) { span.textContent = '0'; });
+      // Clear toggles (remove active class)
+      document.querySelectorAll('#infractionCodePicker .comet-code-toggle, #otherCodePicker .comet-code-toggle')
+        .forEach(function (btn) { btn.classList.remove('active'); });
+    }
+
+    function saveCodeModal_() {
+      try {
+        console.log('[Modal] saveCodeModal_ starting');
+        var selected = [];
+
+        // Read counts from tardy code counters (TD-1, TD-2, TD-3)
+        document.querySelectorAll('#infractionCodePicker span[data-code]')
+          .forEach(function (span) {
+            var code = span.dataset.code;
+            var count = parseInt(span.textContent) || 0;
+            for (var i = 0; i < count; i++) {
+              selected.push(code);
+            }
+          });
+
+        // Read toggle states from all buttons (other codes)
+        document.querySelectorAll('.comet-code-toggle.active')
+          .forEach(function (btn) {
+            selected.push(btn.dataset.code);
+          });
+
+        console.log('[Modal] selected codes:', selected);
+        var isoDate = _codeModalDate;
+        console.log('[Modal] calling updateAttendanceCode for', currentEmployeeId, isoDate);
+
+        UI.callServer('updateAttendanceCode', [currentEmployeeId, isoDate, selected], function (response) {
+          try {
+            console.log('[Modal] updateAttendanceCode response:', response);
+            console.log('[Modal] response type:', typeof response, 'keys:', response ? Object.keys(response) : 'null');
+            // Success if response.ok OR if response.updatedCodes exists (meaning data was returned)
+            if ((response && response.ok) || (response && response.updatedCodes)) {
+              console.log('[Modal] save successful, invalidating cache');
+              var cacheKey = currentEmployeeId + '_' + currentYear;
+              delete calendarYearCache[cacheKey];
+              console.log('[Modal] calling loadCalendarForEmployee');
+              loadCalendarForEmployee(currentEmployeeId, currentYear);
+              console.log('[Modal] closing modal');
+              closeModal('attendanceCodeModal');
+              console.log('[Modal] modal closed - save complete');
+            } else {
+              var errMsg = '';
+              if (!response) {
+                errMsg = 'No response from server';
+              } else if (response.error) {
+                errMsg = response.error;
+              } else if (response.message) {
+                errMsg = response.message;
+              } else {
+                errMsg = 'unknown error (response: ' + JSON.stringify(response) + ')';
+              }
+              console.error('[Modal] Save failed:', errMsg);
+              UI.showToast('Save failed: ' + errMsg, 'danger');
+            }
+          } catch (cbError) {
+            console.error('[Modal] error in callback:', cbError);
+            UI.showToast('Error: ' + cbError.toString(), 'danger');
+          }
+        });
+      } catch (error) {
+        console.error('[Modal] error in saveCodeModal_:', error);
+        UI.showToast('Save error: ' + error.toString(), 'danger');
+      }
     }
 
     function openAttendanceCalendar(employeeId) {
@@ -2024,7 +2267,27 @@
       Absences.setEmployees(employees);
     }
 
-    return { onShow, loadEmployeeList, openEmployeeEditModal, toggleStatus, openAttendanceCalendar };
+    // Holiday setup — apply H code to all employees for specified dates
+    function appendHolidaysForYear(year) {
+      var holidays = [
+        year + '-01-01',   // New Year's Day
+        year + '-05-25',   // Memorial Day (last Monday of May, approximate for most years)
+        year + '-07-04',   // Independence Day
+        year + '-09-07',   // Labor Day (first Monday of September, approximate)
+        year + '-11-26',   // Thanksgiving (fourth Thursday of November, approximate)
+        year + '-12-25',   // Christmas Day
+        // Note: Easter varies yearly; user can add via calendar UI or console
+      ];
+      UI.callServer('appendHolidaysToAllEmployees', [holidays], function (response) {
+        if (response && response.ok) {
+          UI.showToast('Holidays applied to ' + response.data.count + ' dates', 'success');
+        } else {
+          UI.showToast('Failed to apply holidays: ' + ((response && response.error) || 'unknown error'), 'danger');
+        }
+      });
+    }
+
+    return { onShow, loadEmployeeList, openEmployeeEditModal, toggleStatus, openAttendanceCalendar, appendHolidaysForYear };
   })();
 
 
@@ -2500,7 +2763,7 @@
       UI.callServer('getDepartments', undefined, function (data) {
         _populateAllDeptSelects(data.departments || []);
       });
-      Infractions.loadActiveCNs();
+      AttendanceCalendar.loadActiveCNs();
       if (typeof Admin !== 'undefined') Admin.loadEmployeeList();
       UI.showToast('Refreshed.', 'success');
     });
@@ -2511,7 +2774,7 @@
     });
 
     // Load CNs on startup so badge data is ready before the user visits Schedule
-    Infractions.loadActiveCNs();
+    AttendanceCalendar.loadActiveCNs();
 
     // Absences is the default view — trigger its onShow so the table loads
     Absences.onShow();

@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.8
+ * VERSION: 0.5.11
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -565,15 +565,17 @@ const THRESHOLD_COUNT = 3;
  * Derived from the Costco Employee Agreement (March 2025).
  */
 const CODE_RULES = {
-  TD: { threshold: 3, windowDays: 30  },  // Tardy (§11.4.2)
-  NS: { threshold: 1, windowDays: 30  },  // No Show (§11.4.3e)
-  SE: { threshold: 3, windowDays: 30  },  // Swiping Error (§11.4.12a)
-  MP: { threshold: 3, windowDays: 30  },  // Meal Period Occurrence (§11.4.12b)
-  SZ: { threshold: 3, windowDays: 365 },  // Suspension (§11.3.11a)
+  'TD-1': { threshold: 3, windowDays: 30  },  // Tardy 4-29 min (§11.4.2a)
+  'TD-2': { threshold: 2, windowDays: 30  },  // Tardy 30-119 min (§11.4.2b)
+  'TD-3': { threshold: 1, windowDays: 30  },  // Tardy 120+ min (§11.4.2c)
+  NS:     { threshold: 1, windowDays: 30  },  // No Show (§11.4.3e)
+  SE:     { threshold: 3, windowDays: 30  },  // Swiping Error (§11.4.12a)
+  MP:     { threshold: 3, windowDays: 30  },  // Meal Period Occurrence (§11.4.12b)
+  SZ:     { threshold: 3, windowDays: 365 },  // Suspension (§11.3.11a)
 };
 
 /** Codes that count as infractions when present in an employee's calendar. */
-const INFRACTION_CODES = ['TD', 'NS', 'SE', 'MP', 'SZ'];
+const INFRACTION_CODES = ['TD-1', 'TD-2', 'TD-3', 'NS', 'SE', 'MP', 'SZ'];
 
 /**
  * Codes that are always ignored, even if they appear in INFRACTION_CODES.
