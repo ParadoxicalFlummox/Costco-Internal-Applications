@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.11
+ * VERSION: 0.5.12
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -248,48 +248,6 @@ const SCHEDULE_RULES = {
 
 
 // ---------------------------------------------------------------------------
-// Supervisor Scheduling
-// ---------------------------------------------------------------------------
-
-/**
- * Configuration for supervisor peak traffic scheduling.
- *
- * supervisorRole: Employee role identifier for supervisors (column L)
- * enabled: Whether supervisor scheduling is enabled (default false)
- * membersPerSupervisor: Ratio used to calculate required supervisors (e.g., 75 = 1 supervisor per 75 members)
- * maxDoorCount: Maximum door count on the Y-axis of the visualizer (soft ceiling; values can exceed but display clips)
- * defaultPeakProfile: Default daily peak traffic profile (8 elements, one per 3 hours: 0, 3, 6, 9, 12, 15, 18, 21)
- *                      Each element is a door count (members per hour), used as fallback if no per-dept config exists.
- *
- * Peak profiles are stored dynamically in the COMET Config sheet as:
- *   Key: SUPERVISOR_PEAK_WINDOWS_{DEPARTMENT}
- *   Value: JSON { department, peakProfile, enabled, membersPerSupervisor, maxDoorCount, lastUpdated }
- *
- * Each element in peakProfile[dayName] is an integer representing expected member foot traffic at that time slot.
- */
-/**
- * DEPRECATED: Supervisor rules are now integrated into the Traffic Heatmap system.
- * This constant is kept for backwards compatibility during migration but should be
- * removed once all Phase 5 code is consolidated.
- */
-const SUPERVISOR_RULES = {
-  supervisorRole: 'Supervisor',
-  enabled: false,
-  membersPerSupervisor: 75,
-  maxDoorCount: 500,
-  defaultPeakProfile: {
-    'Monday':    [0, 0, 0, 50, 150, 200, 175, 100],
-    'Tuesday':   [0, 0, 0, 50, 150, 200, 175, 100],
-    'Wednesday': [0, 0, 0, 50, 150, 200, 175, 100],
-    'Thursday':  [0, 0, 0, 50, 150, 200, 175, 100],
-    'Friday':    [0, 0, 0, 75, 200, 350, 400, 250],
-    'Saturday':  [0, 0, 0, 75, 250, 400, 450, 300],
-    'Sunday':    [0, 0, 0, 50, 200, 375, 400, 250],
-  },
-};
-
-
-// ---------------------------------------------------------------------------
 // Traffic Heatmap & Peak Coverage Scheduling
 // ---------------------------------------------------------------------------
 
@@ -308,6 +266,15 @@ const STORE_CLOSING_TIMES = {
   weekday: '23:30',  // Mon–Fri
   saturday: '22:00',
   sunday: '21:00',
+};
+
+/**
+ * Supervisor shift timing configuration.
+ * Supervisors start at SUPERVISOR_START_TIME and work 2 hours past store close.
+ */
+const SUPERVISOR_SHIFT_CONFIG = {
+  startTime: '09:00',  // 9:00 AM — when supervisors begin their shift
+  hoursPostClose: 2,   // Supervisors stay 2 hours after store closes
 };
 
 /**
@@ -587,41 +554,6 @@ const IGNORE_CODES = ['BL', 'CN', 'FH', 'H', 'JD', 'SPF', 'SUF', 'SPH', 'SUH', '
 const EXPIRY_DAYS = 180;
 
 /**
- * Attendance controller calendar grid layout.
- * Three horizontal bands, each containing four side-by-side month blocks.
- */
-const DATA_BANDS = [
-  { monthRow: 5,  dayOfWeekRow: 6,  firstGridRow: 7,  lastGridRow: 30 },
-  { monthRow: 32, dayOfWeekRow: 33, firstGridRow: 34, lastGridRow: 57 },
-  { monthRow: 59, dayOfWeekRow: 60, firstGridRow: 61, lastGridRow: 83 },
-];
-
-/** Starting columns (A1-notation) for each of the four month blocks per band. */
-const START_COLUMNS = ['A', 'I', 'Q', 'Y'];
-
-/** Number of day-data columns per month block (the 8th is a visual separator). */
-const DAY_COLS_PER_BLOCK = 7;
-
-/**
- * Cell addresses for employee metadata on each individual attendance controller tab.
- * Standardized across Costco warehouses.
- */
-const EMPLOYEE_FIELDS = {
-  yearTitle:    'D1',
-  employeeName: 'X1',
-  department:   'R3',
-  employeeId:   'X3',
-  hireDate:     'AD3',
-};
-
-/**
- * Hidden template sheet used by the attendance controller tab generator.
- * Built once per year with all formatting; each employee tab is a copy of this sheet.
- * The leading underscore sorts it before employee tabs and signals it is system-managed.
- */
-const ATTENDANCE_TEMPLATE_SHEET_NAME = '_AC_TEMPLATE_';
-
-/**
  * Regex that identifies employee tabs in the attendance controller.
  * Format: "Last, First - EmployeeNumber"  e.g. "Le, Tony - 1234578"
  */
@@ -764,18 +696,6 @@ const PAYROLL_RECIPIENTS = [
  * execution times and debug performance bottlenecks. Should be false in production.
  */
 const PROFILING_ENABLED = true;
-
-/**
- * Batch size for sheet operations. When writing large blocks of data,
- * batching in groups of this size reduces API overhead.
- */
-const BATCH_SIZE_SHEET_WRITE = 50;
-
-/**
- * Cache time-to-live in minutes. Cached values (e.g., shift definitions,
- * attendance grids) expire after this interval.
- */
-const CACHE_TTL_MINUTES = 30;
 
 /**
  * Maximum execution time in milliseconds before the API layer should warn

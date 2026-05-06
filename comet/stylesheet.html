@@ -1,6 +1,8 @@
 <style>
   /* =========================================================================
      COMET — Custom Stylesheet
+     VERSION: 0.1.2
+
      Loaded via <?!= include('stylesheet') ?> in index.html.
      Bootstrap 5 CDN is loaded first; these rules extend and override it.
      ========================================================================= */
@@ -22,12 +24,14 @@
      ------------------------------------------------------------------------- */
   :root {
     --comet-navy:       #005DAA;   /* Costco blue */
-    --comet-blue:       #E31837;   /* Costco red — primary action color */
-    --comet-blue-hover: #C01230;   /* Costco red darkened */
+    --comet-red:        #E31837;   /* Costco red — primary action color */
+    --comet-red-hover:  #C01230;   /* Costco red darkened */
     --comet-surface:    #F8F9FB;
     --comet-border:     #E2E8F0;
     --comet-text:       #1E293B;
     --comet-muted:      #64748B;
+    --comet-hover-bg:   #EFF6FF;   /* Light blue background for interactive hover states */
+    --comet-navbar-height: 56px;   /* Bootstrap navbar default height; used in calc(100vh - X) for main content */
   }
 
 
@@ -60,7 +64,7 @@
 
   .comet-logo-icon {
     margin-right: 0.35rem;
-    color: #E31837;
+    color: var(--comet-red);
   }
 
   .comet-navbar .nav-link {
@@ -77,13 +81,92 @@
     background-color: rgba(255,255,255,0.12);
   }
 
+  /* Mobile navbar — compact and horizontal scrollable */
+  @media (max-width: 900px) {
+    .comet-navbar {
+      padding: 0.35rem 0.75rem;
+    }
+
+    .comet-brand {
+      font-size: 0.95rem;
+    }
+
+    .comet-navbar .navbar-nav {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      gap: 0.25rem;
+      padding-bottom: 0.25rem;
+      margin-bottom: -0.25rem;
+    }
+
+    .comet-navbar .nav-link {
+      padding: 0.4rem 0.9rem;
+      font-size: 0.85rem;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    #btnRefresh {
+      padding: 0.35rem 0.6rem !important;
+      font-size: 0.9rem;
+    }
+  }
+
+  /* Mobile navbar — even more compact on phones */
+  @media (max-width: 600px) {
+    .comet-navbar {
+      padding: 0.3rem 0.5rem;
+    }
+
+    .comet-brand {
+      font-size: 0.9rem;
+    }
+
+    .comet-navbar .nav-link {
+      padding: 0.35rem 0.7rem;
+      font-size: 0.8rem;
+    }
+  }
+
+  /* Landscape orientation optimizations for mobile schedule viewing */
+  @media (orientation: landscape) and (max-height: 600px) {
+    .comet-navbar {
+      padding: 0.25rem 0.5rem;
+    }
+
+    .comet-brand {
+      font-size: 0.85rem;
+    }
+
+    .comet-navbar .nav-link {
+      padding: 0.3rem 0.6rem;
+      font-size: 0.75rem;
+    }
+
+    .comet-main {
+      padding: 0.5rem;
+      min-height: calc(100vh - 40px); /* Landscape navbar is slightly smaller */
+    }
+
+    /* Reduce table padding in landscape */
+    .table {
+      margin-bottom: 0.5rem;
+    }
+
+    /* Schedule grid more compact in landscape */
+    .comet-table-container {
+      max-height: calc(100vh - 120px); /* Navbar + padding adjustments in landscape */
+      overflow: auto;
+    }
+  }
+
 
   /* -------------------------------------------------------------------------
      Main Content Area
      ------------------------------------------------------------------------- */
   .comet-main {
     padding: 1.75rem 2rem;
-    min-height: calc(100vh - 56px);
+    min-height: calc(100vh - var(--comet-navbar-height));
   }
 
   @media (max-width: 576px) {
@@ -142,7 +225,7 @@
   }
 
   .comet-table-container tbody tr:hover {
-    background-color: #EFF6FF;
+    background-color: var(--comet-hover-bg);
   }
 
   /* CN expiry color coding */
@@ -218,6 +301,68 @@
     text-overflow: ellipsis;
   }
 
+  /* Schedule cell type styling (base definitions) */
+  .schedule-cell { padding: 4px 2px !important; }
+
+  .schedule-cell-ft   { display: inline-block; padding: 2px 5px; border-radius: 4px;
+                        background: #DBEAFE; color: #1E40AF; font-weight: 600; font-size: 0.75rem; }
+  .schedule-cell-pt   { display: inline-block; padding: 2px 5px; border-radius: 4px;
+                        background: #DCFCE7; color: #166534; font-weight: 600; font-size: 0.75rem; }
+  .schedule-cell-lpt  { display: inline-block; padding: 2px 5px; border-radius: 4px;
+                        background: #FFF7ED; color: #9A3412; font-weight: 600; font-size: 0.75rem; }
+  .schedule-cell-vac  { display: inline-block; padding: 2px 5px; border-radius: 4px;
+                        background: #FEF9C3; color: #854D0E; font-weight: 600; font-size: 0.75rem; }
+  .schedule-cell-rdo  { display: inline-block; padding: 2px 5px; border-radius: 4px;
+                        background: var(--comet-border); color: #475569; font-weight: 600; font-size: 0.75rem; }
+  .schedule-cell-off  { display: inline-block; padding: 2px 5px; border-radius: 4px;
+                        background: #F1F5F9; color: #94A3B8; font-size: 0.75rem; }
+
+  /* Mobile: allow text wrapping in schedule table */
+  @media (max-width: 900px) {
+    .comet-schedule-table {
+      font-size: 0.75rem;
+    }
+
+    .comet-schedule-table th,
+    .comet-schedule-table td {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      padding: 3px 2px;
+      word-break: break-word;
+    }
+
+    .comet-schedule-table thead th:first-child {
+      min-width: 100px;
+    }
+
+    .schedule-cell-ft,
+    .schedule-cell-pt,
+    .schedule-cell-lpt,
+    .schedule-cell-vac,
+    .schedule-cell-rdo,
+    .schedule-cell-off {
+      font-size: 0.7rem;
+      padding: 1px 3px;
+    }
+  }
+
+  /* Landscape: maximize readability */
+  @media (orientation: landscape) and (max-height: 600px) {
+    .comet-schedule-table {
+      font-size: 0.7rem;
+    }
+
+    .comet-schedule-table th,
+    .comet-schedule-table td {
+      padding: 2px 1px;
+    }
+
+    .comet-schedule-table thead th:first-child {
+      min-width: 80px;
+    }
+  }
+
   .comet-schedule-table thead th {
     background-color: var(--comet-navy);
     color: #fff;
@@ -230,22 +375,6 @@
     min-width: 160px;
   }
 
-  .schedule-cell { padding: 4px 2px !important; }
-
-  .schedule-cell-ft   { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #DBEAFE; color: #1E40AF; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-pt   { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #DCFCE7; color: #166534; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-lpt  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #FFF7ED; color: #9A3412; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-vac  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #FEF9C3; color: #854D0E; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-rdo  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #E2E8F0; color: #475569; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-off  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #F1F5F9; color: #94A3B8; font-size: 0.75rem; }
-  .schedule-cell-role { color: #6B7280; font-size: 0.7rem; }
-
   /* Lock badge indicator for manager-overridden cells */
   .lock-badge {
     position: absolute;
@@ -256,13 +385,10 @@
     filter: drop-shadow(0 1px 1px rgba(0,0,0,0.2));
   }
 
-  /* Change highlighting animation for override cells */
-  @keyframes fadeFromYellow {
-    0% { background-color: #FFD966 !important; }
-    100% { background-color: inherit; }
-  }
+  /* Persistent session change highlighting — cells modified by recalculation persist until week/dept change */
   .schedule-cell-changed {
-    animation: fadeFromYellow 2s ease-out forwards;
+    background-color: rgba(255, 217, 102, 0.45) !important;
+    outline: 1px solid rgba(202, 158, 0, 0.5);
   }
 
   /* Role text pill on shift cells */
@@ -307,7 +433,7 @@
   /* Other departments */
   .role-badge-receiving            { background-color: #A7F3D0; color: #065F46; }
   .role-badge-membership-service   { background-color: #FFFBEB; color: #92400E; }
-  .role-badge-security             { background-color: #E2E8F0; color: #334155; }
+  .role-badge-security             { background-color: var(--comet-border); color: #334155; }
   .role-badge-tire-tech            { background-color: #F0FDF4; color: #166534; }
   .role-badge-gas-attendant        { background-color: #FFEDD5; color: #9A3412; }
   .role-badge-pharmacy-tech        { background-color: #F3E8FF; color: #6B21A8; }
@@ -332,14 +458,14 @@
   .role-qualified-list {
     display: block;
     font-size: 0.65rem;
-    color: #6B7280;
+    color: var(--comet-muted);
     margin-top: 1px;
   }
 
   .schedule-row-ft      td:first-child { border-left: 3px solid #3B82F6; }
   .schedule-row-pt      td:first-child { border-left: 3px solid #22C55E; }
   .schedule-row-lpt     td:first-child { border-left: 3px solid #F97316; }
-  .schedule-row-hybrid  td:first-child { border-left: 3px solid #A78BFA; background-color: rgba(167, 139, 250, 0.05); }
+  .schedule-row-hybrid  td:first-child { border-left: 3px solid #FF7043; background-color: rgba(255, 112, 67, 0.05); }
 
   .schedule-coverage-row td { font-size: 0.78rem; }
 
@@ -371,13 +497,13 @@
   }
 
   .btn-primary {
-    background-color: var(--comet-blue);
-    border-color: var(--comet-blue);
+    background-color: var(--comet-red);
+    border-color: var(--comet-red);
   }
 
   .btn-primary:hover {
-    background-color: var(--comet-blue-hover);
-    border-color: var(--comet-blue-hover);
+    background-color: var(--comet-red-hover);
+    border-color: var(--comet-red-hover);
   }
 
 
@@ -440,11 +566,11 @@
   }
 
   .comet-day-cell:hover {
-    background: #EFF6FF;
+    background: var(--comet-hover-bg);
   }
 
   .comet-day-cell.has-codes {
-    background: #F8F9FB;
+    background: var(--comet-surface);
   }
   .comet-day-cell[data-date] {
     cursor: pointer;
@@ -471,33 +597,27 @@
     margin-top: 2px;
     max-width: calc(100% - 4px);
     padding: 0 2px;
+    max-height: clamp(3.5rem, 20vw, 7rem);
+    overflow: hidden;
   }
 
-  /* Code bubble — displays code type text inside */
+  /* Code bubble — displays code type text inside; responsive size */
   .comet-code-dot {
-    width: 28px;
-    height: 28px;
+    width: clamp(16px, 1.5vw, 28px);
+    height: clamp(16px, 1.5vw, 28px);
     border-radius: 50%;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     cursor: help;
-    font-size: 0.65rem;
+    font-size: clamp(0.5rem, 0.7vw, 0.75rem);
     font-weight: 700;
     color: #fff;
     text-shadow: 0 1px 2px rgba(0,0,0,0.3);
     box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   }
 
-  /* "More" indicator when >3 codes */
-  .comet-code-more {
-    font-size: 0.5rem;
-    font-weight: 700;
-    color: var(--comet-muted);
-    line-height: 1;
-    cursor: help;
-  }
 
   /* Code color scheme — matched to official Costco attendance controller palette */
   .attn-badge-td-1 { background: #f4a460; }  /* sandy/light orange — Tardy 4-29 min */
@@ -524,33 +644,52 @@
   .comet-code-toggle {
     font-size: 0.75rem;
     font-weight: 700;
-    padding: 5px 10px;
+    padding: 4px 8px;
     cursor: pointer;
-    transition: opacity 0.15s ease;
+    transition: opacity 0.15s ease, box-shadow 0.15s ease;
     color: #fff;
     text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-    opacity: 0.4;
-    border: none !important;
+    opacity: 0.6;
+    border: 2px solid transparent;
+    outline: none;
   }
   /* Light-background codes need dark text */
   .comet-code-toggle.attn-badge-bl,
   .comet-code-toggle.attn-badge-lp,
   .comet-code-toggle.attn-badge-sph,
   .comet-code-toggle.attn-badge-suf,
-  .comet-code-toggle.attn-badge-se  { color: #1E293B; text-shadow: none; }
-  /* Active (highlighted) state */
+  .comet-code-toggle.attn-badge-se  { color: var(--comet-text); text-shadow: none; }
+  /* Active (highlighted) state — full opacity + white border ring */
   .comet-code-toggle.active {
     opacity: 1;
+    border-color: rgba(255,255,255,0.8);
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
   }
-
-  /* Legacy badge styling (kept for compatibility if needed elsewhere) */
-  .attn-badge {
-    display: inline-block;
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 0.6rem;
-    font-weight: 700;
-    line-height: 1.4;
+  /* Preserve color on focus/active pseudo-states */
+  .comet-code-toggle:focus,
+  .comet-code-toggle:active,
+  .comet-code-toggle:focus-visible {
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    outline: none;
+  }
+  .comet-code-toggle.attn-badge-bl:focus,
+  .comet-code-toggle.attn-badge-bl:active,
+  .comet-code-toggle.attn-badge-bl:focus-visible,
+  .comet-code-toggle.attn-badge-lp:focus,
+  .comet-code-toggle.attn-badge-lp:active,
+  .comet-code-toggle.attn-badge-lp:focus-visible,
+  .comet-code-toggle.attn-badge-sph:focus,
+  .comet-code-toggle.attn-badge-sph:active,
+  .comet-code-toggle.attn-badge-sph:focus-visible,
+  .comet-code-toggle.attn-badge-suf:focus,
+  .comet-code-toggle.attn-badge-suf:active,
+  .comet-code-toggle.attn-badge-suf:focus-visible,
+  .comet-code-toggle.attn-badge-se:focus,
+  .comet-code-toggle.attn-badge-se:active,
+  .comet-code-toggle.attn-badge-se:focus-visible {
+    color: var(--comet-text);
+    text-shadow: none;
   }
 
   /* Year navigation */
@@ -593,32 +732,21 @@
   }
 
   .comet-employee-result-item:hover {
-    background: #EFF6FF;
+    background: var(--comet-hover-bg);
   }
-
-  /* Responsive: 2 columns on tablet, 1 on mobile */
-  @media (max-width: 768px) {
-    .comet-calendar-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  @media (max-width: 480px) {
-    .comet-calendar-grid {
-      grid-template-columns: 1fr;
-    }
-    .comet-month-card {
-      padding: 0.5rem;
-    }
-  }
-
 
   /* -------------------------------------------------------------------------
      Mobile & Touch Optimizations
      ------------------------------------------------------------------------- */
 
-  /* Allow navbar items to wrap on small screens instead of overflowing */
+  /* Tablets and small screens — up to 768px */
   @media (max-width: 768px) {
+    /* Responsive: 2 columns on tablet */
+    .comet-calendar-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    /* Allow navbar items to wrap on small screens instead of overflowing */
     .comet-navbar .container-fluid {
       flex-wrap: wrap;
       row-gap: 0.4rem;
@@ -640,7 +768,6 @@
     /* Ensure tables scroll horizontally rather than clipping */
     .comet-table-container {
       overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
     }
 
     /* Minimum 44 px touch targets for all buttons */
@@ -675,10 +802,39 @@
     }
   }
 
-  @media (max-width: 576px) {
+  @media (max-width: 480px) {
+    .comet-calendar-grid {
+      grid-template-columns: 1fr;
+    }
+    .comet-month-card {
+      padding: 0.5rem;
+    }
+  }
+
+  /* =========================================================================
+     Mobile Devices — Smartphones (iPhone 14+, modern phones; up to 600px)
+     ========================================================================= */
+  @media (max-width: 600px) {
+    .comet-main {
+      padding: 0.5rem;
+    }
+
+    .comet-view {
+      gap: 0.75rem;
+    }
+
+    .comet-view-header {
+      margin-bottom: 0.75rem;
+    }
+
+    .comet-view-title {
+      font-size: 1.25rem;
+    }
+
     /* Stack view header controls vertically */
     .comet-view-header > div {
       flex-wrap: wrap;
+      gap: 0.5rem;
     }
 
     /* Full-width form controls in modals */
@@ -691,6 +847,98 @@
     .comet-year-display {
       font-size: 0.95rem;
       min-width: 50px;
+    }
+
+    /* Tables stack nicely on mobile */
+    .table {
+      font-size: 0.8rem;
+    }
+
+    /* Calendar adjustments for mobile */
+    .comet-month-card {
+      padding: 0.5rem;
+    }
+
+    .comet-day-cell {
+      aspect-ratio: auto;
+      min-height: 60px;
+    }
+
+    /* Modal sizing for mobile */
+    .modal-dialog {
+      margin: 1rem auto;
+    }
+
+    .modal-sm {
+      max-width: 95vw;
+    }
+  }
+
+  /* =========================================================================
+     Standard Monitor Adjustments (1400–2200px)
+     ========================================================================= */
+  @media (min-width: 1400px) and (max-width: 2200px) {
+    .comet-main {
+      padding: 0.75rem 1rem;
+    }
+
+    .comet-view {
+      gap: 1rem;
+    }
+
+    .comet-view-header {
+      margin-bottom: 1rem;
+    }
+
+    /* Tighter spacing in tables for standard monitors */
+    .table {
+      font-size: 0.85rem;
+    }
+
+    .modal-body {
+      padding: 1rem;
+    }
+  }
+
+  /* =========================================================================
+     Ultrawide Monitor Adjustments (2200px+)
+     ========================================================================= */
+  @media (min-width: 2200px) {
+    .comet-main {
+      padding: 1.25rem 2rem;
+      max-width: 95%;
+      margin: 0 auto;
+    }
+
+    .comet-view {
+      gap: 1.5rem;
+    }
+
+    .comet-view-header {
+      margin-bottom: 1.5rem;
+    }
+
+    /* Slightly larger text for better readability on ultrawide */
+    body {
+      font-size: 1rem;
+    }
+
+    .comet-view-title {
+      font-size: 1.75rem;
+    }
+
+    /* More spacious table layout */
+    .table {
+      font-size: 0.95rem;
+    }
+
+    /* Calendar cards get better spacing */
+    .comet-month-card {
+      padding: 1rem;
+    }
+
+    .modal-lg {
+      max-width: 70vw;
     }
   }
 

@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.7.2
+ * VERSION: 0.7.4
  *
  * REWORK SUMMARY (v0.7.0):
  *   - Phase condensation: 5 → 4 phases (Phases 1+2 merged; role assignment moved last).
@@ -1110,6 +1110,32 @@ function timeStringToMinutes_(timeString) {
   return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
 }
 
+/**
+ * Calculates supervisor shift end time based on the day's closing time.
+ * Supervisors work 2 hours past store close.
+ * @param {string} dayName — 'Monday', 'Tuesday', ..., 'Sunday'
+ * @returns {string} End time in HH:MM format (24-hour), e.g., '01:30'
+ */
+function calculateSupervisorEndTime_(dayName) {
+  const isWeekday = dayName !== 'Saturday' && dayName !== 'Sunday';
+  const closeTimeStr = isWeekday ? STORE_CLOSING_TIMES.weekday :
+    (dayName === 'Saturday' ? STORE_CLOSING_TIMES.saturday : STORE_CLOSING_TIMES.sunday);
+
+  const parts = closeTimeStr.split(':');
+  let hours = parseInt(parts[0], 10);
+  let minutes = parseInt(parts[1], 10);
+
+  // Add SUPERVISOR_SHIFT_CONFIG.hoursPostClose (typically 2 hours)
+  hours += SUPERVISOR_SHIFT_CONFIG.hoursPostClose;
+
+  // Handle day overflow (e.g., 23:30 + 2 hours = 01:30 next day)
+  if (hours >= 24) {
+    hours -= 24;
+  }
+
+  return String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0');
+}
+
 
 // ---------------------------------------------------------------------------
 // Phase 3: Pool Member Scheduling
@@ -1179,13 +1205,33 @@ function runPhasePoolScheduling_(weekGrid, employeeList, poolMembers, heatmapCon
       const staggerKey = dayName + '|' + shiftKey;
       const startTimes = (staggerMap[dayName] && staggerMap[dayName][shiftKey]) ? staggerMap[dayName][shiftKey] : [];
 
-      const dayAnchorMinutes = getStartMinutesForDay_(bestShift, dayName); // settingsManager.js
-      let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + bestShift.blockMinutes);
-      if (startTimes.length > 0) {
-        if (!staggerPositions[staggerKey]) staggerPositions[staggerKey] = 0;
-        displayText = buildShiftDisplayText_(startTimes[staggerPositions[staggerKey] % startTimes.length],
-          bestShift.paidHours, bestShift.hasLunch);
-        staggerPositions[staggerKey]++;
+      // Check if this is a supervisor (by role)
+      const isSupervisorShift = poolMember.role && (poolMember.role === 'Supervisor' || poolMember.role.includes('Supervisor'));
+
+      let displayText;
+      if (isSupervisorShift) {
+        // For supervisors, use the configured start time and calculate end time based on the day
+        const supervisorEndTime = calculateSupervisorEndTime_(dayName);
+
+        if (startTimes.length > 0) {
+          if (!staggerPositions[staggerKey]) staggerPositions[staggerKey] = 0;
+          const staggeredStartTime = startTimes[staggerPositions[staggerKey] % startTimes.length];
+          displayText = buildShiftDisplayText_(staggeredStartTime, bestShift.paidHours, bestShift.hasLunch);
+          staggerPositions[staggerKey]++;
+        } else {
+          // No stagger, use fixed supervisor times (09:00 to calculated end time)
+          displayText = SUPERVISOR_SHIFT_CONFIG.startTime + ' – ' + supervisorEndTime;
+        }
+      } else {
+        // Regular pool member: use shift definition times
+        const dayAnchorMinutes = getStartMinutesForDay_(bestShift, dayName); // settingsManager.js
+        displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + bestShift.blockMinutes);
+        if (startTimes.length > 0) {
+          if (!staggerPositions[staggerKey]) staggerPositions[staggerKey] = 0;
+          displayText = buildShiftDisplayText_(startTimes[staggerPositions[staggerKey] % startTimes.length],
+            bestShift.paidHours, bestShift.hasLunch);
+          staggerPositions[staggerKey]++;
+        }
       }
 
       weekGrid[poolIndex][dayIndex] = createDayAssignment_('SHIFT', bestShift.name, bestShift.paidHours, false, displayText);
@@ -1311,6 +1357,63 @@ function getWeeklyHours_(weekGrid, ei) {
 /** Public alias — called by formatter.js without underscore. */
 function getWeeklyHours(weekGrid, employeeIndex) {
   return getWeeklyHours_(weekGrid, employeeIndex);
+}
+
+/**
+ * Calculates seniority rank for all active employees and writes back to column M.
+ * Called after UKG import to populate the Employees sheet with seniority ranks.
+ *
+ * Formula: seniorityRank = (FT_BASE or PT_BASE) + days_since_hire
+ * Higher rank = more senior.
+ */
+function calculateAndWriteSeniorityRanks_() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const employeesSheet = spreadsheet.getSheetByName(EMPLOYEES_SHEET_NAME);
+  if (!employeesSheet) {
+    console.log('Employees sheet not found');
+    return;
+  }
+
+  const dataRange = employeesSheet.getDataRange();
+  const values = dataRange.getValues();
+
+  // Build array of rows to write (only column M — SENIORITY_RANK)
+  const seniorityRankColumn = EMPLOYEE_COLUMN.SENIORITY_RANK;
+  const hireDateColumn = EMPLOYEE_COLUMN.HIRE_DATE;
+  const ftptColumn = EMPLOYEE_COLUMN.FT_PT;
+
+  const updates = [];
+  const seniorityReferenceDate = new Date(SENIORITY.REFERENCE_DATE_STRING);
+
+  for (let row = EMPLOYEES_DATA_START_ROW; row <= values.length; row++) {
+    const rowIndex = row - 1;
+    const ftptValue = values[rowIndex][ftptColumn - 1];
+    const hireDateValue = values[rowIndex][hireDateColumn - 1];
+
+    if (!ftptValue) continue; // Skip empty rows
+
+    let hireDate = new Date();
+    if (hireDateValue instanceof Date && !isNaN(hireDateValue.getTime())) {
+      hireDate = hireDateValue;
+    } else if (hireDateValue) {
+      const parsed = new Date(hireDateValue);
+      if (!isNaN(parsed.getTime())) hireDate = parsed;
+    }
+
+    const seniorityBase = ftptValue === 'FT' ? SENIORITY.FT_BASE : SENIORITY.PT_BASE;
+    const seniorityDaysFromHire = Math.max(0, Math.floor(
+      (seniorityReferenceDate - hireDate) / (1000 * 60 * 60 * 24)
+    ));
+    const seniorityRank = seniorityBase + seniorityDaysFromHire;
+
+    updates.push([seniorityRank]);
+  }
+
+  if (updates.length > 0) {
+    const targetRange = employeesSheet.getRange(EMPLOYEES_DATA_START_ROW, seniorityRankColumn, updates.length, 1);
+    targetRange.setValues(updates);
+    console.log('Seniority ranks calculated and written for ' + updates.length + ' employees');
+  }
 }
 
 function countWorkingDays_(weekGrid, ei) {

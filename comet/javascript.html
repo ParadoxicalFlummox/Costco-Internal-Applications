@@ -1,8 +1,8 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.5.14
-  
+     VERSION: 0.5.17
+
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
      bundler or framework. Communication with the server is
@@ -138,6 +138,22 @@
       if (absDate) {
         absDate.value = new Date().toISOString().slice(0, 10);
       }
+
+      // Logo click tracking for version modal
+      var logoClicks = [];
+      var logoEl = document.querySelector('.comet-logo-icon');
+      if (logoEl) {
+        logoEl.parentElement.addEventListener('click', function (e) {
+          e.preventDefault();
+          var now = Date.now();
+          logoClicks = logoClicks.filter(function (t) { return now - t < 5000; });
+          logoClicks.push(now);
+          if (logoClicks.length >= 10) {
+            openModal('versionModal');
+            logoClicks = [];
+          }
+        });
+      }
     }
 
     function showLoading() {
@@ -230,13 +246,6 @@
       _cns = cns || [];
     }
 
-    /** Returns true if the employee has at least one active CN. */
-    function hasActiveCN(employeeId) {
-      return _cns.some(function (cn) {
-        return String(cn.employeeId) === String(employeeId);
-      });
-    }
-
     /** Returns the active CN with the fewest days remaining for this employee. */
     function getUrgentCN(employeeId) {
       var matching = _cns.filter(function (cn) {
@@ -247,7 +256,7 @@
       return matching[0];
     }
 
-    return { set, hasActiveCN, getUrgentCN };
+    return { set, getUrgentCN };
   })();
 
 
@@ -263,15 +272,21 @@
     var _currentDept = null;
     var _currentMonday = null;
     var _pendingOverride = null; // { employeeId, dayIndex }
-    var _lastChangedCell = null; // { employeeId, dayIndex } — used for change highlighting
+    var _sessionChangedCells = {}; // Keyed as 'employeeId_dayIndex' — all cells changed in this session (persistent until week/dept changes)
     var _lastSheetAgeWarningTime = null; // Memoization to prevent duplicate toasts
     var _crossDeptHoursCache = {}; // Cached cross-dept hours: { empId: { totalHours, assignments } }
+    var _cachedDepartments = null; // Cache for getDepartments server call
 
     function onShow() {
-      // Refresh dept dropdown in case departments were added since startup
-      UI.callServer('getDepartments', undefined, function (data) {
-        _populateAllDeptSelects(data.departments || []);
-      });
+      // Cache departments to avoid server call on every tab visit (cleared on Refresh button or UKG import)
+      if (_cachedDepartments) {
+        _populateAllDeptSelects(_cachedDepartments);
+      } else {
+        UI.callServer('getDepartments', undefined, function (data) {
+          _cachedDepartments = data.departments || [];
+          _populateAllDeptSelects(_cachedDepartments);
+        });
+      }
 
       // Check if Employees sheet is stale and show warning toast if needed
       _checkAndShowSheetAgeWarning();
@@ -295,6 +310,7 @@
           _staffingRequirements = null;
           _currentMonday = null;
           _currentDept = null;
+          _sessionChangedCells = {}; // Clear session highlight on dept change
 
           // Clear the entire schedule table container (week tabs + grid) so no
           // stale content from the previous dept remains visible.
@@ -420,6 +436,14 @@
         var dept = document.getElementById('scheduleDept').value;
         if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
         var staffingReqs = collectStaffingReqsFromDom();
+
+        // Validate staffing requirements
+        for (var i = 0; i < staffingReqs.length; i++) {
+          if (staffingReqs[i].count < 0) {
+            UI.showToast('Staffing count for ' + staffingReqs[i].day + ' cannot be negative.', 'warning'); return;
+          }
+        }
+
         UI.callServer('saveDeptSettings', [dept, { staffingReqs }], function () {
           UI.showToast('Staffing requirements saved.', 'success');
         });
@@ -428,6 +452,22 @@
         var dept = document.getElementById('scheduleDept').value;
         if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
         var shifts = collectShiftsFromDom();
+
+        // Validate shift definitions
+        if (shifts.length === 0) {
+          UI.showToast('Add at least one shift before saving.', 'warning'); return;
+        }
+        var shiftNames = shifts.map(function (s) { return s.name.toLowerCase(); });
+        var hasDuplicates = shiftNames.some(function (n, i) { return shiftNames.indexOf(n) !== i; });
+        if (hasDuplicates) {
+          UI.showToast('Shift names must be unique (case-insensitive).', 'warning'); return;
+        }
+        for (var i = 0; i < shifts.length; i++) {
+          if (shifts[i].paidHours <= 0 || shifts[i].paidHours > 24) {
+            UI.showToast('Shift "' + shifts[i].name + '": paid hours must be between 0.5 and 24.', 'warning'); return;
+          }
+        }
+
         UI.callServer('saveDeptSettings', [dept, { shifts }], function () {
           UI.showToast('Shift definitions saved.', 'success');
         });
@@ -722,6 +762,7 @@
 
     function _loadWeekIntoGrid(mondayDate) {
       var dept = _currentDept;
+      _sessionChangedCells = {}; // Clear session highlight on week change
       UI.callServer('getScheduleForWeek', [dept, mondayDate], function (data) {
         if (!data.weekGrid) {
           document.getElementById('scheduleGridInner').innerHTML =
@@ -749,7 +790,8 @@
 
     /**
      * Clears and repopulates the cross-dept hours cache for the given week.
-     * Only fires calls for employees who have secondary departments — skips everyone else.
+     * Uses batch endpoint to fetch all cross-dept hours in one server call.
+     * Only processes employees who have secondary departments.
      * Called once per week load (not on every render) to avoid redundant server round-trips.
      *
      * @param {string} mondayDate — "YYYY-MM-DD"
@@ -757,12 +799,23 @@
     function _populateCrossDeptCache_(mondayDate) {
       _crossDeptHoursCache = {};
       if (!mondayDate || !_employeeList) return;
+
+      // Collect IDs of employees with secondary departments
+      var hybridEmployeeIds = _employeeList
+        .filter(function (emp) {
+          return emp.secondaryDepartments && emp.secondaryDepartments.length > 0;
+        })
+        .map(function (emp) { return emp.employeeId; });
+
+      if (hybridEmployeeIds.length === 0) return; // No hybrid employees, skip
+
       var mondayString = String(mondayDate).split('T')[0];
-      _employeeList.forEach(function (emp) {
-        if (!emp.secondaryDepartments || emp.secondaryDepartments.length === 0) return;
-        UI.callServer('getCrossDeptHoursForWeek', [emp.employeeId, mondayString], function (data) {
-          if (data.totalHours > 0) _crossDeptHoursCache[emp.employeeId] = data;
-        });
+      UI.callServer('getCrossDeptHoursForWeekBatch', [hybridEmployeeIds, mondayString], function (data) {
+        if (data && typeof data === 'object') {
+          Object.keys(data).forEach(function (empId) {
+            if (data[empId].totalHours > 0) _crossDeptHoursCache[empId] = data[empId];
+          });
+        }
       });
     }
 
@@ -819,22 +872,24 @@
         var dayReq = _staffingRequirements[dayNames[di]] || {};
         var mode = dayReq.mode || 'Count';
         var target = dayReq.value || 0;
+        var coverageTotalHours = 0;
+        var coverageCount = 0;
+        var okClass = '';
+        var label = '';
 
         if (mode === 'Hours') {
           // Sum paidHours for all SHIFT cells in this day
-          var totalHours = 0;
           _weekGrid.forEach(function (row) {
-            if (row[di].type === 'SHIFT') totalHours += (row[di].paidHours || 0);
+            if (row[di].type === 'SHIFT') coverageTotalHours += (row[di].paidHours || 0);
           });
-          var label = totalHours.toFixed(1) + 'h';
-          var okClass = totalHours >= target ? '' : 'text-danger fw-semibold';
+          label = coverageTotalHours.toFixed(1) + 'h';
+          okClass = coverageTotalHours >= target ? '' : 'text-danger fw-semibold';
           html += '<td class="schedule-cell text-center"><small class="' + okClass + '">' + label + '</small></td>';
         } else {
           // Count mode (default)
-          var count = 0;
-          _weekGrid.forEach(function (row) { if (row[di].type === 'SHIFT') count++; });
-          var okClass = count >= target ? '' : 'text-danger fw-semibold';
-          html += '<td class="schedule-cell text-center"><small class="' + okClass + '">' + count + '</small></td>';
+          _weekGrid.forEach(function (row) { if (row[di].type === 'SHIFT') coverageCount++; });
+          okClass = coverageCount >= target ? '' : 'text-danger fw-semibold';
+          html += '<td class="schedule-cell text-center"><small class="' + okClass + '">' + coverageCount + '</small></td>';
         }
       }
       html += '<td></td></tr>';
@@ -842,18 +897,18 @@
       html += '</tbody></table>';
       container.innerHTML = html;
 
-      // Apply change highlighting if a cell was just changed
-      if (_lastChangedCell) {
-        var empId = _lastChangedCell.employeeId;
-        var dayIdx = _lastChangedCell.dayIndex;
+      // Apply persistent session change highlighting to all affected cells
+      Object.keys(_sessionChangedCells).forEach(function (key) {
+        var parts = key.split('_');
+        var empId = parts[0];
+        var dayIdx = parseInt(parts[1], 10);
         var cellElement = document.querySelector(
           'td[data-emp-id="' + esc(empId) + '"][data-day-index="' + dayIdx + '"]'
         );
         if (cellElement) {
           cellElement.classList.add('schedule-cell-changed');
         }
-        _lastChangedCell = null; // Clear after applying
-      }
+      });
     }
 
     function buildNameCellHtml(emp) {
@@ -1042,15 +1097,29 @@
 
       UI.callServer('updateCellOverride', args,
         function (data) {
+          // Capture old grid to detect all cells that changed (not just the clicked one)
+          var oldGrid = _weekGrid || [];
           _weekGrid = data.weekGrid;
           _employeeList = data.employeeList;
           _staffingRequirements = data.staffingRequirements || {};
 
-          // Track the changed cell for highlighting
-          _lastChangedCell = {
-            employeeId: _pendingOverride.employeeId,
-            dayIndex: _pendingOverride.dayIndex
-          };
+          // Mark all changed cells for persistent highlighting. Compare old vs. new.
+          for (var ei = 0; ei < _weekGrid.length; ei++) {
+            for (var di = 0; di < 7; di++) {
+              var newCell = _weekGrid[ei] && _weekGrid[ei][di];
+              var oldCell = oldGrid[ei] && oldGrid[ei][di];
+              // Detect cell content change: different type or different shift/role name
+              if (newCell && oldCell &&
+                  (newCell.type !== oldCell.type ||
+                   newCell.shiftName !== oldCell.shiftName ||
+                   newCell.role !== oldCell.role)) {
+                var empId = _employeeList[ei] ? _employeeList[ei].employeeId : null;
+                if (empId) {
+                  _sessionChangedCells[empId + '_' + di] = true;
+                }
+              }
+            }
+          }
 
           renderScheduleGrid();
           UI.showToast('Cell updated.', 'success');
@@ -1614,7 +1683,7 @@
               var cssClass = 'comet-code-dot attn-badge-' + code.toLowerCase();
               dot.className = cssClass;
               dot.textContent = code; // Display code text inside bubble
-              dot.title = code; // Tooltip on hover
+              dot.title = INFRACTION_CODE_LABELS[code] || OTHER_CODE_LABELS[code] || code; // show infraction code hint on hover
               codesContainer.appendChild(dot);
             });
 
@@ -1672,21 +1741,28 @@
         codeCounts[code] = (codeCounts[code] || 0) + 1;
       });
 
-      var infractionPicker = document.getElementById('infractionCodePicker');
-      var otherPicker = document.getElementById('otherCodePicker');
-      if (infractionPicker) {
-        infractionPicker.innerHTML = '';
-        // Tardy codes: use counters (can have multiple per day)
+      // Populate tardy codes (counters) in left column
+      var tardyPicker = document.getElementById('tardyCodePicker');
+      if (tardyPicker) {
+        tardyPicker.innerHTML = '';
         ['TD-1', 'TD-2', 'TD-3'].forEach(function (code) {
           var count = codeCounts[code] || 0;
-          infractionPicker.appendChild(makeCodeCounter_(code, INFRACTION_CODE_LABELS[code], count));
-        });
-        // Other infraction codes: use toggle buttons
-        ['NS', 'SE', 'MP', 'SZ'].forEach(function (code) {
-          var isActive = (codeCounts[code] || 0) > 0;
-          infractionPicker.appendChild(makeCodeToggle_(code, INFRACTION_CODE_LABELS[code], isActive));
+          tardyPicker.appendChild(makeCodeCounter_(code, INFRACTION_CODE_LABELS[code], count));
         });
       }
+
+      // Populate other infraction codes (toggles) in right column
+      var otherInfractionPicker = document.getElementById('otherInfractionCodePicker');
+      if (otherInfractionPicker) {
+        otherInfractionPicker.innerHTML = '';
+        ['NS', 'SE', 'MP', 'SZ'].forEach(function (code) {
+          var isActive = (codeCounts[code] || 0) > 0;
+          otherInfractionPicker.appendChild(makeCodeToggle_(code, INFRACTION_CODE_LABELS[code], isActive));
+        });
+      }
+
+      // Populate other codes (toggles) in separate section below
+      var otherPicker = document.getElementById('otherCodePicker');
       if (otherPicker) {
         otherPicker.innerHTML = '';
         Object.keys(OTHER_CODE_LABELS).forEach(function (code) {
@@ -1767,8 +1843,6 @@
       btn.textContent = code;
       btn.title = label;
       btn.className = 'btn btn-sm comet-code-toggle attn-badge-' + code.toLowerCase().replace(/\./g, '-');
-      btn.style.marginRight = '4px';
-      btn.style.marginBottom = '4px';
       if (isActive) btn.classList.add('active');
       btn.addEventListener('click', function (e) {
         e.preventDefault();
@@ -1778,21 +1852,20 @@
     }
 
     function clearCodeModal_() {
-      // Clear counters (set to 0)
-      document.querySelectorAll('#infractionCodePicker span[data-code], #otherCodePicker span[data-code]')
+      // Clear counters in tardy section (set to 0)
+      document.querySelectorAll('#tardyCodePicker span[data-code]')
         .forEach(function (span) { span.textContent = '0'; });
-      // Clear toggles (remove active class)
-      document.querySelectorAll('#infractionCodePicker .comet-code-toggle, #otherCodePicker .comet-code-toggle')
+      // Clear all toggles (remove active class)
+      document.querySelectorAll('#otherInfractionCodePicker .comet-code-toggle, #otherCodePicker .comet-code-toggle')
         .forEach(function (btn) { btn.classList.remove('active'); });
     }
 
     function saveCodeModal_() {
       try {
-        console.log('[Modal] saveCodeModal_ starting');
         var selected = [];
 
         // Read counts from tardy code counters (TD-1, TD-2, TD-3)
-        document.querySelectorAll('#infractionCodePicker span[data-code]')
+        document.querySelectorAll('#tardyCodePicker span[data-code]')
           .forEach(function (span) {
             var code = span.dataset.code;
             var count = parseInt(span.textContent) || 0;
@@ -1801,30 +1874,22 @@
             }
           });
 
-        // Read toggle states from all buttons (other codes)
-        document.querySelectorAll('.comet-code-toggle.active')
+        // Read toggle states from both infraction and other code buttons
+        document.querySelectorAll('#otherInfractionCodePicker .comet-code-toggle.active, #otherCodePicker .comet-code-toggle.active')
           .forEach(function (btn) {
             selected.push(btn.dataset.code);
           });
 
-        console.log('[Modal] selected codes:', selected);
         var isoDate = _codeModalDate;
-        console.log('[Modal] calling updateAttendanceCode for', currentEmployeeId, isoDate);
 
         UI.callServer('updateAttendanceCode', [currentEmployeeId, isoDate, selected], function (response) {
           try {
-            console.log('[Modal] updateAttendanceCode response:', response);
-            console.log('[Modal] response type:', typeof response, 'keys:', response ? Object.keys(response) : 'null');
             // Success if response.ok OR if response.updatedCodes exists (meaning data was returned)
             if ((response && response.ok) || (response && response.updatedCodes)) {
-              console.log('[Modal] save successful, invalidating cache');
               var cacheKey = currentEmployeeId + '_' + currentYear;
               delete calendarYearCache[cacheKey];
-              console.log('[Modal] calling loadCalendarForEmployee');
               loadCalendarForEmployee(currentEmployeeId, currentYear);
-              console.log('[Modal] closing modal');
               closeModal('attendanceCodeModal');
-              console.log('[Modal] modal closed - save complete');
             } else {
               var errMsg = '';
               if (!response) {
@@ -1837,16 +1902,16 @@
                 errMsg = 'unknown error (response: ' + JSON.stringify(response) + ')';
               }
               console.error('[Modal] Save failed:', errMsg);
-              UI.showToast('Save failed: ' + errMsg, 'danger');
+              UI.showToast('Save failed: ' + errMsg, 'error');
             }
           } catch (cbError) {
             console.error('[Modal] error in callback:', cbError);
-            UI.showToast('Error: ' + cbError.toString(), 'danger');
+            UI.showToast('Error: ' + cbError.toString(), 'error');
           }
         });
       } catch (error) {
         console.error('[Modal] error in saveCodeModal_:', error);
-        UI.showToast('Save error: ' + error.toString(), 'danger');
+        UI.showToast('Save error: ' + error.toString(), 'error');
       }
     }
 
@@ -1890,7 +1955,7 @@
       reqBody.innerHTML = (data.staffingReqs || []).map(function (req) {
         return `<tr>
           <td>${esc(req.day)}</td>
-          <td><input type="number" class="form-control form-control-sm staffing-count" value="${req.count || 0}" data-day="${esc(req.day)}" style="width:70px;"></td>
+          <td><input type="number" class="form-control form-control-sm staffing-count" value="${req.count || 0}" data-day="${esc(req.day)}" min="0" style="width:70px;"></td>
           <td><select class="form-select form-select-sm staffing-mode" data-day="${esc(req.day)}">
             <option value="Count"${req.mode === 'Count' ? ' selected' : ''}>Count</option>
             <option value="Hours"${req.mode === 'Hours' ? ' selected' : ''}>Hours</option>
@@ -2009,10 +2074,6 @@
     return roleMinimums;
   }
 
-  function collectDeptSettingsFromDom() {
-    return { staffingReqs: collectStaffingReqsFromDom(), shifts: collectShiftsFromDom() };
-  }
-
 
   // ------------------------------------------------------------
   // Admin Module
@@ -2022,9 +2083,13 @@
     var _allEmployees = [];
     var _renderedEmployees = []; // tracks what's currently in the table (may be filtered)
     var _currentDeptSettings = null;
+    var _employeeListLoaded = false; // Cache guard — only fetch once per session (invalidated by UKG import)
 
     function onShow() {
-      loadEmployeeList();
+      // Only load employee list on first visit; skip on subsequent tabs to avoid redundant 300-employee fetch
+      if (!_employeeListLoaded) {
+        loadEmployeeList();
+      }
 
       // UKG Import
       document.getElementById('btnImportUKG').onclick = handleImportUKG;
@@ -2071,6 +2136,7 @@
         renderEmployeeList(_allEmployees);
         Absences.setEmployees(_allEmployees);
         AttendanceCalendar.setEmployeeCache(_allEmployees);
+        _employeeListLoaded = true; // Cache is now populated
       });
     }
 
@@ -2145,7 +2211,19 @@
 
     function handleSaveEmployee() {
       var id = document.getElementById('editEmployeeId').value;
-      if (!id) return;
+      if (!id) {
+        UI.showToast('No employee selected.', 'error');
+        return;
+      }
+      var vacationDatesVal = document.getElementById('editVacationDates').value.trim();
+      if (vacationDatesVal) {
+        var datePattern = /^\d{4}-\d{2}-\d{2}(,\s*\d{4}-\d{2}-\d{2})*$/;
+        if (!datePattern.test(vacationDatesVal)) {
+          UI.showToast('Vacation dates must be in YYYY-MM-DD format, comma-separated (e.g., 2026-05-15, 2026-05-16).', 'warning');
+          return;
+        }
+      }
+
       var fields = {
         status: document.getElementById('editStatus').value,
         ftpt: document.getElementById('editFtpt').value,
@@ -2154,7 +2232,7 @@
         role: document.getElementById('editRole').value.trim(),
         preferredShift: document.getElementById('editPreferredShift').value.trim(),
         qualifiedShifts: document.getElementById('editQualifiedShifts').value.trim(),
-        vacationDates: document.getElementById('editVacationDates').value.trim(),
+        vacationDates: vacationDatesVal,
         secondaryDepartments: document.getElementById('editSecondaryDepartments').value.trim(),
       };
       UI.callServer('updateEmployeeScheduleFields', [id, fields], function () {
@@ -2170,6 +2248,11 @@
       var newStatus = emp.status === 'Active' ? 'Archived' : 'Active';
       if (newStatus === 'Archived') {
         if (!confirm('Archive ' + emp.name + '?\n\nThey will be excluded from scheduling and CN scans. This can be undone with Restore.\n\nTo set Leave of Absence instead, use the Edit modal.')) {
+          return;
+        }
+      } else if (newStatus === 'Active') {
+        // Confirm restore from archived
+        if (!confirm('Restore ' + emp.name + ' to Active status?')) {
           return;
         }
       }
@@ -2202,10 +2285,13 @@
             + ', Skipped: ' + data.skipped;
           document.getElementById('importResult').textContent = msg;
           UI.showToast(msg, 'success');
+          _employeeListLoaded = false; // Invalidate employee cache — new employees were imported
           loadEmployeeList();
-          // Refresh dept dropdowns — import may have introduced new departments
+          // Refresh dept dropdowns — import may have introduced new departments; invalidate cache
+          _cachedDepartments = null;
           UI.callServer('getDepartments', undefined, function (deptData) {
-            _populateAllDeptSelects(deptData.departments || []);
+            _cachedDepartments = deptData.departments || [];
+            _populateAllDeptSelects(_cachedDepartments);
           });
         });
       };
@@ -2261,12 +2347,6 @@
       AttendanceCalendar.openAttendanceCalendar(employeeId);
     }
 
-    // Datalist population moved to Absences.setEmployees()
-    function _buildAbsenceEmployeeDatalist(employees) {
-      // DEPRECATED: Use Absences.setEmployees() instead.
-      Absences.setEmployees(employees);
-    }
-
     // Holiday setup — apply H code to all employees for specified dates
     function appendHolidaysForYear(year) {
       var holidays = [
@@ -2282,7 +2362,7 @@
         if (response && response.ok) {
           UI.showToast('Holidays applied to ' + response.data.count + ' dates', 'success');
         } else {
-          UI.showToast('Failed to apply holidays: ' + ((response && response.error) || 'unknown error'), 'danger');
+          UI.showToast('Failed to apply holidays: ' + ((response && response.error) || 'unknown error'), 'error');
         }
       });
     }
@@ -2321,6 +2401,15 @@
   var _currentHeatmapConfig = null;
   var _heatmapCanvasStates = {};  // { dayName: { isDragging: bool } }
   var _dayNamesInOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  var _heatmapResizeListenerAdded = false;
+
+  // Canvas padding for heatmap traffic curve visualization
+  var HEATMAP_CANVAS_PADDING = {
+    left: 38,
+    top: 8,
+    bottom: 28,
+    right: 8
+  };
 
   // Default 24-element traffic curves (hours 0-23). Values represent expected door count.
   // Pattern: slow ramp from 4 AM, peak mid-morning, taper in late afternoon.
@@ -2444,13 +2533,16 @@
       });
     });
 
-    // Responsive resize
-    window.addEventListener('resize', function () {
-      _dayNamesInOrder.forEach(function (day) {
-        var canvas = document.getElementById('heatmap_canvas_' + day);
-        if (canvas) { resizeCanvas(canvas); redrawHeatmapCanvas(canvas, day); }
+    // Responsive resize — add listener only once
+    if (!_heatmapResizeListenerAdded) {
+      window.addEventListener('resize', function () {
+        _dayNamesInOrder.forEach(function (day) {
+          var canvas = document.getElementById('heatmap_canvas_' + day);
+          if (canvas) { resizeCanvas(canvas); redrawHeatmapCanvas(canvas, day); }
+        });
       });
-    });
+      _heatmapResizeListenerAdded = true;
+    }
   }
 
   function resizeCanvas(canvas) {
@@ -2471,10 +2563,10 @@
     var mouseX = event.clientX - rect.left;
     var mouseY = event.clientY - rect.top;
 
-    var leftPadding = 38;
-    var topPadding = 8;
-    var bottomPadding = 28;
-    var rightPadding = 8;
+    var leftPadding = HEATMAP_CANVAS_PADDING.left;
+    var topPadding = HEATMAP_CANVAS_PADDING.top;
+    var bottomPadding = HEATMAP_CANVAS_PADDING.bottom;
+    var rightPadding = HEATMAP_CANVAS_PADDING.right;
 
     // Compute using CSS pixels (canvas is scaled by DPR but getBoundingClientRect returns CSS pixels)
     var cssWidth = rect.width;
@@ -2548,10 +2640,10 @@
     var highThreshold = (_currentHeatmapConfig.thresholds && _currentHeatmapConfig.thresholds.high) || 300;
     var maxDoorCount = getHeatmapMaxDoorCount_();
 
-    var leftPadding = 38;
-    var topPadding = 8;
-    var bottomPadding = 28;
-    var rightPadding = 8;
+    var leftPadding = HEATMAP_CANVAS_PADDING.left;
+    var topPadding = HEATMAP_CANVAS_PADDING.top;
+    var bottomPadding = HEATMAP_CANVAS_PADDING.bottom;
+    var rightPadding = HEATMAP_CANVAS_PADDING.right;
     var graphWidth = cssWidth - leftPadding - rightPadding;
     var graphHeight = cssHeight - bottomPadding - topPadding;
     var pointSpacing = graphWidth / 24;
@@ -2724,6 +2816,7 @@
   function computeDayTrafficLevel_(curve, lowThreshold, highThreshold) {
     var lowCount = 0, moderateCount = 0, highCount = 0;
     curve.forEach(function (v) {
+      if (v === 0) return; // Skip zero-traffic hours (closed periods like before 9am, after 8pm)
       if (v >= highThreshold) highCount++;
       else if (v >= lowThreshold) moderateCount++;
       else lowCount++;
@@ -2760,8 +2853,10 @@
     // window.location.reload() drops the GAS auth token and returns a blank page,
     // so instead we re-initialize all data in place.
     document.getElementById('btnRefresh').addEventListener('click', function () {
+      _cachedDepartments = null; // Clear cache so next visit refetches
       UI.callServer('getDepartments', undefined, function (data) {
-        _populateAllDeptSelects(data.departments || []);
+        _cachedDepartments = data.departments || [];
+        _populateAllDeptSelects(_cachedDepartments);
       });
       AttendanceCalendar.loadActiveCNs();
       if (typeof Admin !== 'undefined') Admin.loadEmployeeList();
@@ -2770,7 +2865,8 @@
 
     // Load departments on startup so dropdowns are populated immediately
     UI.callServer('getDepartments', undefined, function (data) {
-      _populateAllDeptSelects(data.departments || []);
+      _cachedDepartments = data.departments || [];
+      _populateAllDeptSelects(_cachedDepartments);
     });
 
     // Load CNs on startup so badge data is ready before the user visits Schedule

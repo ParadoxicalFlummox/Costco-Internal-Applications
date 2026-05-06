@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
-
+<!-- index.html — COMET UI
+     VERSION: 0.5.16
+-->
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -88,8 +90,8 @@
             </button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-engine-options-btn" data-bs-toggle="tab" data-bs-target="#tab-engine-options"
-              type="button" role="tab">
+            <button class="nav-link" id="tab-engine-options-btn" data-bs-toggle="tab"
+              data-bs-target="#tab-engine-options" type="button" role="tab">
               Engine Options
             </button>
           </li>
@@ -113,7 +115,8 @@
               <div class="col-auto">
                 <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
                 <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
-                <button id="btnAddHybridStaff" class="btn btn-outline-primary btn-sm ms-1" style="display:none;">+ Add Hybrid Staff</button>
+                <button id="btnAddHybridStaff" class="btn btn-outline-primary btn-sm ms-1" style="display:none;">+ Add
+                  Hybrid Staff</button>
               </div>
             </div>
             <div id="scheduleTableContainer" class="comet-table-container">
@@ -180,14 +183,14 @@
               <div class="mb-3 d-flex gap-3 align-items-end flex-wrap">
                 <div>
                   <label class="form-label small mb-1" for="heatmapLowThreshold">Low Threshold</label>
-                  <div class="input-group input-group-sm" style="width:130px;">
+                  <div class="input-group input-group-sm" style="width:165px;">
                     <input type="number" id="heatmapLowThreshold" class="form-control" min="0" value="100">
                     <span class="input-group-text small">Door Count</span>
                   </div>
                 </div>
                 <div>
                   <label class="form-label small mb-1" for="heatmapHighThreshold">High Threshold</label>
-                  <div class="input-group input-group-sm" style="width:130px;">
+                  <div class="input-group input-group-sm" style="width:165px;">
                     <input type="number" id="heatmapHighThreshold" class="form-control" min="0" value="300">
                     <span class="input-group-text small">Door Count</span>
                   </div>
@@ -241,21 +244,24 @@
               <label class="form-check-label small fw-semibold" for="engineEnforceRoleMin">
                 Enforce Role Minimums
               </label>
-              <div class="text-muted small">When enabled, Phase 4 ensures each role meets its configured minimum headcount per traffic level.</div>
+              <div class="text-muted small">When enabled, Phase 4 ensures each role meets its configured minimum
+                headcount per traffic level.</div>
             </div>
             <div class="form-check form-switch mb-3">
               <input class="form-check-input" type="checkbox" id="engineGapFillEnabled" checked>
               <label class="form-check-label small fw-semibold" for="engineGapFillEnabled">
                 Enable Gap Fill (Phase 2)
               </label>
-              <div class="text-muted small">When disabled, Phase 2 is skipped entirely and only preference assignments from Phase 1 are used.</div>
+              <div class="text-muted small">When disabled, Phase 2 is skipped entirely and only preference assignments
+                from Phase 1 are used.</div>
             </div>
             <button id="btnSaveEngineOptions" class="btn btn-primary btn-sm">Save Engine Options</button>
           </div>
 
           <!-- Tab 6: Role Minimums -->
           <div class="tab-pane fade" id="tab-role-minimums" role="tabpanel">
-            <p class="small text-muted mb-2">Set the minimum number of employees per role for each traffic level. When Traffic Heatmap is disabled, the Moderate column is used as a static daily minimum.</p>
+            <p class="small text-muted mb-2">Set the minimum number of employees per role for each traffic level. When
+              Traffic Heatmap is disabled, the Moderate column is used as a static daily minimum.</p>
             <table class="table table-sm mb-2" id="roleMinimumsTable">
               <thead>
                 <tr>
@@ -363,7 +369,8 @@
 
           <div class="alert alert-info small py-2 mb-3" role="alert">
             <strong>Note:</strong> CN scans read employee attendance data from their individual tabs.
-            Run "Generate Tabs" in Admin first if new employees were added. Active CNs from previous scans are always shown below.
+            Run "Generate Tabs" in Admin first if new employees were added. Active CNs from previous scans are always
+            shown below.
           </div>
 
           <div class="comet-table-container">
@@ -791,10 +798,27 @@
           <button type="button" class="btn-close" data-modal="attendanceCodeModal"></button>
         </div>
         <div class="modal-body">
-          <div class="mb-1 fw-semibold" style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Infraction</div>
-          <div class="d-flex flex-wrap gap-2 mb-3" id="infractionCodePicker"></div>
-          <div class="mb-1 fw-semibold" style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Other</div>
-          <div class="d-flex flex-wrap gap-2" id="otherCodePicker"></div>
+          <!-- Infraction codes: two columns (Tardies | Other Infractions) -->
+          <div class="mb-3 pb-2 border-bottom">
+            <div class="fw-semibold mb-2"
+              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Infraction Codes</div>
+            <div class="row g-2">
+              <div class="col-6">
+                <div class="fw-semibold small mb-2">Tardies</div>
+                <div class="d-flex flex-column gap-2" id="tardyCodePicker"></div>
+              </div>
+              <div class="col-6">
+                <div class="fw-semibold small mb-2">Other</div>
+                <div class="d-flex flex-wrap gap-2" id="otherInfractionCodePicker"></div>
+              </div>
+            </div>
+          </div>
+          <!-- Other codes section -->
+          <div>
+            <div class="fw-semibold mb-2"
+              style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Other Codes</div>
+            <div class="d-flex flex-wrap gap-2" id="otherCodePicker"></div>
+          </div>
         </div>
         <div class="modal-footer py-2 justify-content-between">
           <button type="button" class="btn btn-outline-secondary btn-sm" id="btnClearAttendanceCodes">Clear All</button>
@@ -807,13 +831,63 @@
     </div>
   </div>
 
+  <!-- Version/Credits Display Modal -->
+  <div id="versionModal" class="modal" tabindex="-1" style="display:none;">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content text-center" style="border:2px solid #4f46e5; animation: slideUp 0.6s ease-out;">
+        <div class="modal-body p-5">
+          <div style="font-size:2.5rem;margin-bottom:1.5rem; animation: fadeInScale 1.5s ease-out; cursor: crosshair;">COMET</div>
+          <p class="text-muted mb-3 small"><strong>Version</strong> 0.7.3</p>
+          <hr style="margin:1rem 0; opacity:0.2;">
+          <p class="small mb-2"><strong>Built by</strong> Adam Roy</p>
+          <p class="small mb-2"><strong>Year</strong> 2026</p>
+          <p class="small" style="font-style:italic; color:#666;">Unified warehouse management system for Costco
+            warehouse #1119 and #634</p>
+          <p class="small" style="font-style: italic; color: #666;">Source -
+            https://github.com/ParadoxicalFlummox/Costco-Internal-Applications</p>
+          <hr style="margin:1rem 0; opacity:0.2;">
+          <p class="small"><strong>Questions or issues?</strong><br>
+            <a href="mailto:adamr814@protonmail.com" class="text-decoration-none">adamr814@protonmail.com</a></p>
+        </div>
+        <div class="modal-footer justify-content-center border-0 pb-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-modal="versionModal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes slideUp {
+      from {
+        transform: translateY(30px);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes fadeInScale {
+      from {
+        opacity: 0;
+        transform: scale(0.8);
+      }
+
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+  </style>
+
   <!-- Modal backdrop (shared, toggled by openModal/closeModal) -->
   <div id="modalBackdrop" class="modal-backdrop fade" style="display:none;"></div>
 
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
-          integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmT5J0HiITui/r8bQRubh/hB5K3"
-          crossorigin="anonymous"></script>
+    integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmT5J0HiITui/r8bQRubh/hB5K3" crossorigin="anonymous"></script>
   <?!= include('javascript') ?>
 </body>
 

@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.12
+ * VERSION: 0.5.14
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -299,6 +299,90 @@ function getCrossDeptHoursForWeek(employeeId, mondayDate) {
 }
 
 /**
+ * Batch version of getCrossDeptHoursForWeek — returns cross-dept hours for multiple employees in one call.
+ * More efficient than making individual calls in parallel.
+ *
+ * @param {Array<string>} employeeIds — Array of employee IDs
+ * @param {string} mondayDate — "YYYY-MM-DD"
+ * @returns {{ ok: boolean, data?: { [employeeId]: { totalHours: number, assignments: Array } }, error?: string }}
+ */
+function getCrossDeptHoursForWeekBatch(employeeIds, mondayDate) {
+  try {
+    if (!employeeIds || !Array.isArray(employeeIds) || !mondayDate) {
+      throw new Error('employeeIds (array) and mondayDate are required.');
+    }
+
+    const weekStartDate = new Date(mondayDate + 'T00:00:00');
+    const employees = getActiveEmployees_(); // ukgImport.js
+    const employeeMap = {};
+    employees.forEach(function(e) {
+      employeeMap[String(e.id)] = e;
+    });
+
+    // Build the week sheet name prefix
+    const month = String(weekStartDate.getMonth() + 1).padStart(2, '0');
+    const day = String(weekStartDate.getDate()).padStart(2, '0');
+    const year = String(weekStartDate.getFullYear()).slice(-2);
+    const weekBaseName = 'Week_' + month + '_' + day + '_' + year;
+
+    // Scan all week sheets once
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const sheetNames = workbook.getSheets().map(function(s) { return s.getName(); });
+    const result = {};
+
+    employeeIds.forEach(function(eId) {
+      result[String(eId)] = { totalHours: 0, assignments: [] };
+    });
+
+    sheetNames.forEach(function(sheetName) {
+      if (!sheetName.startsWith(weekBaseName + '_')) return;
+
+      const prefix = weekBaseName + '_';
+      const deptName = sheetName.substring(prefix.length);
+      const sheet = workbook.getSheetByName(sheetName);
+      if (!sheet) return;
+
+      const data = sheet.getDataRange().getValues();
+      if (!data || data.length < WEEK_SHEET.DATA_START_ROW) return;
+
+      // Find all requested employees in this dept
+      for (let rowIndex = WEEK_SHEET.DATA_START_ROW - 1; rowIndex < data.length; rowIndex++) {
+        const row = data[rowIndex];
+        const rowLabel = row[WEEK_SHEET.COL_ROW_LABEL - 1];
+        if (rowLabel !== 'SHIFT') continue;
+
+        const empName = row[WEEK_SHEET.COL_EMPLOYEE_NAME - 1];
+        if (!empName) continue;
+
+        const empNameTrimmed = empName.toString().trim();
+        const matchedId = employeeIds.find(function(eId) {
+          const emp = employeeMap[String(eId)];
+          return emp && emp.name.toString().trim() === empNameTrimmed;
+        });
+
+        if (!matchedId) continue;
+
+        const totalHoursCell = row[WEEK_SHEET.COL_TOTAL_HOURS - 1];
+        let hoursInDept = 0;
+        if (totalHoursCell && !isNaN(parseFloat(totalHoursCell))) {
+          hoursInDept = parseFloat(totalHoursCell);
+        }
+
+        if (hoursInDept > 0) {
+          result[String(matchedId)].assignments.push({ deptName: deptName, hoursAssigned: hoursInDept });
+          result[String(matchedId)].totalHours += hoursInDept;
+        }
+      }
+    });
+
+    return { ok: true, data: result };
+  } catch (error) {
+    console.error('api: getCrossDeptHoursForWeekBatch failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
  * Returns the shift definitions and staffing requirements for a department.
  *
  * @param {string} deptName
@@ -519,7 +603,9 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
         resolvedShiftName = null;
       } else {
         const employee = employeeList[employeeIndex];
-        const shiftKey = shiftName + '|' + employee.status;
+        // Normalize shift name to lowercase for consistent lookup
+        const normalizedShiftName = shiftName.toLowerCase().trim();
+        const shiftKey = normalizedShiftName + '|' + employee.status;
         const shiftTimingMap = buildShiftTimingMap(deptName); // settingsManager.js
         const shiftDef = shiftTimingMap[shiftKey];
 
@@ -865,6 +951,8 @@ function importFromUKG(rows) {
   try {
     return withDocumentLock_(10000, function() {
       const result = importEmployeesFromUkg_(rows); // ukgImport.js
+      // Calculate and write seniority ranks for all employees
+      calculateAndWriteSeniorityRanks_(); // scheduleEngine.js
       return { ok: true, data: result };
     });
   } catch (error) {
