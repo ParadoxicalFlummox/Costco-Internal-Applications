@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <!-- index.html — COMET UI
-     VERSION: 0.5.16
+     VERSION: 0.5.18
 -->
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -84,6 +85,12 @@
             </button>
           </li>
           <li class="nav-item" role="presentation">
+            <button class="nav-link" id="tab-roles-btn" data-bs-toggle="tab" data-bs-target="#tab-roles" type="button"
+              role="tab">
+              Roles
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
             <button class="nav-link" id="tab-supervisor-btn" data-bs-toggle="tab" data-bs-target="#tab-supervisor"
               type="button" role="tab">
               Traffic Heatmap
@@ -93,12 +100,6 @@
             <button class="nav-link" id="tab-engine-options-btn" data-bs-toggle="tab"
               data-bs-target="#tab-engine-options" type="button" role="tab">
               Engine Options
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-role-minimums-btn" data-bs-toggle="tab" data-bs-target="#tab-role-minimums"
-              type="button" role="tab">
-              Role Minimums
             </button>
           </li>
         </ul>
@@ -124,20 +125,13 @@
             </div>
           </div>
 
-          <!-- Tab 2: Staffing Requirements -->
+          <!-- Tab 2: Staffing Requirements (managed via pre-generation modal) -->
           <div class="tab-pane fade" id="tab-staffing-req" role="tabpanel">
-            <p class="small text-muted mb-2">Set daily staffing targets for this department.</p>
-            <table class="table table-sm mb-2" id="staffingReqsTable">
-              <thead>
-                <tr>
-                  <th>Day</th>
-                  <th>Count</th>
-                  <th>Mode</th>
-                </tr>
-              </thead>
-              <tbody id="staffingReqsBody"></tbody>
-            </table>
-            <button id="btnSaveStaffingReqs" class="btn btn-primary btn-sm">Save Staffing Requirements</button>
+            <div class="alert alert-info small mb-0" role="alert">
+              <strong>📋 Staffing Requirements</strong> are configured when generating a schedule. Click the
+              <strong>Generate</strong> button in the Schedule Generator tab to adjust staffing targets for each day
+              before running the algorithm.
+            </div>
           </div>
 
           <!-- Tab 3: Shift Definitions -->
@@ -166,7 +160,95 @@
             <button id="btnSaveShiftDefs" class="btn btn-primary btn-sm">Save Shift Definitions</button>
           </div>
 
-          <!-- Tab 4: Traffic Heatmap -->
+          <!-- Tab 4: Roles -->
+          <div class="tab-pane fade" id="tab-roles" role="tabpanel">
+            <!-- Section 1: Define Roles -->
+            <div class="mb-4">
+              <h6 class="fw-semibold mb-2">Define Roles</h6>
+              <p class="small text-muted mb-2">Create roles and mark which are pool-eligible.</p>
+              <table class="table table-sm mb-2" id="roleDefsTable">
+                <thead>
+                  <tr>
+                    <th>Role Name</th>
+                    <th style="width: 100px;">Pool Role</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="roleDefsBody"></tbody>
+              </table>
+              <button id="btnAddRoleDef" class="btn btn-outline-secondary btn-sm mb-2">+ Add Role</button>
+              <br>
+              <button id="btnSaveRoleDefs" class="btn btn-primary btn-sm mb-3">Save Role Definitions</button>
+            </div>
+
+            <!-- Section 2: Assign Employee Roles -->
+            <div class="mb-4">
+              <h6 class="fw-semibold mb-2">Assign Employee Roles</h6>
+              <p class="small text-muted mb-2">Assign roles to employees in this department.</p>
+              <div id="employeeRolesContainer" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;">
+                <table class="table table-sm mb-0" id="employeeRolesTable" style="min-width: 0;">
+                  <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
+                    <tr>
+                      <th style="width: 60%;">Employee Name</th>
+                      <th style="width: 40%;">Current Role</th>
+                    </tr>
+                  </thead>
+                  <tbody id="employeeRolesBody">
+                    <tr>
+                      <td colspan="2" class="text-muted small text-center py-3">Select a department to load employees
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <button id="btnSaveEmployeeRoles" class="btn btn-primary btn-sm mt-2">Save Employee Roles</button>
+            </div>
+
+            <!-- Section 3: Role Minimums with Pool Integration -->
+            <div>
+              <h6 class="fw-semibold mb-2">Role Minimums with Pool Integration</h6>
+              <p class="small text-muted mb-2">Set minimum headcount per role and traffic level. Pool system will add
+                above-base staff as needed.</p>
+              <table class="table table-sm mb-2" id="roleMinimumsCoverageTable">
+                <thead>
+                  <tr>
+                    <th>Role Name</th>
+                    <th>Base (Moderate)</th>
+                    <th>Low Traffic</th>
+                    <th>High Traffic</th>
+                    <th class="text-muted small">Pool Adds on High</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="roleMinimumsCoverageBody"></tbody>
+              </table>
+              <button id="btnAddRoleMinimumCoverage" class="btn btn-outline-secondary btn-sm mb-2">+ Add Role</button>
+              <br>
+              <button id="btnSaveRoleMinimumsCoverage" class="btn btn-primary btn-sm">Save Role Coverage</button>
+            </div>
+
+            <!-- Pool Seniority Threshold -->
+            <div class="mt-4 pt-3 border-top">
+              <h6 class="fw-semibold mb-2">Pool Member Seniority Threshold</h6>
+              <p class="small text-muted mb-2">Employees with less seniority than this threshold are eligible for the
+                pool.</p>
+              <div class="d-flex gap-3 align-items-center flex-wrap">
+                <div style="flex: 1; min-width: 200px;">
+                  <label class="form-label small mb-1" for="poolSeniorityYearsSlider">Years Since Hire</label>
+                  <input type="range" id="poolSeniorityYearsSlider" class="form-range" min="0" max="40" value="0"
+                    step="1">
+                </div>
+                <div style="min-width: 120px;">
+                  <span id="poolSeniorityYearsDisplay" class="small fw-semibold">All employees (0 years)</span>
+                </div>
+              </div>
+              <small class="text-muted d-block mt-1">Employees with &lt; this many years of service are
+                pool-eligible</small>
+              <button id="btnSavePoolConfig" class="btn btn-primary btn-sm mt-3">Save Pool Configuration</button>
+            </div>
+          </div>
+
+          <!-- Tab 5: Traffic Heatmap -->
           <div class="tab-pane fade" id="tab-supervisor" role="tabpanel">
             <p class="small text-muted mb-2">Define expected member traffic patterns to drive dynamic headcount and
               shift stagger.</p>
@@ -236,7 +318,7 @@
             </div>
           </div>
 
-          <!-- Tab 5: Engine Options -->
+          <!-- Tab 6: Engine Options -->
           <div class="tab-pane fade" id="tab-engine-options" role="tabpanel">
             <p class="small text-muted mb-3">Control which scheduling phases are active for this department.</p>
             <div class="form-check form-switch mb-2">
@@ -258,27 +340,7 @@
             <button id="btnSaveEngineOptions" class="btn btn-primary btn-sm">Save Engine Options</button>
           </div>
 
-          <!-- Tab 6: Role Minimums -->
-          <div class="tab-pane fade" id="tab-role-minimums" role="tabpanel">
-            <p class="small text-muted mb-2">Set the minimum number of employees per role for each traffic level. When
-              Traffic Heatmap is disabled, the Moderate column is used as a static daily minimum.</p>
-            <table class="table table-sm mb-2" id="roleMinimumsTable">
-              <thead>
-                <tr>
-                  <th>Role Name</th>
-                  <th>Low</th>
-                  <th>Moderate</th>
-                  <th>High</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="roleMinimumsBody"></tbody>
-            </table>
-            <button id="btnAddRoleMinimum" class="btn btn-outline-secondary btn-sm mb-2">+ Add Role</button>
-            <br>
-            <button id="btnSaveRoleMinimums" class="btn btn-primary btn-sm">Save Role Minimums</button>
-          </div>
-
+          <!-- Tab 7: Role Minimums -->
         </div>
       </div>
     </div>
@@ -801,7 +863,8 @@
           <!-- Infraction codes: two columns (Tardies | Other Infractions) -->
           <div class="mb-3 pb-2 border-bottom">
             <div class="fw-semibold mb-2"
-              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Infraction Codes</div>
+              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Infraction Codes
+            </div>
             <div class="row g-2">
               <div class="col-6">
                 <div class="fw-semibold small mb-2">Tardies</div>
@@ -816,7 +879,8 @@
           <!-- Other codes section -->
           <div>
             <div class="fw-semibold mb-2"
-              style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Other Codes</div>
+              style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Other Codes
+            </div>
             <div class="d-flex flex-wrap gap-2" id="otherCodePicker"></div>
           </div>
         </div>
@@ -836,18 +900,20 @@
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content text-center" style="border:2px solid #4f46e5; animation: slideUp 0.6s ease-out;">
         <div class="modal-body p-5">
-          <div style="font-size:2.5rem;margin-bottom:1.5rem; animation: fadeInScale 1.5s ease-out; cursor: crosshair;">COMET</div>
-          <p class="text-muted mb-3 small"><strong>Version</strong> 0.7.3</p>
+          <div style="font-size:2.5rem;margin-bottom:1.5rem; animation: fadeInScale 1.5s ease-out; cursor: crosshair;">
+            COMET</div>
+          <p class="text-muted mb-3 small"><strong>Version</strong> 0.9.x</p>
           <hr style="margin:1rem 0; opacity:0.2;">
           <p class="small mb-2"><strong>Built by</strong> Adam Roy</p>
           <p class="small mb-2"><strong>Year</strong> 2026</p>
-          <p class="small" style="font-style:italic; color:#666;">Unified warehouse management system for Costco
-            warehouse #1119 and #634</p>
+          <p class="small" style="font-style:italic; color:#666;">Costco Operations, Management and Employee Tracker:
+            built to help my friends at warehouse 1119 and 634</p>
           <p class="small" style="font-style: italic; color: #666;">Source -
             https://github.com/ParadoxicalFlummox/Costco-Internal-Applications</p>
           <hr style="margin:1rem 0; opacity:0.2;">
-          <p class="small"><strong>Questions or issues?</strong><br>
-            <a href="mailto:adamr814@protonmail.com" class="text-decoration-none">adamr814@protonmail.com</a></p>
+          <p class="small"><strong>Questions or issues? Let me know</strong><br>
+            <a href="mailto:adamr814@protonmail.com" class="text-decoration-none">adamr814@protonmail.com</a>
+          </p>
         </div>
         <div class="modal-footer justify-content-center border-0 pb-3">
           <button type="button" class="btn btn-sm btn-outline-secondary" data-modal="versionModal">Close</button>

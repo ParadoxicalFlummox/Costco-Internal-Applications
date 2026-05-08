@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Builds shift timing maps and staffing requirements for the schedule engine.
- * VERSION: 0.5.2
+ * VERSION: 0.5.3
  *
  * In the original autoScheduleGenerator this file read directly from a Settings sheet.
  * In COMET, settings are owned by scheduleSettings.js and stored in Settings_[Dept] sheets.
@@ -228,7 +228,7 @@ function saveTrafficHeatmapConfig_(deptName, heatmapConfig) {
     enabled: heatmapConfig.enabled || false,
     thresholds: heatmapConfig.thresholds || HEATMAP_DEFAULTS.thresholds, // config.js
     trafficCurves: heatmapConfig.trafficCurves || HEATMAP_DEFAULTS.defaultTrafficCurves,
-    pool: heatmapConfig.pool || { tier1EmployeeIds: [], tier2EmployeeIds: [], requiredRoles: [], schedulingCounts: HEATMAP_DEFAULTS.poolSchedulingCounts },
+    pool: heatmapConfig.pool || HEATMAP_DEFAULTS.pool,
     weeklyOverrides: heatmapConfig.weeklyOverrides || {},
     lastUpdated: new Date().toISOString(),
   });

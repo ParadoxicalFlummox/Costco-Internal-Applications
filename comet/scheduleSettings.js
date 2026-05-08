@@ -1,38 +1,36 @@
 /**
- * scheduleSettings.js — Per-department schedule settings read/write for COMET.
- * VERSION: 0.6.0
+ * scheduleSettings.js — Department settings read/write for COMET.
+ * VERSION: 0.9.0
  *
- * Each department has its own Settings sheet tab named "Settings_[DeptName]"
- * (e.g., "Settings_Maintenance"). This file owns all reads and writes to those sheets.
+ * STORAGE ARCHITECTURE:
+ *   All department settings are stored in a single consolidated "Settings" sheet.
+ *   Each row maps a department name (key) to its complete settings JSON (value).
  *
- * SHEET LAYOUT (Settings_[Dept]):
- *   A1:D1   — Section header row (Day | Count | Mode | spacer)
- *   A2:C8   — Staffing requirements: Day | Count | Mode ("Count" or "Hours")
- *   A10:B10 — ENGINE OPTIONS section header (merged)
- *   A11:B12 — Engine option rows: Label | TRUE/FALSE
- *               Row 11: Enforce Role Minimums
- *               Row 12: Enable Gap Fill
- *   A14:D14 — ROLE MINIMUMS section header (merged)
- *   A15:D15 — Column labels: Role | Low | Moderate | High
- *   A16:D*  — Role minimum rows: one per role
- *   E1:N1   — Shift definitions header
- *   E2:N50  — Shift definitions:
- *             E: Name | F: FT/PT | G: WkdyStart | H: SatStart | I: SunStart |
- *             J: PaidHours | K: HasLunch | L: FlexEnabled | M: FlexWindowEarliest | N: FlexWindowLatest
+ * SHEET LAYOUT (Settings sheet):
+ *   A1      — "DEPARTMENT" (header)
+ *   B1      — "SETTINGS_JSON" (header) + warning to not modify this column
+ *   A2+     — Department names (e.g., "Maintenance", "Cashiers", "Receiving")
+ *   B2+     — Complete settings JSON for that department
  *
- * RETURN SHAPES:
- *   getDeptSettings_() returns:
+ * JSON SCHEMA (value in B2, B3, etc.):
  *   {
- *     staffingReqs:  [{ day, count, mode }],        // 7 entries, Mon–Sun
- *     shifts:        [{ name, ftpt, weekdayStart, satStart, sunStart, paidHours, hasLunch,
- *                       flexEnabled, flexWindowEarliest, flexWindowLatest }],
- *     engineOptions: { enforceRoleMinimums: bool, gapFillEnabled: bool },
- *     roleMinimums:  { RoleName: { Low: n, Moderate: n, High: n }, ... },
+ *     staffingReqs:  [{ day: string, count: number, mode: string }, ...],     // 7 entries
+ *     shifts:        [{ name: string, ftpt: string, weekdayStart: string,      // unlimited rows
+ *                       satStart?: string, sunStart?: string, paidHours: number,
+ *                       hasLunch: boolean, flexEnabled: boolean,
+ *                       flexWindowEarliest?: string, flexWindowLatest?: string }, ...],
+ *     engineOptions: { enforceRoleMinimums: boolean, gapFillEnabled: boolean },
+ *     roleMinimums:  { [roleName: string]: { Low: number, Moderate: number, High: number } },
+ *     roles:         [{ name: string, isPoolRole: boolean }, ...],             // unlimited
+ *     employeeRoles: { [employeeId: string]: string },                        // maps emp ID to role
  *   }
  *
- *   Time values in the shifts array are stored as "HH:MM" strings (24-hour)
- *   for safe serialization over google.script.run. The engine's settingsManager.js
- *   converts them back to minutes-since-midnight via getStartMinutesForDay_().
+ * BENEFITS:
+ *   - Single sheet, easy to back up and manage
+ *   - Unlimited scalability (100+ departments, 100+ shifts per dept, etc.)
+ *   - Clear key-value structure
+ *   - No row/column conflicts
+ *   - Time values in shifts are "HH:MM" strings (24-hour format)
  */
 
 
@@ -41,48 +39,66 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the settings for a single department.
+ * Returns the settings for a single department from the consolidated Settings sheet.
  * Creates the Settings sheet with defaults if it doesn't exist yet.
  *
  * @param {string} deptName
- * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object }}
+ * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object, roles: Array, employeeRoles: object }}
  */
 function getDeptSettings_(deptName) {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = getOrCreateDeptSettingsSheet_(workbook, deptName);
-  return readDeptSettingsFromSheet_(sheet);
+  const sheet = getOrCreateSettingsSheet_(workbook);
+  return readDeptSettingsFromSheet_(sheet, deptName);
 }
 
 /**
- * Writes shift definitions, staffing requirements, engine options, and role minimums
- * for a department back to its Settings sheet.
+ * Writes all settings for a department to the consolidated Settings sheet.
+ * Supports partial updates — omitted fields are preserved from the existing settings.
  *
  * @param {string} deptName
  * @param {{
- *   staffingReqs:  Array<{ day: string, count: number, mode: string }>,
- *   shifts:        Array<{ name: string, ftpt: string, weekdayStart: string,
- *                           paidHours: number, hasLunch: boolean }>,
- *   engineOptions: { enforceRoleMinimums: boolean, gapFillEnabled: boolean },
- *   roleMinimums:  { [roleName: string]: { Low: number, Moderate: number, High: number } },
- * }} data
+ *   staffingReqs?: Array<{ day: string, count: number, mode: string }>,
+ *   shifts?: Array<{ name: string, ftpt: string, weekdayStart: string, ... }>,
+ *   engineOptions?: { enforceRoleMinimums: boolean, gapFillEnabled: boolean },
+ *   roleMinimums?: { [roleName: string]: { Low: number, Moderate: number, High: number } },
+ *   roles?: Array<{ name: string, isPoolRole: boolean }>,
+ *   employeeRoles?: { [employeeId: string]: string },
+ * }} data (partial or complete)
  * @returns {{ saved: boolean }}
  */
 function saveDeptSettings_(deptName, data) {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = getOrCreateDeptSettingsSheet_(workbook, deptName);
+  const sheet = getOrCreateSettingsSheet_(workbook);
 
-  writeStaffingRequirements_(sheet, data.staffingReqs || []);
-  // Only touch shift definitions when the caller explicitly provides them.
-  // Omitting shifts (e.g. from the pre-gen modal) must NOT clear the shift table.
+  // Read the current full settings object for this department
+  let fullSettings = readDeptSettingsFromSheet_(sheet, deptName);
+
+  // Merge in the new data (partial updates supported)
+  if (data.staffingReqs !== undefined && data.staffingReqs !== null) {
+    fullSettings.staffingReqs = data.staffingReqs;
+  }
   if (data.shifts !== undefined && data.shifts !== null) {
-    writeShiftDefinitions_(sheet, data.shifts);
+    fullSettings.shifts = data.shifts;
   }
   if (data.engineOptions !== undefined && data.engineOptions !== null) {
-    writeEngineOptions_(sheet, data.engineOptions);
+    fullSettings.engineOptions = data.engineOptions;
   }
   if (data.roleMinimums !== undefined && data.roleMinimums !== null) {
-    writeRoleMinimums_(sheet, data.roleMinimums);
+    fullSettings.roleMinimums = data.roleMinimums;
   }
+  if (data.roles !== undefined && data.roles !== null) {
+    fullSettings.roles = data.roles;
+  }
+  if (data.employeeRoles !== undefined && data.employeeRoles !== null) {
+    fullSettings.employeeRoles = data.employeeRoles;
+  }
+
+  // Find or create the row for this department
+  const rowNumber = findOrCreateDeptRow_(sheet, deptName);
+
+  // Write merged settings as JSON to column B
+  const jsonString = JSON.stringify(fullSettings);
+  sheet.getRange(rowNumber, 2).setValue(jsonString); // Column B = settings JSON
 
   SpreadsheetApp.flush();
   return { saved: true };
@@ -94,80 +110,80 @@ function saveDeptSettings_(deptName, data) {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the Settings sheet for the given department, creating it with defaults
- * if it does not yet exist.
+ * Returns the consolidated Settings sheet, creating it with defaults if it doesn't exist.
  *
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} workbook
- * @param {string} deptName
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
-function getOrCreateDeptSettingsSheet_(workbook, deptName) {
-  const sheetName = DEPT_SETTINGS_PREFIX + deptName; // config.js
+function getOrCreateSettingsSheet_(workbook) {
+  const sheetName = 'Settings';
   let sheet = workbook.getSheetByName(sheetName);
   if (sheet) return sheet;
 
   sheet = workbook.insertSheet(sheetName);
-  writeDefaultDeptSettings_(sheet, deptName);
+  writeDefaultSettingsSheet_(sheet);
   return sheet;
 }
 
 /**
- * Writes column headers and default data to a freshly created Settings sheet.
+ * Finds the row number for a given department in the Settings sheet.
+ * If the department doesn't exist, creates a new row for it with default settings.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @param {string} _deptName — unused; reserved for future dept-specific defaults
+ * @param {string} deptName
+ * @returns {number} rowNumber (1-indexed)
  */
-function writeDefaultDeptSettings_(sheet, _deptName) {
-  // --- Header row (row 1): staffing columns A–C + spacer D + shift columns E–N ---
-  const staffingHeaderRange = sheet.getRange(1, 1, 1, 4);
-  staffingHeaderRange.setValues([['Day', 'Count', 'Mode', '']]);
-  staffingHeaderRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
+function findOrCreateDeptRow_(sheet, deptName) {
+  const data = sheet.getDataRange().getValues();
 
-  const shiftHeaderRange = sheet.getRange(1, 5, 1, 10);  // E1:N1
-  shiftHeaderRange.setValues([[
-    'Shift Name', 'FT/PT', 'Wkdy Start', 'Sat Start', 'Sun Start',
-    'Paid Hours', 'Has Lunch', 'Flex Enabled', 'Flex Earliest', 'Flex Latest',
-  ]]);
-  shiftHeaderRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
+  // Search for existing department (starting from row 2, skip header row 1)
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0] || '').trim().toLowerCase() === deptName.toLowerCase()) {
+      return i + 1; // Convert 0-indexed array to 1-indexed sheet row
+    }
+  }
 
-  // --- Default staffing requirements (A2:C8) ---
-  const defaultStaffing = DAY_NAMES_IN_ORDER.map(day => [day, DEFAULT_STAFFING_COUNT, STAFFING_MODE.COUNT]); // config.js
-  sheet.getRange(2, 1, defaultStaffing.length, 3).setValues(defaultStaffing);
+  // Department not found, create a new row
+  const newRow = data.length + 1;
+  sheet.getRange(newRow, 1).setValue(deptName);
 
-  // --- Default shift definitions (E2:N3) — two example rows ---
-  // [Name, FT/PT, WkdyStart, SatStart, SunStart, PaidHours, HasLunch, FlexEnabled, FlexEarliest, FlexLatest]
-  const defaultShifts = [
-    ['Morning', 'FT', '08:00', '', '', 8, true,  true, '07:30', '09:00'],
-    ['Morning', 'PT', '08:00', '', '', 5, false, true, '07:30', '09:00'],
-  ];
-  sheet.getRange(2, 5, defaultShifts.length, 10).setValues(defaultShifts);
+  // Initialize with default settings JSON
+  const defaultSettings = {
+    staffingReqs: DAY_NAMES_IN_ORDER.map(day => ({ day, count: DEFAULT_STAFFING_COUNT, mode: STAFFING_MODE.COUNT })),
+    shifts: [
+      { name: 'Morning', ftpt: 'FT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 8, hasLunch: true, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' },
+      { name: 'Morning', ftpt: 'PT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 5, hasLunch: false, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' }
+    ],
+    engineOptions: { enforceRoleMinimums: true, gapFillEnabled: true },
+    roleMinimums: {},
+    roles: [],
+    employeeRoles: {}
+  };
+  sheet.getRange(newRow, 2).setValue(JSON.stringify(defaultSettings));
 
-  // --- Engine Options section (rows 10–12, cols A–B) ---
-  writeEngineOptionsSectionHeader_(sheet);
-  writeEngineOptions_(sheet, { enforceRoleMinimums: true, gapFillEnabled: true });
+  return newRow;
+}
 
-  // --- Role Minimums section (rows 14+, cols A–D) ---
-  writeRoleMinimumsSectionHeader_(sheet);
-  // No default role rows — managers add these via the UI.
+/**
+ * Writes headers and warning to a freshly created consolidated Settings sheet.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ */
+function writeDefaultSettingsSheet_(sheet) {
+  // --- Header row ---
+  const headerRange = sheet.getRange(1, 1, 1, 2);
+  headerRange.setValues([['Department', 'Settings JSON (Do not edit manually)']]);
+  headerRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
 
-  sheet.setTabColor('#005DAA');
+  // Set column widths
+  sheet.setColumnWidth(1, 150);  // Department name
+  sheet.setColumnWidth(2, 2000); // Settings JSON (wide for readability)
+
+  // Freeze header row
   sheet.setFrozenRows(1);
 
-  // Column widths
-  sheet.setColumnWidth(1, 140);  // Day / Role
-  sheet.setColumnWidth(2, 80);   // Count / Low
-  sheet.setColumnWidth(3, 90);   // Mode / Moderate
-  sheet.setColumnWidth(4, 70);   // spacer / High
-  sheet.setColumnWidth(5, 140);  // Shift Name
-  sheet.setColumnWidth(6, 70);   // FT/PT
-  sheet.setColumnWidth(7, 90);   // Wkdy Start
-  sheet.setColumnWidth(8, 90);   // Sat Start
-  sheet.setColumnWidth(9, 90);   // Sun Start
-  sheet.setColumnWidth(10, 90);  // Paid Hours
-  sheet.setColumnWidth(11, 90);  // Has Lunch
-  sheet.setColumnWidth(12, 100); // Flex Enabled
-  sheet.setColumnWidth(13, 110); // Flex Earliest
-  sheet.setColumnWidth(14, 110); // Flex Latest
+  // Set tab color
+  sheet.setTabColor('#005DAA');
 }
 
 
@@ -176,28 +192,41 @@ function writeDefaultDeptSettings_(sheet, _deptName) {
 // ---------------------------------------------------------------------------
 
 /**
- * Reads a Settings sheet and returns the settings as a plain serializable object.
+ * Reads settings for a specific department from the consolidated Settings sheet.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object }}
+ * @param {string} deptName
+ * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object, roles: Array, employeeRoles: object }}
  */
-function readDeptSettingsFromSheet_(sheet) {
-  console.log('readDeptSettingsFromSheet_: reading staffing requirements...');
-  const staffingReqs = readStaffingRequirements_(sheet);
-  console.log('readDeptSettingsFromSheet_: staffingReqs = ' + staffingReqs.length + ' rows');
+function readDeptSettingsFromSheet_(sheet, deptName) {
+  try {
+    const data = sheet.getDataRange().getValues();
 
-  console.log('readDeptSettingsFromSheet_: reading shift definitions...');
-  const shifts = readShiftDefinitions_(sheet);
-  console.log('readDeptSettingsFromSheet_: shifts = ' + shifts.length + ' rows');
+    // Search for the department (starting from row 2, skip header row 1)
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0] || '').trim().toLowerCase() === deptName.toLowerCase()) {
+        const jsonCell = data[i][1]; // Column B = settings JSON
+        if (jsonCell && typeof jsonCell === 'string') {
+          const parsed = JSON.parse(jsonCell);
+          console.log('readDeptSettingsFromSheet_: loaded ' + deptName + ' from Settings sheet');
+          return parsed;
+        }
+      }
+    }
 
-  const engineOptions = readEngineOptions_(sheet);
-  const roleMinimums  = readRoleMinimums_(sheet);
+    console.warn('readDeptSettingsFromSheet_: department ' + deptName + ' not found, returning empty structure');
+  } catch (e) {
+    console.error('readDeptSettingsFromSheet_: JSON parse failed:', e.message);
+  }
 
+  // Return empty structure if department not found or JSON is corrupted
   return {
-    staffingReqs:  staffingReqs,
-    shifts:        shifts,
-    engineOptions: engineOptions,
-    roleMinimums:  roleMinimums,
+    staffingReqs:  [],
+    shifts:        [],
+    engineOptions: { enforceRoleMinimums: true, gapFillEnabled: true },
+    roleMinimums:  {},
+    roles:         [],
+    employeeRoles: {}
   };
 }
 
@@ -354,115 +383,6 @@ function readEngineOptions_(sheet) {
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
  * @param {{ enforceRoleMinimums: boolean, gapFillEnabled: boolean }} options
  */
-function writeEngineOptions_(sheet, options) {
-  const startRow = SETTINGS_ROWS.ENGINE_OPTIONS_START;
-  sheet.getRange(startRow, 1, 2, 2).setValues([
-    ['Enforce Role Minimums', options.enforceRoleMinimums !== false],
-    ['Enable Gap Fill',       options.gapFillEnabled      !== false],
-  ]);
-}
-
-/**
- * Writes the bold blue section header for the engine options block (row 10, cols A–B merged).
- * Only called during initial sheet creation.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- */
-function writeEngineOptionsSectionHeader_(sheet) {
-  const headerRow = SETTINGS_ROWS.ENGINE_OPTIONS_HEADER;
-  const headerRange = sheet.getRange(headerRow, 1, 1, 2);
-  headerRange.merge();
-  headerRange.setValue('ENGINE OPTIONS');
-  headerRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
-  // Blank spacer above (row 9)
-  sheet.getRange(9, 1, 1, 4).clearContent();
-  // Blank spacer between options and role minimums (row 13)
-  sheet.getRange(13, 1, 1, 4).clearContent();
-}
-
-
-// ---------------------------------------------------------------------------
-// Role Minimums — Read / Write
-// ---------------------------------------------------------------------------
-
-/**
- * Reads the role minimums table from row ROLE_MINIMUMS_START downward.
- * Returns an empty object if no roles are configured.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @returns {{ [roleName: string]: { Low: number, Moderate: number, High: number } }}
- */
-function readRoleMinimums_(sheet) {
-  try {
-    const startRow = SETTINGS_ROWS.ROLE_MINIMUMS_START;
-    const lastRow  = sheet.getLastRow();
-    if (lastRow < startRow) return {};
-
-    const numRows = lastRow - startRow + 1;
-    const values  = sheet.getRange(startRow, 1, numRows, 4).getValues();
-    const result  = {};
-
-    values.forEach(function(row) {
-      const roleName = String(row[0] || '').trim();
-      if (!roleName) return;
-      result[roleName] = {
-        Low:      Number(row[1] || 0),
-        Moderate: Number(row[2] || 0),
-        High:     Number(row[3] || 0),
-      };
-    });
-
-    return result;
-  } catch (_error) {
-    return {};
-  }
-}
-
-/**
- * Writes the role minimums table starting at ROLE_MINIMUMS_START, clearing stale rows.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @param {{ [roleName: string]: { Low: number, Moderate: number, High: number } }} roleMinimums
- */
-function writeRoleMinimums_(sheet, roleMinimums) {
-  const startRow = SETTINGS_ROWS.ROLE_MINIMUMS_START;
-  const lastRow  = sheet.getLastRow();
-
-  // Clear everything from startRow downward in cols A–D (stale role rows).
-  if (lastRow >= startRow) {
-    sheet.getRange(startRow, 1, lastRow - startRow + 1, 4).clearContent();
-  }
-
-  const roleNames = Object.keys(roleMinimums);
-  if (roleNames.length === 0) return;
-
-  const rows = roleNames.map(function(roleName) {
-    const entry = roleMinimums[roleName] || {};
-    return [roleName, Number(entry.Low || 0), Number(entry.Moderate || 0), Number(entry.High || 0)];
-  });
-
-  sheet.getRange(startRow, 1, rows.length, 4).setValues(rows);
-}
-
-/**
- * Writes the bold blue section header and column labels for the role minimums block.
- * Only called during initial sheet creation.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- */
-function writeRoleMinimumsSectionHeader_(sheet) {
-  const headerRow = SETTINGS_ROWS.ROLE_MINIMUMS_HEADER;
-  const labelRow  = SETTINGS_ROWS.ROLE_MINIMUMS_LABELS;
-
-  const sectionHeaderRange = sheet.getRange(headerRow, 1, 1, 4);
-  sectionHeaderRange.merge();
-  sectionHeaderRange.setValue('ROLE MINIMUMS');
-  sectionHeaderRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
-
-  const columnLabelRange = sheet.getRange(labelRow, 1, 1, 4);
-  columnLabelRange.setValues([['Role', 'Low', 'Moderate', 'High']]);
-  columnLabelRange.setFontWeight('bold').setBackground('#D9E8F5').setFontColor('#003366');
-}
 
 
 // ---------------------------------------------------------------------------

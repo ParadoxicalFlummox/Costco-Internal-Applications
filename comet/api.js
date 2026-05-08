@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.14
+ * VERSION: 0.5.16
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -451,6 +451,16 @@ function getDeptSettings(deptName) {
       });
     });
 
+    const rolesArray = [];
+    if (settings.roles && Array.isArray(settings.roles)) {
+      for (let i = 0; i < settings.roles.length; i++) {
+        rolesArray.push({
+          name: String(settings.roles[i].name || ''),
+          isPoolRole: Boolean(settings.roles[i].isPoolRole)
+        });
+      }
+    }
+
     const response = {
       ok: true,
       data: {
@@ -458,6 +468,8 @@ function getDeptSettings(deptName) {
         shifts:              shiftsArray,
         engineOptions:       settings.engineOptions  || { enforceRoleMinimums: true, gapFillEnabled: true },
         roleMinimums:        settings.roleMinimums   || {},
+        roles:               rolesArray,
+        employeeRoles:       settings.employeeRoles  || {},
         hasComboParticipants: hasComboParticipants,
       }
     };
@@ -974,19 +986,9 @@ function importFromUKG(rows) {
  */
 function getDepartments() {
   try {
-    // Source 1 — Employees sheet
+    // Source — Employees sheet (single source of truth for departments)
     const employees = getActiveEmployees_(); // ukgImport.js
-    const fromEmployees = employees.map(e => e.department).filter(Boolean);
-
-    // Source 2 — Settings_* sheet tabs
-    const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const fromSettings = workbook.getSheets()
-      .map(s => s.getName())
-      .filter(n => n.startsWith(DEPT_SETTINGS_PREFIX)) // config.js
-      .map(n => n.slice(DEPT_SETTINGS_PREFIX.length).trim())
-      .filter(Boolean);
-
-    const departments = [...new Set([...fromEmployees, ...fromSettings])].sort();
+    const departments = [...new Set(employees.map(e => e.department).filter(Boolean))].sort();
     return { ok: true, data: { departments } };
   } catch (error) {
     console.error('api: getDepartments failed —', error);
@@ -1461,7 +1463,7 @@ function withDocumentLock_(timeoutMs, callback) {
  *   2 — Active CNs
  *   3 — CN_Log
  *   4 — (Expired CNs)
- *   5 — Settings_* sheets (alphabetical by dept name)
+ *   5 — Settings (consolidated department settings)
  *   6 — Week_* schedule sheets (newest first — desc by sheet name)
  *   7 — Call Log * sheets (newest first)
  *   8 — Everything else
@@ -1477,7 +1479,7 @@ function sortWorkbookSheets_() {
     if (name === ACTIVE_CNS_SHEET_NAME)    return 2;
     if (name === CN_LOG_SHEET_NAME)        return 3;
     if (name === EXPIRED_CNS_SHEET_NAME)   return 4;
-    if (name.startsWith(DEPT_SETTINGS_PREFIX)) return 5;
+    if (name === 'Settings')               return 5;
     if (name.startsWith('Week_'))          return 6;
     if (name.startsWith('Call Log'))       return 7;
     if (EMPLOYEE_TAB_PATTERN.test(name))   return 9;

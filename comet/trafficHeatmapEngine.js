@@ -1,6 +1,6 @@
 /**
  * trafficHeatmapEngine.js — Traffic heatmap classification, stagger scheduling, and pool management.
- * VERSION: 0.5.1
+ * VERSION: 0.6.0
  *
  * This module owns all logic related to the unified traffic heatmap system:
  *   1. Traffic classification (Low / Moderate / High based on door counts)
@@ -315,20 +315,38 @@ function getStoreClosingTimeMinutes_(dayIndex) {
  * @param {Object} heatmapConfig
  * @returns {{ poolMembers: Array, regularEmployees: Array }}
  */
+/**
+ * Partitions employees into pool and regular based on role + seniority, with explicit ID overrides.
+ *
+ * Pool qualification (any of):
+ *   1. primaryRole is in poolRoles AND seniorityRank <= maxSeniorityRank (junior employees)
+ *   2. employeeId is in tier1EmployeeIds (explicit override for any employee)
+ *
+ * Seniority note: Higher seniorityRank = more senior. maxSeniorityRank threshold excludes
+ * senior employees from pooling so they keep stable schedules.
+ *
+ * @param {Array} employeeList — all primary employees (combo participants already filtered out)
+ * @param {Object} heatmapConfig — { pool: { poolRoles, maxSeniorityRank, tier1EmployeeIds, ... } }
+ * @returns {{ poolMembers: Array, regularEmployees: Array }}
+ */
 function partitionPoolMembers_(employeeList, heatmapConfig) {
   const poolConfig = heatmapConfig.pool || {};
+  const poolRoles = new Set(poolConfig.poolRoles || []);
+  const maxSeniorityRank = poolConfig.maxSeniorityRank || 0;
   const tier1Ids = new Set(poolConfig.tier1EmployeeIds || []);
-  const tier2Ids = new Set(poolConfig.tier2EmployeeIds || []);
 
   const poolMembers = [];
   const regularEmployees = [];
 
-  employeeList.forEach(function(emp) {
-    const empId = emp.id || '';
-    if (tier1Ids.has(empId) || tier2Ids.has(empId)) {
-      poolMembers.push(emp);
+  employeeList.forEach(function(employee) {
+    const qualifiedByRole = poolRoles.has(employee.primaryRole) &&
+                            employee.seniorityRank <= maxSeniorityRank;
+    const qualifiedById = tier1Ids.has(employee.employeeId);
+
+    if (qualifiedByRole || qualifiedById) {
+      poolMembers.push(employee);
     } else {
-      regularEmployees.push(emp);
+      regularEmployees.push(employee);
     }
   });
 
@@ -338,7 +356,7 @@ function partitionPoolMembers_(employeeList, heatmapConfig) {
 /**
  * Selects which pool members should be scheduled for a given day based on traffic level.
  *
- * Selection is by seniority: highest seniority first.
+ * Selection is by seniority: lowest seniorityRank = highest seniority (first to schedule).
  *
  * @param {Array} poolMembers
  * @param {string} trafficLevel — "Low", "Moderate", or "High"
@@ -356,33 +374,6 @@ function selectPoolMembers_(poolMembers, trafficLevel, heatmapConfig) {
   });
 
   return sorted.slice(0, targetCount);
-}
-
-
-// ---------------------------------------------------------------------------
-// Pool Member Scheduling
-// ---------------------------------------------------------------------------
-
-/**
- * Schedules selected pool members into the week grid with staggered start times.
- *
- * Pool members appear in their own section above regular employees in the final sheet.
- * This function assigns them to shifts respecting their constraints.
- *
- * @param {Array} selectedPoolMembers
- * @param {Array} weekGrid
- * @param {Object} staggerMap — { dayName: { "ShiftName|Status": [startTimes...], ... }, ... }
- * @param {Object} shiftTimingMap
- * @param {Object} dayTrafficLevels
- * @returns {void} mutates weekGrid
- */
-function schedulePoolMembers_(selectedPoolMembers, weekGrid, staggerMap, shiftTimingMap, dayTrafficLevels) {
-  // Placeholder for full pool scheduling logic
-  // This will assign pool members to shifts, respecting their primary role
-  // and using staggered start times from the stagger map
-
-  // For now, log that pool scheduling was called; full implementation follows
-  console.log('schedulePoolMembers_: ' + selectedPoolMembers.length + ' pool members to schedule');
 }
 
 

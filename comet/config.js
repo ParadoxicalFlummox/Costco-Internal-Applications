@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.12
+ * VERSION: 0.5.13
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -138,6 +138,12 @@ const SETTINGS_ROWS = {
   ROLE_MINIMUMS_HEADER:  14,  // merged section label
   ROLE_MINIMUMS_LABELS:  15,  // Role | Low | Moderate | High column headers
   ROLE_MINIMUMS_START:   16,  // first role data row
+  ROLES_HEADER:          18,  // merged section label (Role Definitions)
+  ROLES_LABELS:          19,  // Role Name | Is Pool Role column headers
+  ROLES_START:           20,  // first role definition row
+  EMPLOYEE_ROLES_HEADER: 50,  // merged section label (Employee Roles)
+  EMPLOYEE_ROLES_LABELS: 51,  // Employee ID | Role Name column headers
+  EMPLOYEE_ROLES_START:  52,  // first employee role assignment row
 };
 
 /**
@@ -297,6 +303,19 @@ const HEATMAP_DEFAULTS = {
     'Low': 1,
     'Moderate': 3,
     'High': 5,
+  },
+  // Default pool configuration for new departments.
+  // Note: Seniority threshold is PT_BASE + days-from-hire cutoff.
+  // Employees with seniorityRank <= this value are pool-eligible (junior employees).
+  pool: {
+    poolRoles: [],              // Array of role names in the pool (e.g., ["Cashier", "Assisting"])
+    maxSeniorityRank: 100000000, // PT_BASE; scale up for higher seniority cutoff
+    tier1EmployeeIds: [],       // Explicit overrides: force specific employees into pool
+    schedulingCounts: {
+      'Low': 1,
+      'Moderate': 3,
+      'High': 5,
+    },
   },
   // Default traffic curves for new departments (can be overridden per week).
   // 24 values — one per hour, index 0 = midnight, index 9 = 9am, etc.

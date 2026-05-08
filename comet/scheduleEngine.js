@@ -1,6 +1,6 @@
 /**
  * scheduleEngine.js — Core schedule generation algorithm for COMET.
- * VERSION: 0.7.4
+ * VERSION: 0.7.9
  *
  * REWORK SUMMARY (v0.7.0):
  *   - Phase condensation: 5 → 4 phases (Phases 1+2 merged; role assignment moved last).
@@ -596,10 +596,24 @@ function runPhaseOnePreferenceAndHours_(weekGrid, regularEmployees, comboPartici
       const cell = weekGrid[employeeIndex][dayIndex];
       if (cell.locked) return;
       if (cell.type !== 'OFF') return;
-      const requested = employee.dayOffPreferenceOne === dayName || employee.dayOffPreferenceTwo === dayName;
+      // Normalize preferences to title case for reliable matching
+      const pref1 = (employee.dayOffPreferenceOne || '').trim();
+      const pref2 = (employee.dayOffPreferenceTwo || '').trim();
+      const requested = (pref1.toLowerCase() === dayName.toLowerCase()) || (pref2.toLowerCase() === dayName.toLowerCase());
       if (!requested) return;
-      const minimumRequired = (staffingRequirements[dayName] && staffingRequirements[dayName].value) || 0;
+
+      // Grant day off if we have more than minimum required
+      // Convert hour-based requirements to head count using 8-hour average
+      const staffReq = staffingRequirements[dayName];
+      let minimumRequired = (staffReq && staffReq.value) || 0;
+
+      if (staffReq && staffReq.mode && staffReq.mode.toLowerCase() === 'hours') {
+        // Convert hours to equivalent head count (assume 8 hours per employee average)
+        minimumRequired = Math.ceil(minimumRequired / 8);
+      }
+
       const availableCount = workerCountByDay[dayIndex];
+
       if (availableCount > minimumRequired) {
         weekGrid[employeeIndex][dayIndex] = createDayAssignment_('RDO', null, 0, false);
         // Do not decrement workerCountByDay — RDO was OFF, not a SHIFT removal
@@ -692,7 +706,26 @@ function runPhaseOnePreferenceAndHours_(weekGrid, regularEmployees, comboPartici
           const dayAnchorMinutes = getStartMinutesForDay_(shiftDef, openDay.dayName);
           let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + shiftDef.blockMinutes);
 
-          if (staggerMap && staggerMap[openDay.dayName]) {
+          // Check if this is a supervisor (by role)
+          const isSupervisorShift = employee.role && (employee.role === 'Supervisor' || employee.role.includes('Supervisor'));
+
+          if (isSupervisorShift) {
+            // For supervisors, use the configured start time and calculate end time based on the day
+            const supervisorEndTime = calculateSupervisorEndTime_(openDay.dayName);
+            const shiftKey = shiftDef.name + '|' + shiftDef.status;
+            const startTimes = (staggerMap && staggerMap[openDay.dayName]) ? staggerMap[openDay.dayName][shiftKey] : [];
+
+            if (startTimes && startTimes.length > 0) {
+              const posKey = openDay.dayName + '|' + shiftKey;
+              if (!staggerPositions[posKey]) staggerPositions[posKey] = 0;
+              const staggerIndex = staggerPositions[posKey] % startTimes.length;
+              displayText = buildShiftDisplayText_(startTimes[staggerIndex], shiftDef.paidHours, shiftDef.hasLunch);
+              staggerPositions[posKey]++;
+            } else {
+              // No stagger, use fixed supervisor times (09:00 to calculated end time)
+              displayText = SUPERVISOR_SHIFT_CONFIG.startTime + ' – ' + supervisorEndTime;
+            }
+          } else if (staggerMap && staggerMap[openDay.dayName]) {
             const shiftKey = shiftDef.name + '|' + shiftDef.status;
             const startTimes = staggerMap[openDay.dayName][shiftKey];
             if (startTimes && startTimes.length > 0) {
@@ -739,7 +772,16 @@ function runPhaseOnePreferenceAndHours_(weekGrid, regularEmployees, comboPartici
 
       // Combo participants use a fixed secondary shift time — no stagger
       const dayAnchorMinutes = getStartMinutesForDay_(shiftDef, dayName);
-      const displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + shiftDef.blockMinutes);
+      let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + shiftDef.blockMinutes);
+
+      // Check if this is a supervisor (by role)
+      const isSupervisorShift = employee.role && (employee.role === 'Supervisor' || employee.role.includes('Supervisor'));
+      if (isSupervisorShift) {
+        // For supervisors, use the configured start time and calculate end time based on the day
+        const supervisorEndTime = calculateSupervisorEndTime_(dayName);
+        displayText = SUPERVISOR_SHIFT_CONFIG.startTime + ' – ' + supervisorEndTime;
+      }
+
       weekGrid[employeeIndex][dayIndex] = createDayAssignment_('SHIFT', shiftDef.name, shiftDef.paidHours, false, displayText);
     });
   });
@@ -821,7 +863,27 @@ function runPhaseGapResolution_(weekGrid, regularEmployees, allEmployees, shiftT
 
         const dayAnchorMinutes = getStartMinutesForDay_(best, dayName);
         let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + best.blockMinutes);
-        if (staggerMap && staggerMap[dayName]) {
+
+        // Check if this is a supervisor (by role)
+        const isSupervisorShift = employee.role && (employee.role === 'Supervisor' || employee.role.includes('Supervisor'));
+
+        if (isSupervisorShift) {
+          // For supervisors, use the configured start time and calculate end time based on the day
+          const supervisorEndTime = calculateSupervisorEndTime_(dayName);
+          const shiftKey = best.name + '|' + best.status;
+          const startTimes = (staggerMap && staggerMap[dayName]) ? staggerMap[dayName][shiftKey] : [];
+
+          if (startTimes && startTimes.length > 0) {
+            const posKey = dayName + '|' + shiftKey;
+            if (!staggerPositions[posKey]) staggerPositions[posKey] = 0;
+            const staggeredStartTime = startTimes[staggerPositions[posKey] % startTimes.length];
+            displayText = buildShiftDisplayText_(staggeredStartTime, best.paidHours, best.hasLunch);
+            staggerPositions[posKey]++;
+          } else {
+            // No stagger, use fixed supervisor times (09:00 to calculated end time)
+            displayText = SUPERVISOR_SHIFT_CONFIG.startTime + ' – ' + supervisorEndTime;
+          }
+        } else if (staggerMap && staggerMap[dayName]) {
           const shiftKey = best.name + '|' + best.status;
           const startTimes = staggerMap[dayName][shiftKey];
           if (startTimes && startTimes.length > 0) {
@@ -859,7 +921,27 @@ function runPhaseGapResolution_(weekGrid, regularEmployees, allEmployees, shiftT
 
           const dayAnchorMinutes = getStartMinutesForDay_(best, dayName);
           let displayText = formatMinutesAsTimeRange(dayAnchorMinutes, dayAnchorMinutes + best.blockMinutes);
-          if (staggerMap && staggerMap[dayName]) {
+
+          // Check if this is a supervisor (by role)
+          const isSupervisorShift = employee.role && (employee.role === 'Supervisor' || employee.role.includes('Supervisor'));
+
+          if (isSupervisorShift) {
+            // For supervisors, use the configured start time and calculate end time based on the day
+            const supervisorEndTime = calculateSupervisorEndTime_(dayName);
+            const shiftKey = best.name + '|' + best.status;
+            const startTimes = (staggerMap && staggerMap[dayName]) ? staggerMap[dayName][shiftKey] : [];
+
+            if (startTimes && startTimes.length > 0) {
+              const posKey = dayName + '|' + shiftKey;
+              if (!staggerPositions[posKey]) staggerPositions[posKey] = 0;
+              const staggeredStartTime = startTimes[staggerPositions[posKey] % startTimes.length];
+              displayText = buildShiftDisplayText_(staggeredStartTime, best.paidHours, best.hasLunch);
+              staggerPositions[posKey]++;
+            } else {
+              // No stagger, use fixed supervisor times (09:00 to calculated end time)
+              displayText = SUPERVISOR_SHIFT_CONFIG.startTime + ' – ' + supervisorEndTime;
+            }
+          } else if (staggerMap && staggerMap[dayName]) {
             const shiftKey = best.name + '|' + best.status;
             const startTimes = staggerMap[dayName][shiftKey];
             if (startTimes && startTimes.length > 0) {
@@ -1206,7 +1288,7 @@ function runPhasePoolScheduling_(weekGrid, employeeList, poolMembers, heatmapCon
       const startTimes = (staggerMap[dayName] && staggerMap[dayName][shiftKey]) ? staggerMap[dayName][shiftKey] : [];
 
       // Check if this is a supervisor (by role)
-      const isSupervisorShift = poolMember.role && (poolMember.role === 'Supervisor' || poolMember.role.includes('Supervisor'));
+      const isSupervisorShift = poolMember.primaryRole && (poolMember.primaryRole === 'Supervisor' || poolMember.primaryRole.includes('Supervisor'));
 
       let displayText;
       if (isSupervisorShift) {
@@ -1380,17 +1462,25 @@ function calculateAndWriteSeniorityRanks_() {
   // Build array of rows to write (only column M — SENIORITY_RANK)
   const seniorityRankColumn = EMPLOYEE_COLUMN.SENIORITY_RANK;
   const hireDateColumn = EMPLOYEE_COLUMN.HIRE_DATE;
-  const ftptColumn = EMPLOYEE_COLUMN.FT_PT;
+  const ftptColumn = EMPLOYEE_COLUMN.FTPT;
+  const nameColumn = EMPLOYEE_COLUMN.NAME;
 
   const updates = [];
   const seniorityReferenceDate = new Date(SENIORITY.REFERENCE_DATE_STRING);
+  let processedCount = 0;
 
+  // Process all rows, maintaining row-to-row alignment
   for (let row = EMPLOYEES_DATA_START_ROW; row <= values.length; row++) {
     const rowIndex = row - 1;
+    const name = values[rowIndex][nameColumn - 1];
     const ftptValue = values[rowIndex][ftptColumn - 1];
     const hireDateValue = values[rowIndex][hireDateColumn - 1];
 
-    if (!ftptValue) continue; // Skip empty rows
+    // Write null for rows without names or FT/PT status, process those with both
+    if (!name || !ftptValue) {
+      updates.push([null]);
+      continue;
+    }
 
     let hireDate = new Date();
     if (hireDateValue instanceof Date && !isNaN(hireDateValue.getTime())) {
@@ -1407,12 +1497,13 @@ function calculateAndWriteSeniorityRanks_() {
     const seniorityRank = seniorityBase + seniorityDaysFromHire;
 
     updates.push([seniorityRank]);
+    processedCount++;
   }
 
   if (updates.length > 0) {
     const targetRange = employeesSheet.getRange(EMPLOYEES_DATA_START_ROW, seniorityRankColumn, updates.length, 1);
     targetRange.setValues(updates);
-    console.log('Seniority ranks calculated and written for ' + updates.length + ' employees');
+    console.log('Seniority ranks calculated and written for ' + processedCount + ' employees (' + updates.length + ' total rows)');
   }
 }
 
