@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <!-- index.html — COMET UI
-     VERSION: 0.5.18
+     VERSION: 0.6.3
 -->
 
 <head>
@@ -29,6 +29,9 @@
         </li>
         <li class="nav-item">
           <a class="nav-link" data-view="attendance" href="#">Attendance Dashboard</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" data-view="settings" href="#">Settings</a>
         </li>
         <li class="nav-item">
           <a class="nav-link" data-view="admin" href="#">Admin</a>
@@ -63,94 +66,71 @@
         </select>
       </div>
 
-      <!-- Tabs (shown only when dept is selected) -->
-      <div id="scheduleTabsContainer" style="display:none;">
-        <ul class="nav nav-tabs mb-3" role="tablist">
-          <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="tab-schedule-gen-btn" data-bs-toggle="tab"
-              data-bs-target="#tab-schedule-gen" type="button" role="tab">
-              Schedule Generator
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-staffing-req-btn" data-bs-toggle="tab" data-bs-target="#tab-staffing-req"
-              type="button" role="tab">
-              Staffing Requirements
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-shift-defs-btn" data-bs-toggle="tab" data-bs-target="#tab-shift-defs"
-              type="button" role="tab">
-              Shift Definitions
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-roles-btn" data-bs-toggle="tab" data-bs-target="#tab-roles" type="button"
-              role="tab">
-              Roles
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-supervisor-btn" data-bs-toggle="tab" data-bs-target="#tab-supervisor"
-              type="button" role="tab">
-              Traffic Heatmap
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="tab-engine-options-btn" data-bs-toggle="tab"
-              data-bs-target="#tab-engine-options" type="button" role="tab">
-              Engine Options
-            </button>
-          </li>
-        </ul>
+      <!-- Readiness Banner -->
+      <div id="scheduleReadinessBanner">
+        <div class="readiness-banner-label">Schedule Status</div>
+        <div class="readiness-pills"></div>
+      </div>
 
-        <!-- Tab Content -->
-        <div class="tab-content">
-          <!-- Tab 1: Schedule Generator -->
-          <div class="tab-pane fade show active" id="tab-schedule-gen" role="tabpanel">
-            <div class="row g-2 mb-3 align-items-end">
-              <div class="col-auto">
-                <label class="form-label mb-1 small fw-semibold" for="scheduleWeek">Week of (Monday)</label>
-                <input type="date" id="scheduleWeek" class="form-control form-control-sm">
-              </div>
-              <div class="col-auto">
-                <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
-                <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
-                <button id="btnAddHybridStaff" class="btn btn-outline-primary btn-sm ms-1" style="display:none;">+ Add
-                  Hybrid Staff</button>
-              </div>
-            </div>
-            <div id="scheduleTableContainer" class="comet-table-container">
-              <div class="p-3 text-comet-muted small">Select a week and click Generate.</div>
-            </div>
-          </div>
+      <!-- Schedule Generator (simplified - no tabs) -->
+      <div class="row g-2 mb-3 align-items-end">
+        <div class="col-auto">
+          <label class="form-label mb-1 small fw-semibold" for="scheduleWeek">Week of (Monday)</label>
+          <input type="date" id="scheduleWeek" class="form-control form-control-sm">
+        </div>
+        <div class="col-auto">
+          <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
+          <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
+          <button id="btnAddHybridStaff" class="btn btn-outline-primary btn-sm ms-1" style="display:none;">+ Add Hybrid Staff</button>
+        </div>
+      </div>
+      <div id="scheduleTableContainer" class="comet-table-container">
+        <div class="p-3 text-comet-muted small">Select a department and week, then click Generate.</div>
+      </div>
+    </div>
 
-          <!-- Tab 2: Staffing Requirements (managed via pre-generation modal) -->
-          <div class="tab-pane fade" id="tab-staffing-req" role="tabpanel">
-            <div class="alert alert-info small mb-0" role="alert">
-              <strong>📋 Staffing Requirements</strong> are configured when generating a schedule. Click the
-              <strong>Generate</strong> button in the Schedule Generator tab to adjust staffing targets for each day
-              before running the algorithm.
-            </div>
-          </div>
 
-          <!-- Tab 3: Shift Definitions -->
-          <div class="tab-pane fade" id="tab-shift-defs" role="tabpanel">
+    <!-- -------------------------------------------------------------------
+         Settings View
+         ------------------------------------------------------------------- -->
+    <div id="view-settings" class="comet-view" style="display:none;">
+      <div class="comet-view-header">
+        <h1 class="comet-view-title">Department Settings</h1>
+      </div>
+
+      <!-- Department selector -->
+      <div class="mb-3">
+        <label class="form-label small fw-semibold mb-1" for="settingsDept">Department</label>
+        <select id="settingsDept" class="form-select form-select-sm" style="max-width:250px;">
+          <option value="">— select —</option>
+        </select>
+      </div>
+
+      <!-- Accordion Sections (shown when dept is selected) -->
+      <div id="settingsAccordion" class="comet-accordion" style="display:none;">
+
+        <!-- Accordion 1: Shift Definitions -->
+        <div class="comet-accordion-card">
+          <button class="comet-accordion-header" aria-expanded="false" aria-controls="accordion-shifts">
+            <span>Shift Definitions</span>
+            <span class="comet-accordion-toggle">▼</span>
+          </button>
+          <div id="accordion-shifts" class="comet-accordion-body">
             <p class="small text-muted mb-2">Configure shift templates for this department.</p>
             <table class="table table-sm mb-2" id="shiftDefsTable">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>FT/PT</th>
-                  <th>Wkdy Start</th>
-                  <th>Sat Start</th>
-                  <th>Sun Start</th>
-                  <th>Paid Hrs</th>
-                  <th>Lunch</th>
-                  <th>Flex</th>
-                  <th>Earliest</th>
-                  <th>Latest</th>
-                  <th></th>
+                  <th scope="col">Name</th>
+                  <th scope="col">FT/PT</th>
+                  <th scope="col">Wkdy Start</th>
+                  <th scope="col">Sat Start</th>
+                  <th scope="col">Sun Start</th>
+                  <th scope="col">Paid Hrs</th>
+                  <th scope="col">Lunch</th>
+                  <th scope="col">Flex</th>
+                  <th scope="col">Earliest</th>
+                  <th scope="col">Latest</th>
+                  <th scope="col"></th>
                 </tr>
               </thead>
               <tbody id="shiftDefsBody"></tbody>
@@ -159,19 +139,26 @@
             <br>
             <button id="btnSaveShiftDefs" class="btn btn-primary btn-sm">Save Shift Definitions</button>
           </div>
+        </div>
 
-          <!-- Tab 4: Roles -->
-          <div class="tab-pane fade" id="tab-roles" role="tabpanel">
-            <!-- Section 1: Define Roles -->
+        <!-- Accordion 2: Roles & Coverage -->
+        <div class="comet-accordion-card">
+          <button class="comet-accordion-header" aria-expanded="false" aria-controls="accordion-roles">
+            <span>Roles & Coverage</span>
+            <span class="comet-accordion-toggle">▼</span>
+          </button>
+          <div id="accordion-roles" class="comet-accordion-body">
+
+            <!-- Section A: Define Roles -->
             <div class="mb-4">
               <h6 class="fw-semibold mb-2">Define Roles</h6>
               <p class="small text-muted mb-2">Create roles and mark which are pool-eligible.</p>
               <table class="table table-sm mb-2" id="roleDefsTable">
                 <thead>
                   <tr>
-                    <th>Role Name</th>
-                    <th style="width: 100px;">Pool Role</th>
-                    <th></th>
+                    <th scope="col">Role Name</th>
+                    <th scope="col" style="width: 100px;">Pool Role</th>
+                    <th scope="col"></th>
                   </tr>
                 </thead>
                 <tbody id="roleDefsBody"></tbody>
@@ -181,22 +168,22 @@
               <button id="btnSaveRoleDefs" class="btn btn-primary btn-sm mb-3">Save Role Definitions</button>
             </div>
 
-            <!-- Section 2: Assign Employee Roles -->
+            <!-- Section B: Assign Employee Roles (Multi-Role) -->
             <div class="mb-4">
               <h6 class="fw-semibold mb-2">Assign Employee Roles</h6>
-              <p class="small text-muted mb-2">Assign roles to employees in this department.</p>
-              <div id="employeeRolesContainer" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;">
-                <table class="table table-sm mb-0" id="employeeRolesTable" style="min-width: 0;">
-                  <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
+              <p class="small text-muted mb-2">Set primary and qualified roles for each employee.</p>
+              <div style="max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;">
+                <table class="employee-roles-table" id="employeeRolesTable">
+                  <thead>
                     <tr>
-                      <th style="width: 60%;">Employee Name</th>
-                      <th style="width: 40%;">Current Role</th>
+                      <th scope="col">Employee Name</th>
+                      <th scope="col">Primary Role</th>
+                      <th scope="col">Qualified Roles</th>
                     </tr>
                   </thead>
                   <tbody id="employeeRolesBody">
                     <tr>
-                      <td colspan="2" class="text-muted small text-center py-3">Select a department to load employees
-                      </td>
+                      <td colspan="3" class="text-muted small text-center py-3">Select a department to load employees</td>
                     </tr>
                   </tbody>
                 </table>
@@ -204,20 +191,19 @@
               <button id="btnSaveEmployeeRoles" class="btn btn-primary btn-sm mt-2">Save Employee Roles</button>
             </div>
 
-            <!-- Section 3: Role Minimums with Pool Integration -->
+            <!-- Section C: Role Minimums with Pool Integration -->
             <div>
               <h6 class="fw-semibold mb-2">Role Minimums with Pool Integration</h6>
-              <p class="small text-muted mb-2">Set minimum headcount per role and traffic level. Pool system will add
-                above-base staff as needed.</p>
+              <p class="small text-muted mb-2">Set minimum headcount per role and traffic level. Pool system will add above-base staff as needed.</p>
               <table class="table table-sm mb-2" id="roleMinimumsCoverageTable">
                 <thead>
                   <tr>
-                    <th>Role Name</th>
-                    <th>Base (Moderate)</th>
-                    <th>Low Traffic</th>
-                    <th>High Traffic</th>
-                    <th class="text-muted small">Pool Adds on High</th>
-                    <th></th>
+                    <th scope="col">Role Name</th>
+                    <th scope="col">Base (Moderate)</th>
+                    <th scope="col">Low Traffic</th>
+                    <th scope="col">High Traffic</th>
+                    <th scope="col" class="text-muted small">Pool Adds on High</th>
+                    <th scope="col"></th>
                   </tr>
                 </thead>
                 <tbody id="roleMinimumsCoverageBody"></tbody>
@@ -227,86 +213,107 @@
               <button id="btnSaveRoleMinimumsCoverage" class="btn btn-primary btn-sm">Save Role Coverage</button>
             </div>
 
-            <!-- Pool Seniority Threshold -->
+            <!-- Section D: Pool Seniority Threshold -->
             <div class="mt-4 pt-3 border-top">
               <h6 class="fw-semibold mb-2">Pool Member Seniority Threshold</h6>
-              <p class="small text-muted mb-2">Employees with less seniority than this threshold are eligible for the
-                pool.</p>
+              <p class="small text-muted mb-2">Employees with less seniority than this threshold are eligible for the pool.</p>
               <div class="d-flex gap-3 align-items-center flex-wrap">
                 <div style="flex: 1; min-width: 200px;">
                   <label class="form-label small mb-1" for="poolSeniorityYearsSlider">Years Since Hire</label>
-                  <input type="range" id="poolSeniorityYearsSlider" class="form-range" min="0" max="40" value="0"
-                    step="1">
+                  <input type="range" id="poolSeniorityYearsSlider" class="form-range" min="0" max="40" value="0" step="1">
                 </div>
                 <div style="min-width: 120px;">
                   <span id="poolSeniorityYearsDisplay" class="small fw-semibold">All employees (0 years)</span>
                 </div>
               </div>
-              <small class="text-muted d-block mt-1">Employees with &lt; this many years of service are
-                pool-eligible</small>
+              <small class="text-muted d-block mt-1">Employees with &lt; this many years of service are pool-eligible</small>
               <button id="btnSavePoolConfig" class="btn btn-primary btn-sm mt-3">Save Pool Configuration</button>
             </div>
           </div>
+        </div>
 
-          <!-- Tab 5: Traffic Heatmap -->
-          <div class="tab-pane fade" id="tab-supervisor" role="tabpanel">
-            <p class="small text-muted mb-2">Define expected member traffic patterns to drive dynamic headcount and
-              shift stagger.</p>
+        <!-- Accordion 4: Engine Options -->
+        <div class="comet-accordion-card">
+          <button class="comet-accordion-header" aria-expanded="false" aria-controls="accordion-engine">
+            <span>Engine Options</span>
+            <span class="comet-accordion-toggle">▼</span>
+          </button>
+          <div id="accordion-engine" class="comet-accordion-body">
+            <p class="small text-muted mb-3">Control which scheduling phases are active for this department.</p>
+            <div class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" id="engineEnforceRoleMin" checked>
+              <label class="form-check-label small fw-semibold" for="engineEnforceRoleMin">
+                Enforce Role Minimums
+              </label>
+              <div class="text-muted small">When enabled, Phase 4 ensures each role meets its configured minimum headcount per traffic level.</div>
+            </div>
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" id="engineGapFillEnabled" checked>
+              <label class="form-check-label small fw-semibold" for="engineGapFillEnabled">
+                Enable Gap Fill (Phase 2)
+              </label>
+              <div class="text-muted small">When disabled, Phase 2 is skipped entirely and only preference assignments from Phase 1 are used.</div>
+            </div>
+            <button id="btnSaveEngineOptions" class="btn btn-primary btn-sm">Save Engine Options</button>
+          </div>
+        </div>
+
+        <!-- Accordion 5: Traffic Heatmap -->
+        <div class="comet-accordion-card">
+          <button class="comet-accordion-header" aria-expanded="false" aria-controls="accordion-heatmap">
+            <span>Traffic Heatmap</span>
+            <span class="comet-accordion-toggle">▼</span>
+          </button>
+          <div id="accordion-heatmap" class="comet-accordion-body">
+            <p class="small text-muted mb-2">Set expected member traffic by day and time block. The schedule engine staggers shift starts toward your busiest windows.</p>
 
             <div class="form-check form-switch mb-3">
               <input class="form-check-input" type="checkbox" id="heatmapEnabled">
               <label class="form-check-label small fw-semibold" for="heatmapEnabled">
-                Enable Traffic Heatmap
+                Enable Traffic-Aware Scheduling
               </label>
             </div>
 
             <div id="heatmapConfigControls" style="display:none;">
-              <!-- Threshold inputs -->
-              <div class="mb-3 d-flex gap-3 align-items-end flex-wrap">
-                <div>
-                  <label class="form-label small mb-1" for="heatmapLowThreshold">Low Threshold</label>
-                  <div class="input-group input-group-sm" style="width:165px;">
-                    <input type="number" id="heatmapLowThreshold" class="form-control" min="0" value="100">
-                    <span class="input-group-text small">Door Count</span>
-                  </div>
-                </div>
-                <div>
-                  <label class="form-label small mb-1" for="heatmapHighThreshold">High Threshold</label>
-                  <div class="input-group input-group-sm" style="width:165px;">
-                    <input type="number" id="heatmapHighThreshold" class="form-control" min="0" value="300">
-                    <span class="input-group-text small">Door Count</span>
-                  </div>
-                </div>
-                <p class="small text-muted mb-0" style="align-self:flex-end;">
-                  Below low = <span class="text-success fw-semibold">Low</span> &nbsp;|&nbsp;
-                  Between = <span class="text-warning fw-semibold">Moderate</span> &nbsp;|&nbsp;
-                  Above high = <span class="text-danger fw-semibold">High</span>
-                </p>
+              <!-- Traffic level grid -->
+              <div class="table-responsive mb-1">
+                <table class="table table-bordered table-sm comet-heat-grid" id="heatmapGrid" aria-label="Traffic levels by day and time block">
+                  <thead>
+                    <tr>
+                      <th scope="col">Day</th>
+                      <th scope="col">Open–11am</th>
+                      <th scope="col">11am–2pm</th>
+                      <th scope="col">2pm–6pm</th>
+                      <th scope="col">6pm–Close</th>
+                    </tr>
+                  </thead>
+                  <tbody id="heatmapGridBody">
+                    <!-- Populated by JavaScript -->
+                  </tbody>
+                </table>
               </div>
-
-              <!-- Day traffic curves -->
-              <p class="small fw-semibold mb-1">Traffic Curves <span class="text-muted fw-normal">(drag dots to adjust
-                  expected door count per hour)</span></p>
-              <div id="heatmapCanvases" style="display: grid; grid-template-columns: 1fr; gap: 0.75rem;"></div>
+              <p class="small text-muted mb-3">Click any cell to cycle:
+                <span class="badge rounded-pill" style="background:#d1e7dd;color:#0a3622;">Low</span>
+                → <span class="badge rounded-pill" style="background:#fff3cd;color:#664d03;">Moderate</span>
+                → <span class="badge rounded-pill" style="background:#f8d7da;color:#58151c;">High</span> → Low
+              </p>
 
               <!-- Pool scheduling counts -->
-              <div class="mt-3 pt-2 border-top">
-                <p class="small fw-semibold mb-2">Pool Headcount by Traffic Level</p>
-                <div class="d-flex gap-3 flex-wrap">
+              <div class="pt-2 border-top">
+                <p class="small fw-semibold mb-1">Pool Headcount by Traffic Level</p>
+                <p class="small text-muted mb-2">How many pool employees to schedule at each traffic level.</p>
+                <div class="d-flex gap-3 flex-wrap align-items-end">
                   <div>
                     <label class="form-label small mb-1" for="poolCountLow">Low traffic</label>
-                    <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;"
-                      min="0" value="1">
+                    <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;" min="0" value="1">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="poolCountModerate">Moderate</label>
-                    <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;"
-                      min="0" value="3">
+                    <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;" min="0" value="3">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="poolCountHigh">High traffic</label>
-                    <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;"
-                      min="0" value="5">
+                    <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;" min="0" value="5">
                   </div>
                 </div>
               </div>
@@ -314,34 +321,11 @@
 
             <div class="mt-3">
               <button id="btnResetHeatmap" class="btn btn-outline-secondary btn-sm">Reset to Default</button>
-              <button id="btnSaveHeatmapConfig" class="btn btn-primary btn-sm ms-1">Save Heatmap Configuration</button>
+              <button id="btnSaveHeatmapConfig" class="btn btn-primary btn-sm ms-1">Save Configuration</button>
             </div>
           </div>
-
-          <!-- Tab 6: Engine Options -->
-          <div class="tab-pane fade" id="tab-engine-options" role="tabpanel">
-            <p class="small text-muted mb-3">Control which scheduling phases are active for this department.</p>
-            <div class="form-check form-switch mb-2">
-              <input class="form-check-input" type="checkbox" id="engineEnforceRoleMin" checked>
-              <label class="form-check-label small fw-semibold" for="engineEnforceRoleMin">
-                Enforce Role Minimums
-              </label>
-              <div class="text-muted small">When enabled, Phase 4 ensures each role meets its configured minimum
-                headcount per traffic level.</div>
-            </div>
-            <div class="form-check form-switch mb-3">
-              <input class="form-check-input" type="checkbox" id="engineGapFillEnabled" checked>
-              <label class="form-check-label small fw-semibold" for="engineGapFillEnabled">
-                Enable Gap Fill (Phase 2)
-              </label>
-              <div class="text-muted small">When disabled, Phase 2 is skipped entirely and only preference assignments
-                from Phase 1 are used.</div>
-            </div>
-            <button id="btnSaveEngineOptions" class="btn btn-primary btn-sm">Save Engine Options</button>
-          </div>
-
-          <!-- Tab 7: Role Minimums -->
         </div>
+
       </div>
     </div>
 

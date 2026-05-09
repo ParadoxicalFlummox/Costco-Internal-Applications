@@ -1,7 +1,7 @@
 <style>
   /* =========================================================================
      COMET — Custom Stylesheet
-     VERSION: 0.1.2
+     VERSION: 0.2.4
 
      Loaded via <?!= include('stylesheet') ?> in index.html.
      Bootstrap 5 CDN is loaded first; these rules extend and override it.
@@ -940,6 +940,371 @@
     .modal-lg {
       max-width: 70vw;
     }
+  }
+
+  /* =========================================================================
+     NEW — Accordion Sections (Settings View)
+     ========================================================================= */
+
+  .comet-accordion {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+  }
+
+  .comet-accordion-card {
+    border: 1px solid var(--comet-border);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    overflow: hidden;
+  }
+
+  .comet-accordion-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 1rem;
+    background-color: #F1F5F9;
+    border-bottom: 1px solid var(--comet-border);
+    border: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .comet-accordion-header:hover {
+    background-color: #E8EEF7;
+  }
+
+  .comet-accordion-header[aria-expanded="true"] {
+    background-color: #EFF6FF;
+    border-bottom: 1px solid var(--comet-border);
+  }
+
+  /* Dirty indicator — asterisk dot */
+  .comet-accordion-header.dirty::after {
+    content: " •";
+    color: var(--comet-red);
+    font-size: 1.1rem;
+    margin-left: 0.25rem;
+  }
+
+  .comet-accordion-toggle {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    line-height: 20px;
+    text-align: center;
+    color: var(--comet-text);
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+  }
+
+  .comet-accordion-header[aria-expanded="true"] .comet-accordion-toggle {
+    transform: rotate(180deg);
+  }
+
+  .comet-accordion-body {
+    padding: 1.25rem;
+    display: none;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.2s ease, opacity 0.2s ease;
+    opacity: 0;
+  }
+
+  .comet-accordion-card.open .comet-accordion-body {
+    display: block;
+    max-height: 2000px;
+    opacity: 1;
+  }
+
+  /* =========================================================================
+     NEW — Schedule Readiness Banner
+     ========================================================================= */
+
+  #scheduleReadinessBanner {
+    background: linear-gradient(135deg, #F0F9FF 0%, #ECFDF5 100%);
+    border: 1px solid var(--comet-border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    display: none;
+  }
+
+  .readiness-banner-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--comet-text);
+    margin-bottom: 0.6rem;
+  }
+
+  .readiness-pills {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .readiness-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.5rem 0.8rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: default;
+    transition: opacity 0.15s ease;
+  }
+
+  .readiness-pill.ready {
+    background-color: #D1FAE5;
+    color: #065F46;
+  }
+
+  .readiness-pill.warning {
+    background-color: #FEF3C7;
+    color: #92400E;
+    cursor: pointer;
+  }
+
+  .readiness-pill.warning:hover {
+    opacity: 0.8;
+  }
+
+  .readiness-pill.muted {
+    background-color: var(--comet-border);
+    color: var(--comet-muted);
+  }
+
+  /* =========================================================================
+     NEW — Employee Role Assignment (Multi-Role Table)
+     ========================================================================= */
+
+  .employee-roles-table {
+    width: 100%;
+    margin-top: 0.75rem;
+    table-layout: fixed;
+  }
+
+  .employee-roles-table th {
+    scope: col;
+    background-color: var(--comet-navy);
+    color: #fff;
+    font-weight: 600;
+    padding: 0.6rem;
+    text-align: left;
+    font-size: 0.85rem;
+  }
+
+  .employee-roles-table th:nth-child(1) { width: 200px; }
+  .employee-roles-table th:nth-child(2) { width: 170px; }
+
+  .employee-roles-table tbody tr {
+    border-bottom: 1px solid var(--comet-border);
+  }
+
+  .employee-roles-table tbody tr:hover {
+    background-color: var(--comet-hover-bg);
+  }
+
+  .employee-roles-table td {
+    padding: 0.7rem 0.6rem;
+    font-size: 0.85rem;
+  }
+
+  .employee-roles-table .emp-name-cell {
+    font-weight: 500;
+    min-width: 160px;
+  }
+
+  .employee-roles-table .emp-unassigned {
+    color: var(--comet-muted);
+    font-style: italic;
+  }
+
+  .primary-role-select {
+    width: 100%;
+    max-width: 160px;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--comet-border);
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+
+  .qualified-roles-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .qualified-roles-chips select {
+    width: 130px;
+    flex-shrink: 0;
+  }
+
+  .role-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem 0.3rem 0.75rem;
+    background-color: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    color: var(--comet-text);
+    white-space: nowrap;
+  }
+
+  .role-chip-remove {
+    background: none;
+    border: none;
+    padding: 0;
+    line-height: 1;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--comet-muted);
+    transition: color 0.15s ease;
+    margin-left: 0.1rem;
+  }
+
+  .role-chip-remove:hover {
+    color: var(--comet-red);
+  }
+
+  .role-chip-add-btn {
+    display: inline-block;
+    padding: 0.3rem 0.6rem;
+    background: none;
+    border: 1px dashed var(--comet-border);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: var(--comet-muted);
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .role-chip-add-btn:hover {
+    border-color: var(--comet-red);
+    color: var(--comet-red);
+  }
+
+  .qualified-roles-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: #fff;
+    border: 1px solid var(--comet-border);
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    z-index: 10;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .qualified-roles-dropdown label {
+    display: block;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+    margin: 0;
+  }
+
+  .qualified-roles-dropdown label:hover {
+    background-color: var(--comet-hover-bg);
+  }
+
+  .qualified-roles-dropdown input[type="checkbox"] {
+    margin-right: 0.5rem;
+  }
+
+  /* =========================================================================
+     NEW — Focus Visible Override (Accessibility)
+     ========================================================================= */
+
+  :focus-visible {
+    outline: 2px solid var(--comet-red);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Suppress default outline on buttons/links, rely on focus-visible */
+  button:focus,
+  a:focus,
+  input:focus,
+  select:focus,
+  textarea:focus {
+    outline: none;
+  }
+
+  /* =========================================================================
+     Traffic Heat Grid
+     ========================================================================= */
+
+  .comet-heat-grid {
+    table-layout: fixed;
+  }
+  .comet-heat-grid thead th {
+    text-align: center;
+    font-size: 0.74rem;
+    font-weight: 600;
+    background: #f8f9fa;
+    white-space: nowrap;
+  }
+  .comet-heat-grid thead th:first-child {
+    width: 110px;
+    text-align: left;
+  }
+  .comet-heat-grid th[scope="row"] {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    vertical-align: middle;
+    background: #f8f9fa;
+    white-space: nowrap;
+  }
+  .comet-heat-grid td {
+    padding: 5px 4px;
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  .comet-traffic-pill {
+    display: inline-block;
+    padding: 5px 0;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border: none;
+    cursor: pointer;
+    width: 100%;
+    max-width: 96px;
+    text-align: center;
+    transition: filter 0.1s;
+  }
+  .comet-traffic-pill:hover {
+    filter: brightness(0.9);
+  }
+  .comet-traffic-low {
+    background: #d1e7dd;
+    color: #0a3622;
+  }
+  .comet-traffic-moderate {
+    background: #fff3cd;
+    color: #664d03;
+  }
+  .comet-traffic-high {
+    background: #f8d7da;
+    color: #58151c;
   }
 
 </style>

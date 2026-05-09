@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.5.19
+     VERSION: 0.6.7
 
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -109,6 +109,7 @@
 
           // Notify each module that its view became active
           if (viewName === 'schedule' && Schedule.onShow) Schedule.onShow();
+          if (viewName === 'settings' && Settings.onShow) Settings.onShow();
           if (viewName === 'absences' && Absences.onShow) Absences.onShow();
           if (viewName === 'attendance' && AttendanceCalendar.onShow) AttendanceCalendar.onShow();
           if (viewName === 'admin' && Admin.onShow) Admin.onShow();
@@ -296,11 +297,6 @@
       if (deptSelect) {
         deptSelect.onchange = function () {
           var dept = this.value;
-          var tabsContainer = document.getElementById('scheduleTabsContainer');
-          if (!tabsContainer) {
-            console.error('scheduleTabsContainer not found');
-            return;
-          }
 
           // Clear any previously loaded schedule so the old dept's data is not
           // visible while the new dept is loading or has no schedule yet.
@@ -310,10 +306,8 @@
           _staffingRequirements = null;
           _currentMonday = null;
           _currentDept = null;
-          _sessionChangedCells = {}; // Clear session highlight on dept change
+          _sessionChangedCells = {};
 
-          // Clear the entire schedule table container (week tabs + grid) so no
-          // stale content from the previous dept remains visible.
           var tableContainer = document.getElementById('scheduleTableContainer');
           if (tableContainer) {
             tableContainer.innerHTML = '<div class="p-3 text-comet-muted small">Loading schedule…</div>';
@@ -321,179 +315,27 @@
 
           if (dept) {
             _currentDept = dept;
-            loadDeptSettings(dept);
-            loadTrafficHeatmapConfig(dept);
-            tabsContainer.style.display = '';
-            initializeScheduleTabs();
-
-            // Auto-load the most recent schedule for this dept so the manager
-            // sees something immediately without having to click Load Existing.
+            // Render readiness banner
+            renderScheduleReadinessBanner_(dept);
+            // Auto-load the most recent schedule for this dept
             _autoLoadLatestSchedule(dept);
           } else {
-            tabsContainer.style.display = 'none';
             if (tableContainer) {
-              tableContainer.innerHTML = '<div class="p-3 text-comet-muted small">Select a week and click Generate.</div>';
+              tableContainer.innerHTML = '<div class="p-3 text-comet-muted small">Select a department and week, then click Generate.</div>';
             }
+            var banner = document.getElementById('scheduleReadinessBanner');
+            if (banner) banner.style.display = 'none';
           }
         };
       } else {
         console.error('scheduleDept select element not found');
       }
 
-      // Helper: Initialize tab switching
-      function initializeScheduleTabs() {
-        var tabButtons = document.querySelectorAll('#scheduleTabsContainer [data-bs-toggle="tab"]');
-        tabButtons.forEach(function (btn) {
-          btn.onclick = function (e) {
-            e.preventDefault();
-            var targetId = btn.getAttribute('data-bs-target');
-            if (!targetId) return;
-
-            // Remove active class from all buttons and panes
-            tabButtons.forEach(function (b) { b.classList.remove('active'); });
-            document.querySelectorAll('#scheduleTabsContainer .tab-pane').forEach(function (pane) {
-              pane.classList.remove('show', 'active');
-            });
-
-            // Add active class to clicked button and target pane
-            btn.classList.add('active');
-            var targetPane = document.querySelector(targetId);
-            if (targetPane) {
-              targetPane.classList.add('show', 'active');
-
-              // If switching to heatmap tab, trigger canvas resize and redraw
-              if (targetId === '#tab-supervisor') {
-                requestAnimationFrame(function () {
-                  _dayNamesInOrder.forEach(function (day) {
-                    var canvas = document.getElementById('heatmap_canvas_' + day);
-                    if (canvas) {
-                      resizeCanvas(canvas);
-                      redrawHeatmapCanvas(canvas, day);
-                    }
-                  });
-                });
-              }
-            }
-          };
-        });
-      }
-
-      // Staffing requirements tab — show info when clicked
-      var staffingReqTabBtn = document.getElementById('tab-staffing-req-btn');
-      if (staffingReqTabBtn) {
-        staffingReqTabBtn.onclick = function (e) {
-          // Note: Bootstrap tab click is handled separately; this just shows our info toast
-          UI.showToast('Staffing requirements are configured in the Generate modal. Click Generate to adjust.', 'info');
-        };
-      }
-
       // Schedule tab buttons
       document.getElementById('btnGenerate').onclick = handleGenerate;
       document.getElementById('btnLoadExisting').onclick = handleLoadExisting;
-      document.getElementById('btnAddShift').onclick = function () {
-        var shifts = collectShiftsFromDom();
-        shifts.push({ name: '', ftpt: 'FT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 8, hasLunch: true, flexEnabled: true, flexWindowEarliest: '', flexWindowLatest: '' });
-        var newRow = buildShiftDefRow(shifts[shifts.length - 1], shifts.length - 1);
-        document.getElementById('shiftDefsBody').insertAdjacentHTML('beforeend', newRow);
-        wireDeleteButtons();
-      };
 
-      // Heatmap config handlers
-      var heatmapEnableCheckbox = document.getElementById('heatmapEnabled');
-      if (heatmapEnableCheckbox) {
-        heatmapEnableCheckbox.onchange = function () {
-          if (_currentHeatmapConfig) {
-            _currentHeatmapConfig.enabled = this.checked;
-            var controlsDiv = document.getElementById('heatmapConfigControls');
-            controlsDiv.style.display = this.checked ? '' : 'none';
-          }
-        };
-      }
-
-      var lowThresholdInput = document.getElementById('heatmapLowThreshold');
-      var highThresholdInput = document.getElementById('heatmapHighThreshold');
-      if (lowThresholdInput) {
-        lowThresholdInput.oninput = function () {
-          if (_currentHeatmapConfig) {
-            _currentHeatmapConfig.thresholds.low = parseInt(this.value, 10) || 0;
-            redrawAllHeatmapCanvases();
-          }
-        };
-      }
-      if (highThresholdInput) {
-        highThresholdInput.oninput = function () {
-          if (_currentHeatmapConfig) {
-            _currentHeatmapConfig.thresholds.high = parseInt(this.value, 10) || 0;
-            redrawAllHeatmapCanvases();
-          }
-        };
-      }
-
-      var resetHeatmapBtn = document.getElementById('btnResetHeatmap');
-      if (resetHeatmapBtn) {
-        resetHeatmapBtn.onclick = function () {
-          // Preserve the current enabled state so canvases stay visible and
-          // the feature toggle isn't accidentally turned off by a curve reset.
-          var wasEnabled = _currentHeatmapConfig && _currentHeatmapConfig.enabled;
-          _currentHeatmapConfig = JSON.parse(JSON.stringify(HEATMAP_CONFIG_DEFAULT));
-          _currentHeatmapConfig.enabled = !!wasEnabled;
-          renderHeatmapConfig(_currentHeatmapConfig);
-        };
-      }
-
-      document.getElementById('btnSaveShiftDefs').onclick = function () {
-        var dept = document.getElementById('scheduleDept').value;
-        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-        var shifts = collectShiftsFromDom();
-
-        // Validate shift definitions
-        if (shifts.length === 0) {
-          UI.showToast('Add at least one shift before saving.', 'warning'); return;
-        }
-        var shiftNames = shifts.map(function (s) { return s.name.toLowerCase(); });
-        var hasDuplicates = shiftNames.some(function (n, i) { return shiftNames.indexOf(n) !== i; });
-        if (hasDuplicates) {
-          UI.showToast('Shift names must be unique (case-insensitive).', 'warning'); return;
-        }
-        for (var i = 0; i < shifts.length; i++) {
-          if (shifts[i].paidHours <= 0 || shifts[i].paidHours > 24) {
-            UI.showToast('Shift "' + shifts[i].name + '": paid hours must be between 0.5 and 24.', 'warning'); return;
-          }
-        }
-
-        UI.callServer('saveDeptSettings', [dept, { shifts }], function () {
-          UI.showToast('Shift definitions saved.', 'success');
-        });
-      };
-      document.getElementById('btnSaveHeatmapConfig').onclick = function () {
-        if (!_currentHeatmapConfig) {
-          UI.showToast('No heatmap config loaded.', 'error');
-          return;
-        }
-        var dept = document.getElementById('scheduleDept').value;
-        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-
-        // Collect pool counts from DOM
-        _currentHeatmapConfig.pool.schedulingCounts.Low = parseInt(document.getElementById('poolCountLow').value, 10) || 0;
-        _currentHeatmapConfig.pool.schedulingCounts.Moderate = parseInt(document.getElementById('poolCountModerate').value, 10) || 0;
-        _currentHeatmapConfig.pool.schedulingCounts.High = parseInt(document.getElementById('poolCountHigh').value, 10) || 0;
-
-        UI.callServer('saveTrafficHeatmapConfig', [dept, _currentHeatmapConfig], function () {
-          UI.showToast('Heatmap configuration saved.', 'success');
-        });
-      };
-
-      document.getElementById('btnSaveEngineOptions').onclick = function () {
-        var dept = document.getElementById('scheduleDept').value;
-        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-        var engineOptions = {
-          enforceRoleMinimums: document.getElementById('engineEnforceRoleMin').checked,
-          gapFillEnabled: document.getElementById('engineGapFillEnabled').checked,
-        };
-        UI.callServer('saveDeptSettings', [dept, { engineOptions: engineOptions }], function () {
-          UI.showToast('Engine options saved.', 'success');
-        });
-      };
+      // Note: Shift defs, engine options, and heatmap config are saved from the Settings view.
 
       document.getElementById('btnAddHybridStaff').onclick = function () {
         var dept = document.getElementById('scheduleDept').value;
@@ -516,134 +358,10 @@
         });
       };
 
-      // Roles Tab Buttons
-      document.getElementById('btnAddRoleDef').onclick = function () {
-        var newRow = '<tr>'
-          + '<td><input type="text" class="form-control form-control-sm role-name" placeholder="Role name"></td>'
-          + '<td><input type="checkbox" class="form-check-input role-pool-checkbox"></td>'
-          + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
-          + '</tr>';
-        document.getElementById('roleDefsBody').insertAdjacentHTML('beforeend', newRow);
-      };
-
-      document.getElementById('btnSaveRoleDefs').onclick = function () {
-        var dept = document.getElementById('scheduleDept').value;
-        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-        var roles = [];
-        document.querySelectorAll('#roleDefsBody tr').forEach(function (tr) {
-          var nameInput = tr.querySelector('.role-name');
-          var poolCheckbox = tr.querySelector('.role-pool-checkbox');
-          if (nameInput && nameInput.value) {
-            roles.push({
-              name: nameInput.value.trim(),
-              isPoolRole: poolCheckbox ? poolCheckbox.checked : false
-            });
-          }
-        });
-        console.log('Saving roles:', roles);
-        UI.callServer('saveDeptSettings', [dept, { roles: roles }], function (response) {
-          console.log('saveDeptSettings response:', response);
-          // Handle both { ok: true, data: {...} } and direct data responses
-          var isSuccess = (response && response.ok === false) ? false : (response && response.ok) || (response && response.data && response.data.saved);
-          if (isSuccess) {
-            UI.showToast('Role definitions saved.', 'success');
-          } else {
-            UI.showToast('Failed to save role definitions: ' + (response && response.error || 'Unknown error'), 'error');
-          }
-        });
-      };
-
-      document.getElementById('btnSaveEmployeeRoles').onclick = function () {
-        var dept = document.getElementById('scheduleDept').value;
-        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-        var employeeRoles = collectEmployeeRolesFromDom();
-        console.log('Saving employee roles:', employeeRoles);
-        UI.callServer('saveDeptSettings', [dept, { employeeRoles: employeeRoles }], function (response) {
-          console.log('saveDeptSettings response:', response);
-          // Handle both { ok: true, data: {...} } and direct data responses
-          var isSuccess = (response && response.ok === false) ? false : (response && response.ok) || (response && response.data && response.data.saved);
-          if (isSuccess) {
-            UI.showToast('Employee roles saved.', 'success');
-          } else {
-            UI.showToast('Failed to save employee roles: ' + (response && response.error || 'Unknown error'), 'error');
-          }
-        });
-      };
-
-      document.getElementById('btnAddRoleMinimumCoverage').onclick = function () {
-        var newRow = '<tr>'
-          + '<td><select class="form-select form-select-sm role-min-coverage-name"></select></td>'
-          + '<td><input type="number" class="form-control form-control-sm role-min-moderate" value="1" min="0" style="width:70px;"></td>'
-          + '<td><input type="number" class="form-control form-control-sm role-min-low" value="0" min="0" style="width:70px;"></td>'
-          + '<td><input type="number" class="form-control form-control-sm role-min-high" value="1" min="0" style="width:70px;"></td>'
-          + '<td><span class="small text-muted">-</span></td>'
-          + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
-          + '</tr>';
-        document.getElementById('roleMinimumsCoverageBody').insertAdjacentHTML('beforeend', newRow);
-        // Populate the role select dropdowns
-        updateRoleMinimumSelectOptions();
-      };
-
-      document.getElementById('btnSaveRoleMinimumsCoverage').onclick = function () {
-        var dept = document.getElementById('scheduleDept').value;
-        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-        var roleMinimums = collectRoleMinimumsCoverageFromDom();
-        UI.callServer('saveDeptSettings', [dept, { roleMinimums: roleMinimums }], function (response) {
-          if (response.ok) {
-            UI.showToast('Role coverage minimums saved.', 'success');
-          } else {
-            UI.showToast('Failed to save role minimums: ' + response.error, 'error');
-          }
-        });
-      };
-
-      // Pool seniority threshold slider
-      var senioritySlider = document.getElementById('poolSeniorityYearsSlider');
-      if (senioritySlider) {
-        senioritySlider.oninput = function () {
-          updatePoolSeniorityYearsDisplay(parseInt(this.value, 10));
-        };
-      }
-
-      document.getElementById('btnSavePoolConfig').onclick = function () {
-        var dept = document.getElementById('scheduleDept').value;
-        if (!dept) { UI.showToast('Select a department first.', 'error'); return; }
-
-        // Collect pool roles from role definitions
-        var poolRoles = [];
-        document.querySelectorAll('#roleDefsBody tr').forEach(function (tr) {
-          var nameInput = tr.querySelector('.role-name');
-          var poolCheckbox = tr.querySelector('.role-pool-checkbox');
-          if (nameInput && nameInput.value && poolCheckbox && poolCheckbox.checked) {
-            poolRoles.push(nameInput.value.trim());
-          }
-        });
-
-        // Collect seniority threshold (convert years to seniorityRank)
-        var yearsSlider = document.getElementById('poolSeniorityYearsSlider');
-        var seniorityYears = yearsSlider ? parseInt(yearsSlider.value, 10) : 0;
-        // Convert years to seniorityRank: PT_BASE (100M) + (years * days/year * some factor)
-        // For simplicity, use: PT_BASE + (years * 365 * 274) to roughly match seniority progression
-        var PT_BASE = 100000000;
-        var maxSeniorityRank = PT_BASE + (seniorityYears * 365 * 274);
-
-        // Update the current heatmap config with pool settings
-        if (_currentHeatmapConfig) {
-          _currentHeatmapConfig.pool = _currentHeatmapConfig.pool || {};
-          _currentHeatmapConfig.pool.poolRoles = poolRoles;
-          _currentHeatmapConfig.pool.maxSeniorityRank = maxSeniorityRank;
-
-          UI.callServer('saveTrafficHeatmapConfig', [dept, _currentHeatmapConfig], function (response) {
-            if (response.ok) {
-              UI.showToast('Pool configuration saved.', 'success');
-            } else {
-              UI.showToast('Failed to save pool config: ' + response.error, 'error');
-            }
-          });
-        } else {
-          UI.showToast('Heatmap config not loaded. Please navigate to Traffic Heatmap tab first.', 'warning');
-        }
-      };
+      // Note: All role definition, employee role assignment, and role minimums handlers are now
+      // in the Settings module. The buttons (btnAddRoleDef, btnSaveRoleDefs, btnSaveEmployeeRoles,
+      // btnAddRoleMinimumCoverage, btnSaveRoleMinimumsCoverage, btnSavePoolConfig) are no longer
+      // in the Schedule view.
 
       // Cell override modal buttons
       document.querySelectorAll('[data-override-type]').forEach(function (btn) {
@@ -1245,6 +963,56 @@
         return displayHours + ':' + minStr + ' ' + period;
       }
       return formatTime(startTime) + ' - ' + formatTime(endTime);
+    }
+
+    // Render readiness banner with status pills
+    function renderScheduleReadinessBanner_(dept) {
+      var banner = document.getElementById('scheduleReadinessBanner');
+      if (!banner) return;
+
+      UI.callServer('getDeptSettings', dept, function (data) {
+        var pills = [];
+
+        // Check shifts
+        if (data.shifts && data.shifts.length > 0) {
+          pills.push({ text: '✓ ' + data.shifts.length + ' shifts defined', status: 'ready', section: null });
+        } else {
+          pills.push({ text: '⚠ No shifts defined', status: 'warning', section: 'shifts' });
+        }
+
+        // Check roles
+        if (data.roles && data.roles.length > 0) {
+          pills.push({ text: '✓ ' + data.roles.length + ' roles configured', status: 'ready', section: null });
+        } else {
+          pills.push({ text: '⚠ No roles defined', status: 'warning', section: 'roles' });
+        }
+
+        // Check staffing requirements
+        if (data.staffingReqs && data.staffingReqs.length === 7) {
+          pills.push({ text: '✓ Staffing requirements set', status: 'ready', section: null });
+        } else {
+          pills.push({ text: '⚠ Staffing requirements missing', status: 'warning', section: 'staffing' });
+        }
+
+        // Heatmap status (neutral)
+        if (data.heatmapEnabled) {
+          pills.push({ text: '✓ Heatmap enabled', status: 'ready', section: null });
+        } else {
+          pills.push({ text: '― Heatmap disabled', status: 'muted', section: null });
+        }
+
+        var pillsHtml = pills.map(function (pill) {
+          var cssClass = 'readiness-pill ' + (pill.status === 'ready' ? 'ready' : pill.status === 'warning' ? 'warning' : 'muted');
+          if (pill.section) {
+            return '<button type="button" class="' + cssClass + '" onclick="showSettings_(\'' + esc(pill.section) + '\')">' + esc(pill.text) + '</button>';
+          } else {
+            return '<span class="' + cssClass + '">' + esc(pill.text) + '</span>';
+          }
+        }).join('');
+
+        document.querySelector('.readiness-pills').innerHTML = pillsHtml;
+        banner.style.display = '';
+      });
     }
 
     // Expose click handlers and utilities for inline onclick attributes and modal population
@@ -2044,324 +1812,766 @@
 
 
   // ============================================================================
-  // Shared Department Settings Functions (used by both Schedule and Admin tabs)
+  // Settings Module — Department configuration (Shifts, Roles, Staffing, Engine)
   // ============================================================================
 
-  function loadDeptSettings(dept) {
-    UI.callServer('getDeptSettings', dept, function (data) {
-      renderDeptSettings(data);
-    });
-  }
+  var Settings = (function () {
+    var _currentDept = null;
+    var _cachedDepartments = null;
+    var _heatmapConfig = null;
+    var _dirtyState = {
+      shifts: false,
+      roles: false,
+      engineOptions: false,
+      heatmap: false
+    };
 
-  function renderDeptSettings(data) {
-    var reqBody = document.getElementById('staffingReqsBody');
-    if (reqBody) {
-      reqBody.innerHTML = (data.staffingReqs || []).map(function (req) {
-        return `<tr>
-          <td>${esc(req.day)}</td>
-          <td><input type="number" class="form-control form-control-sm staffing-count" value="${req.count || 0}" data-day="${esc(req.day)}" min="0" style="width:70px;"></td>
-          <td><select class="form-select form-select-sm staffing-mode" data-day="${esc(req.day)}">
-            <option value="Count"${req.mode === 'Count' ? ' selected' : ''}>Count</option>
-            <option value="Hours"${req.mode === 'Hours' ? ' selected' : ''}>Hours</option>
-          </select></td>
-        </tr>`;
-      }).join('');
-    }
+    var SETTINGS_DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-    // Shift definitions table
-    var shiftBody = document.getElementById('shiftDefsBody');
-    shiftBody.innerHTML = (data.shifts || []).map(function (s, i) {
-      return buildShiftDefRow(s, i);
-    }).join('');
-    wireDeleteButtons();
+    // Time block definitions: key, display label, and which hours map to each block.
+    // Hours outside these ranges (midnight–9am, 9pm+) are set to 0 in synthetic curves.
+    var HEATMAP_BLOCK_DEFS = [
+      { key: 'morning',   label: 'Open–11am', hours: [9, 10]           },
+      { key: 'midday',    label: '11am–2pm',  hours: [11, 12, 13]      },
+      { key: 'afternoon', label: '2pm–6pm',   hours: [14, 15, 16, 17]  },
+      { key: 'evening',   label: '6pm–Close', hours: [18, 19, 20]      },
+    ];
 
-    // Engine Options toggles
-    var engineOptions = data.engineOptions || { enforceRoleMinimums: true, gapFillEnabled: true };
-    document.getElementById('engineEnforceRoleMin').checked = engineOptions.enforceRoleMinimums !== false;
-    document.getElementById('engineGapFillEnabled').checked = engineOptions.gapFillEnabled !== false;
+    // Representative door-count values per level. These are fed into the schedule engine
+    // (which classifies using low=100, high=300 thresholds) so Low stays below 100,
+    // Moderate between 100–300, High above 300.
+    var HEATMAP_LEVEL_VALUES = { Low: 50, Moderate: 200, High: 350 };
 
-    // Role Minimums table (only render if element exists — it's in the Roles tab, not here)
-    var roleMinimumsBody = document.getElementById('roleMinimumsBody');
-    if (roleMinimumsBody) {
-      var roleMinimums = data.roleMinimums || {};
-      roleMinimumsBody.innerHTML = Object.keys(roleMinimums).map(function (roleName) {
-        var entry = roleMinimums[roleName] || {};
-        return '<tr>'
-          + '<td><input type="text" class="form-control form-control-sm" value="' + esc(roleName) + '"></td>'
-          + '<td><input type="number" class="form-control form-control-sm" value="' + (entry.Low || 0) + '" min="0"></td>'
-          + '<td><input type="number" class="form-control form-control-sm" value="' + (entry.Moderate || 0) + '" min="0"></td>'
-          + '<td><input type="number" class="form-control form-control-sm" value="' + (entry.High || 0) + '" min="0"></td>'
-          + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
-          + '</tr>';
-      }).join('');
-    }
+    // Sensible defaults matching typical Costco traffic patterns (busier weekends, Fri evening rush)
+    var HEATMAP_BLOCKS_DEFAULT = {
+      Monday:    { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
+      Tuesday:   { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
+      Wednesday: { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
+      Thursday:  { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
+      Friday:    { morning: 'Moderate', midday: 'Moderate', afternoon: 'High',     evening: 'High'     },
+      Saturday:  { morning: 'Moderate', midday: 'High',     afternoon: 'High',     evening: 'Moderate' },
+      Sunday:    { morning: 'Moderate', midday: 'High',     afternoon: 'High',     evening: 'Low'      },
+    };
 
-    // Show "Add Hybrid Staff" button only when this dept has combo participants
-    var hybridBtn = document.getElementById('btnAddHybridStaff');
-    if (hybridBtn) {
-      hybridBtn.style.display = data.hasComboParticipants ? '' : 'none';
-    }
-
-    // Load Roles tab data
-    loadRolesData(document.getElementById('scheduleDept').value);
-  }
-
-  // --- ROLES TAB FUNCTIONS ---
-
-  function loadRolesData(deptName) {
-    console.log('loadRolesData called for dept:', deptName);
-    if (!deptName) {
-      console.warn('loadRolesData: deptName is empty, returning');
-      return;
-    }
-
-    // Get dept settings (shifts, staffing reqs, role minimums, roles, employee roles)
-    UI.callServer('getDeptSettings', deptName, function (deptData) {
-      console.log('getDeptSettings response received:', deptData);
-      console.log('deptData.ok =', deptData.ok, ', deptData.error =', deptData.error);
-
-      // Handle both { ok: true, data: {...} } and direct data responses
-      var data = (deptData && deptData.ok === false) ? null : (deptData.data || deptData);
-
-      if (!data) {
-        console.error('Failed to load dept settings:', deptData.error);
-        return;
+    function onShow() {
+      // Populate dept selector on view switch
+      if (_cachedDepartments) {
+        _populateSettingsDeptSelect(_cachedDepartments);
+      } else {
+        UI.callServer('getDepartments', undefined, function (data) {
+          _cachedDepartments = data.departments || [];
+          _populateSettingsDeptSelect(_cachedDepartments);
+        });
       }
-      var roles = data.roles || [];
-      var employeeRoles = data.employeeRoles || {};
-      console.log('loadRolesData: got roles =', roles);
-      console.log('loadRolesData: got employeeRoles =', employeeRoles);
-      var poolRoles = [];
-      var seniorityYears = 0;
 
-      // If heatmap config is loaded, use its pool settings
-      if (_currentHeatmapConfig && _currentHeatmapConfig.pool) {
-        poolRoles = _currentHeatmapConfig.pool.poolRoles || [];
-        // Convert seniority rank back to years
-        var maxSeniorityRank = _currentHeatmapConfig.pool.maxSeniorityRank || 100000000;
-        var PT_BASE = 100000000;
-        if (maxSeniorityRank >= PT_BASE) {
-          seniorityYears = Math.round((maxSeniorityRank - PT_BASE) / (365 * 274));
+      var deptSelect = document.getElementById('settingsDept');
+      if (deptSelect) {
+        deptSelect.onchange = function () {
+          var dept = this.value;
+          if (dept) {
+            _currentDept = dept;
+            loadDeptSettings_(dept);
+          }
+        };
+      }
+
+      // Initialize accordion handlers
+      _initializeAccordions();
+
+      // Wire up Save buttons for each accordion section
+      _wireSaveButtons();
+    }
+
+    function _wireSaveButtons() {
+      // Add Shift button
+      var btnAddShift = document.getElementById('btnAddShift');
+      if (btnAddShift) {
+        btnAddShift.onclick = function () {
+          var shifts = collectShiftsFromDom_();
+          shifts.push({ name: '', ftpt: 'FT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 8, hasLunch: true, flexEnabled: true, flexWindowEarliest: '', flexWindowLatest: '' });
+          var newRow = buildShiftDefRow_(shifts[shifts.length - 1], shifts.length - 1);
+          document.getElementById('shiftDefsBody').insertAdjacentHTML('beforeend', newRow);
+          wireDeleteButtons_();
+        };
+      }
+
+      // Save Shifts button
+      var btnSaveShiftDefs = document.getElementById('btnSaveShiftDefs');
+      if (btnSaveShiftDefs) {
+        btnSaveShiftDefs.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          var shifts = collectShiftsFromDom_();
+          if (shifts.length === 0) { UI.showToast('Add at least one shift before saving.', 'warning'); return; }
+          var shiftNames = shifts.map(function (s) { return s.name.toLowerCase(); });
+          var hasDuplicates = shiftNames.some(function (n, i) { return shiftNames.indexOf(n) !== i; });
+          if (hasDuplicates) { UI.showToast('Shift names must be unique.', 'warning'); return; }
+          UI.callServer('saveDeptSettings', [_currentDept, { shifts: shifts }], function () {
+            UI.showToast('Shifts saved.', 'success');
+            _dirtyState.shifts = false;
+            _updateDirtyIndicators();
+          });
+        };
+      }
+
+      // Add Role Definition button
+      var btnAddRoleDef = document.getElementById('btnAddRoleDef');
+      if (btnAddRoleDef) {
+        btnAddRoleDef.onclick = function () {
+          var newRow = '<tr>'
+            + '<td><input type="text" class="form-control form-control-sm role-name" placeholder="Role name"></td>'
+            + '<td><input type="checkbox" class="form-check-input role-pool-checkbox"></td>'
+            + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
+            + '</tr>';
+          document.getElementById('roleDefsBody').insertAdjacentHTML('beforeend', newRow);
+        };
+      }
+
+      // Save Role Definitions button
+      var btnSaveRoleDefs = document.getElementById('btnSaveRoleDefs');
+      if (btnSaveRoleDefs) {
+        btnSaveRoleDefs.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          var roles = [];
+          document.querySelectorAll('#roleDefsBody tr').forEach(function (tr) {
+            var nameInput = tr.querySelector('.role-name');
+            var poolCheckbox = tr.querySelector('.role-pool-checkbox');
+            if (nameInput && nameInput.value) {
+              roles.push({ name: nameInput.value.trim(), isPoolRole: poolCheckbox ? poolCheckbox.checked : false });
+            }
+          });
+          UI.callServer('saveDeptSettings', [_currentDept, { roles: roles }], function () {
+            UI.showToast('Roles saved.', 'success');
+            _dirtyState.roles = false;
+            _updateDirtyIndicators();
+          });
+        };
+      }
+
+      // Save Employee Roles button
+      var btnSaveEmployeeRoles = document.getElementById('btnSaveEmployeeRoles');
+      if (btnSaveEmployeeRoles) {
+        btnSaveEmployeeRoles.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          var employeeRoles = collectEmployeeRolesFromDom_();
+          UI.callServer('saveDeptSettings', [_currentDept, { employeeRoles: employeeRoles }], function () {
+            UI.showToast('Employee roles saved.', 'success');
+            _dirtyState.roles = false;
+            _updateDirtyIndicators();
+          });
+        };
+      }
+
+      // Save Role Minimums button (NOTE: button ID is btnSaveRoleMinimumsCoverage in HTML)
+      var btnSaveRoleMinimums = document.getElementById('btnSaveRoleMinimumsCoverage');
+      if (btnSaveRoleMinimums) {
+        btnSaveRoleMinimums.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          var roleMinimums = {};
+          document.querySelectorAll('#roleMinimumsCoverageBody tr').forEach(function (tr) {
+            var nameInput = tr.querySelector('.role-min-name');
+            if (nameInput && nameInput.value) {
+              var name = nameInput.value.trim();
+              roleMinimums[name] = {
+                Low: parseInt(tr.querySelector('.role-min-low').value, 10) || 0,
+                Moderate: parseInt(tr.querySelector('.role-min-moderate').value, 10) || 0,
+                High: parseInt(tr.querySelector('.role-min-high').value, 10) || 0
+              };
+            }
+          });
+          UI.callServer('saveDeptSettings', [_currentDept, { roleMinimums: roleMinimums }], function () {
+            UI.showToast('Role minimums saved.', 'success');
+            _dirtyState.roles = false;
+            _updateDirtyIndicators();
+          });
+        };
+      }
+
+      // Save Staffing Requirements button
+
+      // Save Engine Options button
+      var btnSaveEngineOptions = document.getElementById('btnSaveEngineOptions');
+      if (btnSaveEngineOptions) {
+        btnSaveEngineOptions.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          var engineOptions = {
+            enforceRoleMinimums: document.getElementById('engineEnforceRoleMin').checked,
+            gapFillEnabled: document.getElementById('engineGapFillEnabled').checked
+          };
+          UI.callServer('saveDeptSettings', [_currentDept, { engineOptions: engineOptions }], function () {
+            UI.showToast('Engine options saved.', 'success');
+            _dirtyState.engineOptions = false;
+            _updateDirtyIndicators();
+          });
+        };
+      }
+
+      // Add Role Minimum Coverage button
+      var btnAddRoleMinimumCoverage = document.getElementById('btnAddRoleMinimumCoverage');
+      if (btnAddRoleMinimumCoverage) {
+        btnAddRoleMinimumCoverage.onclick = function () {
+          var newRow = '<tr>'
+            + '<td><input type="text" class="form-control form-control-sm role-min-name" placeholder="Role name"></td>'
+            + '<td><input type="number" class="form-control form-control-sm role-min-low" value="0" min="0" style="width:70px;"></td>'
+            + '<td><input type="number" class="form-control form-control-sm role-min-moderate" value="1" min="0" style="width:70px;"></td>'
+            + '<td><input type="number" class="form-control form-control-sm role-min-high" value="1" min="0" style="width:70px;"></td>'
+            + '<td><span class="small text-muted">-</span></td>'
+            + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
+            + '</tr>';
+          document.getElementById('roleMinimumsCoverageBody').insertAdjacentHTML('beforeend', newRow);
+        };
+      }
+
+      // Save Pool Config button
+      var btnSavePoolConfig = document.getElementById('btnSavePoolConfig');
+      if (btnSavePoolConfig) {
+        btnSavePoolConfig.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          UI.showToast('Pool configuration saving - feature in progress.', 'info');
+        };
+      }
+
+      // Enable/disable traffic heatmap toggle
+      var heatmapEnabledCheckbox = document.getElementById('heatmapEnabled');
+      if (heatmapEnabledCheckbox) {
+        heatmapEnabledCheckbox.onchange = function () {
+          var controls = document.getElementById('heatmapConfigControls');
+          if (controls) controls.style.display = this.checked ? '' : 'none';
+          if (_heatmapConfig) _heatmapConfig.enabled = this.checked;
+          _dirtyState.heatmap = true;
+          _updateDirtyIndicators();
+        };
+      }
+
+      // Save heatmap configuration
+      var btnSaveHeatmapConfig = document.getElementById('btnSaveHeatmapConfig');
+      if (btnSaveHeatmapConfig) {
+        btnSaveHeatmapConfig.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          var config = collectHeatmapConfigFromDom_();
+          UI.callServer('saveTrafficHeatmapConfig', [_currentDept, config], function () {
+            _heatmapConfig = config;
+            UI.showToast('Heatmap configuration saved.', 'success');
+            _dirtyState.heatmap = false;
+            _updateDirtyIndicators();
+          });
+        };
+      }
+
+      // Reset heatmap to defaults
+      var btnResetHeatmap = document.getElementById('btnResetHeatmap');
+      if (btnResetHeatmap) {
+        btnResetHeatmap.onclick = function () {
+          var wasEnabled = _heatmapConfig && _heatmapConfig.enabled;
+          _heatmapConfig = {
+            enabled: !!wasEnabled,
+            trafficBlocks: JSON.parse(JSON.stringify(HEATMAP_BLOCKS_DEFAULT)),
+            pool: { schedulingCounts: { Low: 1, Moderate: 3, High: 5 } },
+          };
+          renderHeatmapGrid_(_heatmapConfig);
+          _dirtyState.heatmap = true;
+          _updateDirtyIndicators();
+        };
+      }
+    }
+
+    function _populateSettingsDeptSelect(departments) {
+      var select = document.getElementById('settingsDept');
+      if (!select) return;
+      select.innerHTML = '<option value="">Select a department</option>'
+        + (departments || []).map(function (dept) {
+          return '<option value="' + esc(dept) + '">' + esc(dept) + '</option>';
+        }).join('');
+    }
+
+    function _initializeAccordions() {
+      // Use onclick (not addEventListener) so re-entrant onShow calls don't accumulate handlers.
+      document.querySelectorAll('.comet-accordion-header').forEach(function (header) {
+        header.onclick = function (e) {
+          e.preventDefault();
+          var card = this.closest('.comet-accordion-card');
+          if (!card) return;
+
+          var isOpen = card.classList.contains('open');
+          card.classList.toggle('open', !isOpen);
+          this.setAttribute('aria-expanded', !isOpen);
+        };
+
+        // Track changes in the accordion body for dirty state — also use onchange to avoid accumulation.
+        var body = header.nextElementSibling;
+        if (body) {
+          body.onchange = function () {
+            var sectionId = body.id;
+            if (sectionId.includes('shifts')) _dirtyState.shifts = true;
+            else if (sectionId.includes('roles')) _dirtyState.roles = true;
+            else if (sectionId.includes('engine')) _dirtyState.engineOptions = true;
+            else if (sectionId.includes('heatmap')) _dirtyState.heatmap = true;
+            _updateDirtyIndicators();
+          };
         }
-      }
+      });
+    }
 
-      // Mark roles as pool roles based on poolRoles array
-      roles.forEach(function (role) {
-        role.isPoolRole = poolRoles.indexOf(role.name) !== -1;
+    function _updateDirtyIndicators() {
+      // Add • to accordion headers that have unsaved changes
+      document.querySelectorAll('.comet-accordion-header').forEach(function (header) {
+        var span = header.querySelector('span:first-child');
+        if (!span) return;
+        var text = span.textContent.replace(' •', '');
+        var body = header.nextElementSibling;
+        var sectionId = body ? body.id : '';
+        var isDirty = false;
+        if (sectionId.includes('shifts')) isDirty = _dirtyState.shifts;
+        else if (sectionId.includes('roles')) isDirty = _dirtyState.roles;
+        else if (sectionId.includes('engine')) isDirty = _dirtyState.engineOptions;
+        else if (sectionId.includes('heatmap')) isDirty = _dirtyState.heatmap;
+        span.textContent = isDirty ? text + ' •' : text;
+      });
+    }
+
+    function loadDeptSettings_(dept) {
+      UI.callServer('getDeptSettings', dept, function (data) {
+        var accordionContainer = document.getElementById('settingsAccordion');
+        if (accordionContainer) accordionContainer.style.display = '';
+
+        renderDeptSettings_(data);
+        _dirtyState = { shifts: false, roles: false, engineOptions: false, heatmap: false };
+        _updateDirtyIndicators();
       });
 
-      renderRoleDefinitions(roles);
+      // Load heatmap config separately (stored in a different backend key)
+      UI.callServer('getTrafficHeatmapConfig', [dept], function (config) {
+        _heatmapConfig = config;
+        renderHeatmapGrid_(config);
+        _dirtyState.heatmap = false;
+        _updateDirtyIndicators();
+      });
+    }
 
-      // Get all employees and filter by department
-      console.log('loadRolesData: calling getEmployeeList');
+    function renderDeptSettings_(data) {
+      // Auto-open the first accordion (Shift Definitions) for visibility
+      var firstCard = document.querySelector('.comet-accordion-card');
+      if (firstCard) {
+        firstCard.classList.add('open');
+        var firstHeader = firstCard.querySelector('.comet-accordion-header');
+        if (firstHeader) firstHeader.setAttribute('aria-expanded', 'true');
+      }
+
+      // Staffing Requirements (tbody)
+      // Shift Definitions (tbody)
+      var shiftBody = document.getElementById('shiftDefsBody');
+      if (shiftBody) {
+        shiftBody.innerHTML = (data.shifts || []).map(function (s, i) {
+          return buildShiftDefRow_(s, i);
+        }).join('');
+        wireDeleteButtons_();
+      }
+
+      // Engine Options
+      var engineOptions = data.engineOptions || { enforceRoleMinimums: true, gapFillEnabled: true };
+      var enforceRoleMinToggle = document.getElementById('engineEnforceRoleMin');
+      var gapFillToggle = document.getElementById('engineGapFillEnabled');
+      if (enforceRoleMinToggle) enforceRoleMinToggle.checked = engineOptions.enforceRoleMinimums !== false;
+      if (gapFillToggle) gapFillToggle.checked = engineOptions.gapFillEnabled !== false;
+
+      // Load roles data
+      loadRolesData_(data);
+    }
+
+    function loadRolesData_(deptData) {
+      var roles = deptData.roles || [];
+      var employeeRoles = deptData.employeeRoles || {};
+
+      renderRoleDefinitions_(roles);
+
+      // Get all employees and filter by dept
       UI.callServer('getEmployeeList', undefined, function (empData) {
-        console.log('getEmployeeList response received:', empData);
-
-        // Handle both { ok: true, data: {...} } and direct data responses
-        var empList = (empData && empData.ok === false) ? null : (empData.data && empData.data.employees) || (empData.employees);
-
+        var empList = (empData && empData.data && empData.data.employees) || (empData && empData.employees);
         if (empList && Array.isArray(empList)) {
           var allEmployees = empList;
-          console.log('Got ' + allEmployees.length + ' total employees');
-          var normalizedDept = deptName.toLowerCase().trim();
-          console.log('Filtering for department (normalized):', normalizedDept);
+          var normalizedDept = _currentDept.toLowerCase().trim();
           var deptEmployees = allEmployees.filter(function (emp) {
             return emp.department.toLowerCase().trim() === normalizedDept;
           });
-          console.log('Filtered to ' + deptEmployees.length + ' employees for this dept');
 
-          // Apply saved employee roles
+          // Apply saved employee roles (backwards-compatible: string → {primary, qualified})
           deptEmployees.forEach(function (emp) {
-            emp.primaryRole = employeeRoles[emp.employeeId] || emp.primaryRole || '';
+            var savedRole = employeeRoles[emp.employeeId];
+            if (typeof savedRole === 'string') {
+              emp.primaryRole = savedRole;
+              emp.qualifiedRoles = [];
+            } else if (savedRole && typeof savedRole === 'object') {
+              emp.primaryRole = savedRole.primary || '';
+              emp.qualifiedRoles = savedRole.qualified || [];
+            } else {
+              emp.primaryRole = emp.primaryRole || '';
+              emp.qualifiedRoles = [];
+            }
           });
 
-          renderEmployeeRoles(deptName, deptEmployees, roles);
-        } else {
-          console.error('getEmployeeList failed: no valid employee data', empData);
+          renderEmployeeRoleTable_(deptEmployees, roles);
         }
       });
 
-      renderRoleMinimumsCoverage(data.roleMinimums || {}, roles);
-      updatePoolSeniorityYearsDisplay(seniorityYears);
-
-      var slider = document.getElementById('poolSeniorityYearsSlider');
-      if (slider) {
-        slider.value = seniorityYears;
-      }
-    });
-  }
-
-  function renderRoleDefinitions(roles) {
-    var body = document.getElementById('roleDefsBody');
-    body.innerHTML = (roles || []).map(function (role) {
-      return '<tr>'
-        + '<td><input type="text" class="form-control form-control-sm role-name" value="' + esc(role.name || '') + '"></td>'
-        + '<td style="text-align: center;"><input type="checkbox" class="form-check-input role-pool-checkbox" ' + (role.isPoolRole ? 'checked' : '') + '></td>'
-        + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
-        + '</tr>';
-    }).join('');
-  }
-
-  function renderEmployeeRoles(deptName, employees, availableRoles) {
-    var body = document.getElementById('employeeRolesBody');
-    if (employees.length === 0) {
-      body.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">No employees in this department</td></tr>';
-      return;
+      renderRoleMinimumsCoverage_(deptData.roleMinimums || {}, roles);
     }
-    body.innerHTML = (employees || []).map(function (emp) {
-      var roleOptions = (availableRoles || []).map(function (role) {
-        return '<option value="' + esc(role.name) + '"' + (emp.primaryRole === role.name ? ' selected' : '') + '>' + esc(role.name) + '</option>';
+
+    function renderRoleDefinitions_(roles) {
+      var body = document.getElementById('roleDefsBody');
+      if (!body) return;
+      body.innerHTML = (roles || []).map(function (role) {
+        return '<tr>'
+          + '<td><input type="text" class="form-control form-control-sm role-name" value="' + esc(role.name || '') + '"></td>'
+          + '<td style="text-align: center;"><input type="checkbox" class="form-check-input role-pool-checkbox" ' + (role.isPoolRole ? 'checked' : '') + '></td>'
+          + '<td><button class="btn btn-sm btn-outline-danger" aria-label="Delete role row">✕</button></td>'
+          + '</tr>';
       }).join('');
-      return '<tr>'
-        + '<td>' + esc(emp.name) + '</td>'
-        + '<td><select class="form-select form-select-sm employee-role-select" data-emp-id="' + esc(emp.employeeId) + '">' + roleOptions + '</select></td>'
-        + '<td></td>'
-        + '</tr>';
-    }).join('');
-  }
-
-  function renderRoleMinimumsCoverage(roleMinimums, availableRoles) {
-    var body = document.getElementById('roleMinimumsCoverageBody');
-    body.innerHTML = Object.keys(roleMinimums).map(function (roleName) {
-      var entry = roleMinimums[roleName] || {};
-      var moderate = entry.Moderate || 0;
-      var high = entry.High || 0;
-      var poolAdds = Math.max(0, high - moderate);
-      return '<tr>'
-        + '<td><input type="text" class="form-control form-control-sm role-min-coverage-name" value="' + esc(roleName) + '" readonly></td>'
-        + '<td><input type="number" class="form-control form-control-sm role-min-moderate" value="' + moderate + '" min="0" style="width:70px;"></td>'
-        + '<td><input type="number" class="form-control form-control-sm role-min-low" value="' + (entry.Low || 0) + '" min="0" style="width:70px;"></td>'
-        + '<td><input type="number" class="form-control form-control-sm role-min-high" value="' + high + '" min="0" style="width:70px;"></td>'
-        + '<td><span class="small text-muted">+' + poolAdds + ' (pool)</span></td>'
-        + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
-        + '</tr>';
-    }).join('');
-    updateRoleMinimumSelectOptions();
-  }
-
-  function updatePoolSeniorityYearsDisplay(years) {
-    var display = document.getElementById('poolSeniorityYearsDisplay');
-    if (!display) return;
-    if (years === 0) {
-      display.textContent = 'All employees (0 years)';
-    } else if (years === 1) {
-      display.textContent = 'Less than 1 year';
-    } else {
-      display.textContent = 'Less than ' + years + ' years';
+      document.querySelectorAll('#roleDefsBody .btn-outline-danger').forEach(function (btn) {
+        btn.onclick = function () { btn.closest('tr').remove(); };
+      });
     }
-  }
 
-  function updateRoleMinimumSelectOptions() {
-    // Get all available roles from the role defs table
-    var roleOptions = [];
-    document.querySelectorAll('#roleDefsBody .role-name').forEach(function (input) {
-      var name = input.value.trim();
-      if (name) roleOptions.push(name);
-    });
-
-    // Update all select dropdowns in the role minimums coverage table
-    document.querySelectorAll('#roleMinimumsCoverageBody .role-min-coverage-name').forEach(function (input) {
-      var currentVal = input.value;
-      if (!currentVal && roleOptions.length > 0) {
-        input.value = roleOptions[0];
+    function renderEmployeeRoleTable_(deptEmployees, availableRoles) {
+      var body = document.getElementById('employeeRolesBody');
+      if (!body) return;
+      if (deptEmployees.length === 0) {
+        body.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">No employees in this department</td></tr>';
+        return;
       }
-    });
-  }
 
-  function collectEmployeeRolesFromDom() {
-    var employeeRoles = {};
-    document.querySelectorAll('#employeeRolesBody tr').forEach(function (tr) {
-      var select = tr.querySelector('.employee-role-select');
-      if (select) {
-        var empId = select.dataset.empId;
-        var role = select.value;
-        employeeRoles[empId] = role;
-      }
-    });
-    return employeeRoles;
-  }
+      // Sort: assigned first, then unassigned
+      deptEmployees.sort(function (a, b) {
+        var aAssigned = a.primaryRole ? 0 : 1;
+        var bAssigned = b.primaryRole ? 0 : 1;
+        if (aAssigned !== bAssigned) return aAssigned - bAssigned;
+        return (a.name || '').localeCompare(b.name || '');
+      });
 
-  function collectRoleMinimumsCoverageFromDom() {
-    var roleMinimums = {};
-    document.querySelectorAll('#roleMinimumsCoverageBody tr').forEach(function (tr) {
-      var nameInput = tr.querySelector('.role-min-coverage-name');
-      var moderateInput = tr.querySelector('.role-min-moderate');
-      var lowInput = tr.querySelector('.role-min-low');
-      var highInput = tr.querySelector('.role-min-high');
+      body.innerHTML = deptEmployees.map(function (emp) {
+        var roleOptions = '<option value="">— none —</option>'
+          + (availableRoles || []).map(function (role) {
+            return '<option value="' + esc(role.name) + '"' + (emp.primaryRole === role.name ? ' selected' : '') + '>' + esc(role.name) + '</option>';
+          }).join('');
 
-      if (nameInput && nameInput.value) {
-        var name = nameInput.value.trim();
-        roleMinimums[name] = {
-          Low: parseInt(lowInput ? lowInput.value : 0, 10) || 0,
-          Moderate: parseInt(moderateInput ? moderateInput.value : 0, 10) || 0,
-          High: parseInt(highInput ? highInput.value : 0, 10) || 0,
-        };
-      }
-    });
-    return roleMinimums;
-  }
+        var qualifiedChips = (emp.qualifiedRoles || []).map(function (qRole) {
+          return buildRoleChip_(emp.employeeId, qRole);
+        }).join('');
 
-  function buildShiftDefRow(s, i) {
-    return '<tr data-shift-index="' + i + '">'
-      + '<td><input type="text" class="form-control form-control-sm shift-name" value="' + esc(s.name || '') + '"></td>'
-      + '<td><select class="form-select form-select-sm shift-ftpt">'
-      + '<option value="FT"' + (s.ftpt === 'FT' ? ' selected' : '') + '>FT</option>'
-      + '<option value="PT"' + (s.ftpt === 'PT' ? ' selected' : '') + '>PT</option>'
-      + '</select></td>'
-      + '<td><input type="time" class="form-control form-control-sm shift-weekday-start" value="' + esc(s.weekdayStart || '') + '" title="Mon–Fri anchor start time"></td>'
-      + '<td><input type="time" class="form-control form-control-sm shift-sat-start" value="' + esc(s.satStart || '') + '" title="Saturday start (blank = same as weekday)"></td>'
-      + '<td><input type="time" class="form-control form-control-sm shift-sun-start" value="' + esc(s.sunStart || '') + '" title="Sunday start (blank = same as weekday)"></td>'
-      + '<td><input type="number" class="form-control form-control-sm shift-hours" value="' + (s.paidHours || 0) + '" step="0.5" style="width:70px;"></td>'
-      + '<td><input type="checkbox" class="form-check-input shift-lunch" ' + (s.hasLunch ? 'checked' : '') + '></td>'
-      + '<td><input type="checkbox" class="form-check-input shift-flex-enabled" ' + (s.flexEnabled !== false ? 'checked' : '') + ' title="Enable flex scheduling"></td>'
-      + '<td><input type="time" class="form-control form-control-sm shift-flex-earliest" value="' + esc(s.flexWindowEarliest || '') + '" placeholder="Earliest"></td>'
-      + '<td><input type="time" class="form-control form-control-sm shift-flex-latest" value="' + esc(s.flexWindowLatest || '') + '" placeholder="Latest"></td>'
-      + '<td><button type="button" class="btn btn-outline-danger btn-sm btn-delete-shift">&#x2715;</button></td>'
-      + '</tr>';
-  }
+        var addQualifiedBtn = '<button type="button" class="btn btn-sm btn-outline-secondary btn-add-qualified" data-emp-id="' + esc(emp.employeeId) + '">+ Add</button>';
 
-  function wireDeleteButtons() {
-    document.querySelectorAll('.btn-delete-shift').forEach(function (btn) {
-      btn.onclick = function () {
-        btn.closest('tr').remove();
+        return '<tr>'
+          + '<td>' + esc(emp.name) + '</td>'
+          + '<td><select class="form-select form-select-sm employee-primary-role" data-emp-id="' + esc(emp.employeeId) + '">' + roleOptions + '</select></td>'
+          + '<td class="qualified-roles-chips">' + qualifiedChips + addQualifiedBtn + '</td>'
+          + '</tr>';
+      }).join('');
+
+      // Single delegated handler for the whole tbody — covers initial chips and dynamically added ones.
+      // Use onclick (not addEventListener) so repeated renders don't stack handlers.
+      body.onclick = function (e) {
+        var removeBtn = e.target.closest('.role-chip-remove');
+        if (removeBtn) {
+          e.preventDefault();
+          removeBtn.closest('.role-chip').remove();
+          _dirtyState.roles = true;
+          _updateDirtyIndicators();
+          return;
+        }
+        var addBtn = e.target.closest('.btn-add-qualified');
+        if (addBtn) {
+          e.preventDefault();
+          // Pass the actual button element — avoids a re-query that could find the wrong employee.
+          showAddQualifiedRoleDropdown_(addBtn, availableRoles);
+        }
       };
-    });
-  }
+    }
 
-  function collectStaffingReqsFromDom() {
-    var staffingReqs = [];
-    document.querySelectorAll('#staffingReqsBody tr').forEach(function (tr) {
-      var day = tr.querySelector('.staffing-count').dataset.day;
-      var count = parseFloat(tr.querySelector('.staffing-count').value) || 0;
-      var mode = tr.querySelector('.staffing-mode').value;
-      staffingReqs.push({ day, count, mode });
-    });
-    return staffingReqs;
-  }
+    function buildRoleChip_(empId, roleName) {
+      return '<span class="role-chip">'
+        + esc(roleName)
+        + ' <button type="button" class="role-chip-remove" data-emp-id="' + esc(empId) + '" data-role="' + esc(roleName) + '" aria-label="Remove ' + esc(roleName) + '">✕</button>'
+        + '</span>';
+    }
 
-  function collectShiftsFromDom() {
-    var shifts = [];
-    document.querySelectorAll('#shiftDefsBody tr').forEach(function (tr) {
-      var name = tr.querySelector('.shift-name').value.trim();
-      var ftpt = tr.querySelector('.shift-ftpt').value;
-      var weekdayStart = tr.querySelector('.shift-weekday-start').value || '';
-      var satStart = tr.querySelector('.shift-sat-start').value || '';
-      var sunStart = tr.querySelector('.shift-sun-start').value || '';
-      var paidHours = parseFloat(tr.querySelector('.shift-hours').value) || 0;
-      var hasLunch = tr.querySelector('.shift-lunch').checked;
-      var flexEnabledEl = tr.querySelector('.shift-flex-enabled');
-      var flexEnabled = flexEnabledEl ? flexEnabledEl.checked : true;
-      var flexWindowEarliest = tr.querySelector('.shift-flex-earliest').value || '';
-      var flexWindowLatest = tr.querySelector('.shift-flex-latest').value || '';
-      if (name) {
-        shifts.push({
-          name, ftpt, weekdayStart, satStart, sunStart, paidHours, hasLunch,
-          flexEnabled, flexWindowEarliest, flexWindowLatest
-        });
+    function showAddQualifiedRoleDropdown_(btn, availableRoles) {
+      if (!btn || !btn.parentElement) return;
+      var empId = btn.dataset.empId;
+      var row = btn.closest('tr');
+
+      // Collect roles already in use for this employee from the live DOM
+      var primarySelect = row.querySelector('.employee-primary-role');
+      var usedRoles = primarySelect && primarySelect.value ? [primarySelect.value] : [];
+      row.querySelectorAll('.role-chip-remove').forEach(function (chipBtn) {
+        usedRoles.push(chipBtn.dataset.role);
+      });
+
+      var available = (availableRoles || []).filter(function (role) {
+        return usedRoles.indexOf(role.name) === -1;
+      });
+
+      if (available.length === 0) {
+        UI.showToast('No additional roles available for this employee.', 'info');
+        return;
       }
-    });
-    return shifts;
-  }
+
+      var select = document.createElement('select');
+      select.className = 'form-select form-select-sm';
+      select.innerHTML = '<option value="">Pick a role…</option>'
+        + available.map(function (role) {
+            return '<option value="' + esc(role.name) + '">' + esc(role.name) + '</option>';
+          }).join('');
+
+      btn.replaceWith(select);
+      select.focus();
+
+      function restoreButton_() {
+        if (!select.parentElement) return;
+        var newBtn = document.createElement('button');
+        newBtn.type = 'button';
+        newBtn.className = 'btn btn-sm btn-outline-secondary btn-add-qualified';
+        newBtn.dataset.empId = empId;
+        newBtn.textContent = '+ Add';
+        // No direct onclick — delegated body.onclick covers all .btn-add-qualified clicks.
+        select.replaceWith(newBtn);
+      }
+
+      select.onchange = function () {
+        var roleName = this.value;
+        if (!roleName) return;
+        select.insertAdjacentHTML('beforebegin', buildRoleChip_(empId, roleName));
+        _dirtyState.roles = true;
+        _updateDirtyIndicators();
+        restoreButton_();
+      };
+
+      // Small delay lets onchange fire before blur dismisses the select.
+      select.onblur = function () {
+        setTimeout(restoreButton_, 150);
+      };
+    }
+
+    function renderRoleMinimumsCoverage_(roleMinimums, availableRoles) {
+      var body = document.getElementById('roleMinimumsCoverageBody');
+      if (!body) return;
+      body.innerHTML = Object.keys(roleMinimums).map(function (roleName) {
+        var entry = roleMinimums[roleName] || {};
+        var moderate = entry.Moderate || 0;
+        var high = entry.High || 0;
+        var poolAdds = Math.max(0, high - moderate);
+        return '<tr>'
+          + '<td><input type="text" class="form-control form-control-sm role-min-name" value="' + esc(roleName) + '" readonly></td>'
+          + '<td><input type="number" class="form-control form-control-sm role-min-low" value="' + (entry.Low || 0) + '" min="0" style="width:70px;"></td>'
+          + '<td><input type="number" class="form-control form-control-sm role-min-moderate" value="' + moderate + '" min="0" style="width:70px;"></td>'
+          + '<td><input type="number" class="form-control form-control-sm role-min-high" value="' + high + '" min="0" style="width:70px;"></td>'
+          + '<td><span class="small text-muted">+' + poolAdds + ' (pool)</span></td>'
+          + '<td><button class="btn btn-sm btn-outline-danger" aria-label="Delete role minimum row">✕</button></td>'
+          + '</tr>';
+      }).join('');
+      document.querySelectorAll('#accordion-roles-minimums-body .btn-outline-danger').forEach(function (btn) {
+        btn.onclick = function () { btn.closest('tr').remove(); };
+      });
+    }
+
+    function buildShiftDefRow_(s, i) {
+      return '<tr data-shift-index="' + i + '">'
+        + '<td><input type="text" class="form-control form-control-sm shift-name" value="' + esc(s.name || '') + '"></td>'
+        + '<td><select class="form-select form-select-sm shift-ftpt">'
+        + '<option value="FT"' + (s.ftpt === 'FT' ? ' selected' : '') + '>FT</option>'
+        + '<option value="PT"' + (s.ftpt === 'PT' ? ' selected' : '') + '>PT</option>'
+        + '</select></td>'
+        + '<td><input type="time" class="form-control form-control-sm shift-weekday-start" value="' + esc(s.weekdayStart || '') + '"></td>'
+        + '<td><input type="time" class="form-control form-control-sm shift-sat-start" value="' + esc(s.satStart || '') + '"></td>'
+        + '<td><input type="time" class="form-control form-control-sm shift-sun-start" value="' + esc(s.sunStart || '') + '"></td>'
+        + '<td><input type="number" class="form-control form-control-sm shift-hours" value="' + (s.paidHours || 0) + '" step="0.5" style="width:70px;"></td>'
+        + '<td><input type="checkbox" class="form-check-input shift-lunch" ' + (s.hasLunch ? 'checked' : '') + '></td>'
+        + '<td><input type="checkbox" class="form-check-input shift-flex-enabled" ' + (s.flexEnabled !== false ? 'checked' : '') + '></td>'
+        + '<td><input type="time" class="form-control form-control-sm shift-flex-earliest" value="' + esc(s.flexWindowEarliest || '') + '"></td>'
+        + '<td><input type="time" class="form-control form-control-sm shift-flex-latest" value="' + esc(s.flexWindowLatest || '') + '"></td>'
+        + '<td><button type="button" class="btn btn-outline-danger btn-sm btn-delete-shift" aria-label="Delete shift row">✕</button></td>'
+        + '</tr>';
+    }
+
+    function wireDeleteButtons_() {
+      document.querySelectorAll('.btn-delete-shift').forEach(function (btn) {
+        btn.onclick = function () { btn.closest('tr').remove(); };
+      });
+    }
+
+    function collectShiftsFromDom_() {
+      var shifts = [];
+      document.querySelectorAll('#shiftDefsBody tr').forEach(function (tr) {
+        var name = tr.querySelector('.shift-name').value.trim();
+        if (!name) return;
+        shifts.push({
+          name: name,
+          ftpt: tr.querySelector('.shift-ftpt').value || 'FT',
+          weekdayStart: tr.querySelector('.shift-weekday-start').value || '',
+          satStart: tr.querySelector('.shift-sat-start').value || '',
+          sunStart: tr.querySelector('.shift-sun-start').value || '',
+          paidHours: parseFloat(tr.querySelector('.shift-hours').value) || 0,
+          hasLunch: tr.querySelector('.shift-lunch').checked,
+          flexEnabled: tr.querySelector('.shift-flex-enabled').checked,
+          flexWindowEarliest: tr.querySelector('.shift-flex-earliest').value || '',
+          flexWindowLatest: tr.querySelector('.shift-flex-latest').value || ''
+        });
+      });
+      return shifts;
+    }
+
+    function collectEmployeeRolesFromDom_() {
+      var employeeRoles = {};
+      document.querySelectorAll('#employeeRolesBody tr').forEach(function (tr) {
+        var select = tr.querySelector('.employee-primary-role');
+        if (select) {
+          var empId = select.dataset.empId;
+          var primaryRole = select.value;
+          var qualifiedRoles = [];
+          tr.querySelectorAll('.role-chip').forEach(function (chip) {
+            var roleText = chip.textContent.trim().replace('✕', '').trim();
+            if (roleText) qualifiedRoles.push(roleText);
+          });
+          employeeRoles[empId] = {
+            primary: primaryRole,
+            qualified: qualifiedRoles
+          };
+        }
+      });
+      return employeeRoles;
+    }
+
+    /**
+     * Renders the 7×4 traffic heat grid from config.trafficBlocks.
+     * Falls back to classifying existing trafficCurves if blocks aren't present.
+     * @param {Object} config — heatmap config object
+     */
+    function renderHeatmapGrid_(config) {
+      var enableCheckbox = document.getElementById('heatmapEnabled');
+      var controls = document.getElementById('heatmapConfigControls');
+      if (!enableCheckbox || !controls) return;
+
+      enableCheckbox.checked = config.enabled || false;
+      controls.style.display = config.enabled ? '' : 'none';
+
+      // Resolve blocks: prefer trafficBlocks, fall back to classifying existing curves, then defaults
+      var blocks = config.trafficBlocks;
+      if (!blocks && config.trafficCurves) {
+        blocks = classifyCurvesToBlocks_(config.trafficCurves, config.thresholds);
+      }
+      if (!blocks) {
+        blocks = JSON.parse(JSON.stringify(HEATMAP_BLOCKS_DEFAULT));
+      }
+
+      // Pool counts
+      var counts = (config.pool && config.pool.schedulingCounts) || { Low: 1, Moderate: 3, High: 5 };
+      var poolLow = document.getElementById('poolCountLow');
+      var poolMod = document.getElementById('poolCountModerate');
+      var poolHigh = document.getElementById('poolCountHigh');
+      if (poolLow) poolLow.value = counts.Low || 1;
+      if (poolMod) poolMod.value = counts.Moderate || 3;
+      if (poolHigh) poolHigh.value = counts.High || 5;
+
+      var tbody = document.getElementById('heatmapGridBody');
+      if (!tbody) return;
+
+      tbody.innerHTML = SETTINGS_DAY_NAMES.map(function (day) {
+        var dayBlocks = blocks[day] || { morning: 'Low', midday: 'Low', afternoon: 'Low', evening: 'Low' };
+        return '<tr>'
+          + '<th scope="row" class="fw-semibold small align-middle ps-2">' + day + '</th>'
+          + HEATMAP_BLOCK_DEFS.map(function (block) {
+              var level = dayBlocks[block.key] || 'Low';
+              return '<td class="p-1">'
+                + '<button type="button" class="comet-traffic-pill comet-traffic-' + level.toLowerCase() + '" '
+                + 'data-day="' + day + '" data-block="' + block.key + '" data-level="' + level + '" '
+                + 'aria-label="' + day + ' ' + block.label + ': ' + level + '. Click to change.">'
+                + level
+                + '</button>'
+                + '</td>';
+            }).join('')
+          + '</tr>';
+      }).join('');
+
+      // Single delegated click handler on tbody — use onclick to avoid accumulation on re-render
+      tbody.onclick = function (e) {
+        var btn = e.target.closest('.comet-traffic-pill');
+        if (!btn) return;
+        var levels = ['Low', 'Moderate', 'High'];
+        var nextLevel = levels[(levels.indexOf(btn.dataset.level) + 1) % 3];
+        btn.dataset.level = nextLevel;
+        btn.textContent = nextLevel;
+        btn.className = 'comet-traffic-pill comet-traffic-' + nextLevel.toLowerCase();
+        btn.setAttribute('aria-label', btn.dataset.day + ' ' + btn.dataset.block + ': ' + nextLevel + '. Click to change.');
+        _dirtyState.heatmap = true;
+        _updateDirtyIndicators();
+      };
+    }
+
+    /**
+     * Classifies existing 24-hour trafficCurves into block levels.
+     * Used when loading old config data that pre-dates trafficBlocks.
+     * @param {Object} trafficCurves — { Monday: [0..23 values], ... }
+     * @param {Object} thresholds — { low, high }
+     * @returns {Object} trafficBlocks
+     */
+    function classifyCurvesToBlocks_(trafficCurves, thresholds) {
+      var lowThreshold = (thresholds && thresholds.low) || 100;
+      var highThreshold = (thresholds && thresholds.high) || 300;
+      var blocks = {};
+      SETTINGS_DAY_NAMES.forEach(function (day) {
+        var curve = trafficCurves[day] || [];
+        blocks[day] = {};
+        HEATMAP_BLOCK_DEFS.forEach(function (block) {
+          var maxVal = Math.max.apply(null, block.hours.map(function (h) { return curve[h] || 0; }));
+          blocks[day][block.key] = maxVal >= highThreshold ? 'High' : maxVal >= lowThreshold ? 'Moderate' : 'Low';
+        });
+      });
+      return blocks;
+    }
+
+    /**
+     * Reads the heat grid DOM and pool count inputs into a heatmap config object.
+     * Also generates synthetic 24-hour trafficCurves for the schedule engine.
+     * @returns {Object} heatmap config ready to pass to saveTrafficHeatmapConfig
+     */
+    function collectHeatmapConfigFromDom_() {
+      var enableCheckbox = document.getElementById('heatmapEnabled');
+      var trafficBlocks = {};
+      var trafficCurves = {};
+
+      document.querySelectorAll('#heatmapGridBody .comet-traffic-pill').forEach(function (btn) {
+        var day = btn.dataset.day;
+        var block = btn.dataset.block;
+        var level = btn.dataset.level;
+        if (!trafficBlocks[day]) trafficBlocks[day] = {};
+        trafficBlocks[day][block] = level;
+      });
+
+      // Generate synthetic 24-hour curves so the schedule engine can identify peak windows
+      SETTINGS_DAY_NAMES.forEach(function (day) {
+        var curve = new Array(24).fill(0);
+        var dayBlocks = trafficBlocks[day] || {};
+        HEATMAP_BLOCK_DEFS.forEach(function (block) {
+          var value = HEATMAP_LEVEL_VALUES[dayBlocks[block.key] || 'Low'];
+          block.hours.forEach(function (hour) { curve[hour] = value; });
+        });
+        trafficCurves[day] = curve;
+      });
+
+      return {
+        enabled: enableCheckbox ? enableCheckbox.checked : false,
+        thresholds: { low: 100, high: 300 },
+        trafficBlocks: trafficBlocks,
+        trafficCurves: trafficCurves,
+        pool: {
+          schedulingCounts: {
+            Low:      parseInt(document.getElementById('poolCountLow').value, 10) || 1,
+            Moderate: parseInt(document.getElementById('poolCountModerate').value, 10) || 3,
+            High:     parseInt(document.getElementById('poolCountHigh').value, 10) || 5,
+          },
+        },
+      };
+    }
+
+    return { onShow };
+  })();
 
   // ------------------------------------------------------------
   // Admin Module
@@ -3123,6 +3333,79 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  /** Navigate to Settings view and optionally open a specific accordion section. */
+  function showSettings_(sectionId) {
+    var navLink = document.querySelector('[data-view="settings"]');
+    if (navLink) {
+      navLink.click();
+      if (sectionId) {
+        setTimeout(function () {
+          var accordion = document.getElementById('accordion-' + sectionId);
+          if (accordion) {
+            var header = accordion.previousElementSibling;
+            if (header && !accordion.classList.contains('show')) {
+              header.click();
+            }
+          }
+        }, 100);
+      }
+    }
+  }
+
+  /** Focus trap: keep Tab/Shift+Tab inside modal. */
+  function trapFocus_(modalEl) {
+    var focusableElements = modalEl.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusableElements.length === 0) return;
+
+    var firstElement = focusableElements[0];
+    var lastElement = focusableElements[focusableElements.length - 1];
+
+    function handleKeyDown(e) {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement.focus();
+        }
+      } else {
+        if (document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement.focus();
+        }
+      }
+    }
+
+    modalEl.addEventListener('keydown', handleKeyDown);
+    return function removeTrapFocus() {
+      modalEl.removeEventListener('keydown', handleKeyDown);
+    };
+  }
+
+  /** Show a custom confirmation modal and execute callback on confirm. */
+  function showConfirm_(title, body, confirmLabel, onConfirm) {
+    var modal = document.getElementById('confirmModal');
+    if (!modal) {
+      console.error('confirmModal not found');
+      return;
+    }
+
+    document.getElementById('confirmModalTitle').textContent = title;
+    document.getElementById('confirmModalBody').textContent = body;
+
+    var confirmBtn = document.getElementById('btnConfirmAction');
+    if (confirmBtn) {
+      confirmBtn.textContent = confirmLabel || 'Confirm';
+      confirmBtn.onclick = function () {
+        closeModal('confirmModal');
+        if (onConfirm) onConfirm();
+      };
+    }
+
+    openModal('confirmModal');
   }
 
 
