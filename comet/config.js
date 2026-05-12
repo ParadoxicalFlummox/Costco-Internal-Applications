@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.13
+ * VERSION: 0.5.15
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -529,12 +529,6 @@ const ROLE_RULES = undefined;
 // ---------------------------------------------------------------------------
 
 /**
- * When true, the scanner logs proposals but sends no emails and writes nothing
- * to the CN_Log. Set to false to go live.
- */
-const DRY_RUN = true;
-
-/**
  * Number of days to look back when scanning for infraction windows.
  * 60 days covers two full 30-day windows and catches events near month boundaries.
  */
@@ -666,6 +660,7 @@ const CALL_LOG_COLUMN = {
   SCHEDULED_SHIFT:  10,
   COMMENT:          13,
   DATE:             14,
+  SENT:             15,
 };
 
 /** Row number where Call Log data begins (row 1 = title, row 2 = headers, row 3 = data). */
@@ -684,18 +679,10 @@ const SHEETS_EPOCH_OFFSET = 25569;
 // ---------------------------------------------------------------------------
 
 /**
- * Department-to-recipient email mapping for absence notifications.
- * Keys should match department names as they appear in the Employees sheet.
- * Update to real email addresses before go-live.
+ * Absence notification email configuration is now stored in the Settings spreadsheet.
+ * Each department's mailing list is stored in the "mailing" field of that department's JSON.
+ * See admin UI → Email Recipients to configure.
  */
-const MAILING_LIST = {
-  'Maintenance':  ['maintenance.manager@example.com'],
-  'Night Merch':  ['nightmerch.manager@example.com'],
-  'Front End':    ['frontend.manager@example.com'],
-};
-
-/** Fallback recipient used when a department has no MAILING_LIST entry. */
-const FALLBACK_EMAIL = 'gm@example.com';
 
 /**
  * Recipients for all CN notifications (new CNs and expiry notices).

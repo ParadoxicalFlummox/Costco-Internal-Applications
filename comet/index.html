@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <!-- index.html — COMET UI
-     VERSION: 0.6.3
+     VERSION: 0.7.0
 -->
 
 <head>
@@ -275,28 +275,59 @@
             </div>
 
             <div id="heatmapConfigControls" style="display:none;">
+
+              <!-- Level name customization -->
+              <div class="mb-3">
+                <p class="small fw-semibold mb-1">Traffic Level Names</p>
+                <p class="small text-muted mb-2">Rename the three levels to match your warehouse terminology.</p>
+                <div class="d-flex gap-2 flex-wrap">
+                  <div>
+                    <label class="form-label small mb-1" for="levelName0">Level 1 (lowest)</label>
+                    <input type="text" id="levelName0" class="form-control form-control-sm" style="width:110px;" value="Low" maxlength="20">
+                  </div>
+                  <div>
+                    <label class="form-label small mb-1" for="levelName1">Level 2 (middle)</label>
+                    <input type="text" id="levelName1" class="form-control form-control-sm" style="width:110px;" value="Moderate" maxlength="20">
+                  </div>
+                  <div>
+                    <label class="form-label small mb-1" for="levelName2">Level 3 (highest)</label>
+                    <input type="text" id="levelName2" class="form-control form-control-sm" style="width:110px;" value="High" maxlength="20">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Store closing times -->
+              <div class="mb-3 pt-2 border-top">
+                <p class="small fw-semibold mb-1">Store Closing Times</p>
+                <p class="small text-muted mb-2">Time blocks starting at or after closing are marked as unavailable.</p>
+                <div class="d-flex gap-3 flex-wrap align-items-end">
+                  <div>
+                    <label class="form-label small mb-1" for="closeHourWeekday">Mon–Fri close</label>
+                    <input type="time" id="closeHourWeekday" class="form-control form-control-sm" style="width:115px;" value="21:00">
+                  </div>
+                  <div>
+                    <label class="form-label small mb-1" for="closeHourSaturday">Saturday close</label>
+                    <input type="time" id="closeHourSaturday" class="form-control form-control-sm" style="width:115px;" value="18:00">
+                  </div>
+                  <div>
+                    <label class="form-label small mb-1" for="closeHourSunday">Sunday close</label>
+                    <input type="time" id="closeHourSunday" class="form-control form-control-sm" style="width:115px;" value="18:00">
+                  </div>
+                </div>
+              </div>
+
               <!-- Traffic level grid -->
-              <div class="table-responsive mb-1">
+              <div class="table-responsive mb-1 pt-2 border-top">
                 <table class="table table-bordered table-sm comet-heat-grid" id="heatmapGrid" aria-label="Traffic levels by day and time block">
-                  <thead>
-                    <tr>
-                      <th scope="col">Day</th>
-                      <th scope="col">Open–11am</th>
-                      <th scope="col">11am–2pm</th>
-                      <th scope="col">2pm–6pm</th>
-                      <th scope="col">6pm–Close</th>
-                    </tr>
+                  <thead id="heatmapGridHead">
+                    <!-- Populated by JavaScript -->
                   </thead>
                   <tbody id="heatmapGridBody">
                     <!-- Populated by JavaScript -->
                   </tbody>
                 </table>
               </div>
-              <p class="small text-muted mb-3">Click any cell to cycle:
-                <span class="badge rounded-pill" style="background:#d1e7dd;color:#0a3622;">Low</span>
-                → <span class="badge rounded-pill" style="background:#fff3cd;color:#664d03;">Moderate</span>
-                → <span class="badge rounded-pill" style="background:#f8d7da;color:#58151c;">High</span> → Low
-              </p>
+              <p class="small text-muted mb-3">Click any cell to cycle through traffic levels. Greyed cells are outside store hours.</p>
 
               <!-- Pool scheduling counts -->
               <div class="pt-2 border-top">
@@ -304,15 +335,15 @@
                 <p class="small text-muted mb-2">How many pool employees to schedule at each traffic level.</p>
                 <div class="d-flex gap-3 flex-wrap align-items-end">
                   <div>
-                    <label class="form-label small mb-1" for="poolCountLow">Low traffic</label>
+                    <label class="form-label small mb-1" for="poolCountLow"><span id="poolLabelLow">Low</span> traffic</label>
                     <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;" min="0" value="1">
                   </div>
                   <div>
-                    <label class="form-label small mb-1" for="poolCountModerate">Moderate</label>
+                    <label class="form-label small mb-1" for="poolCountModerate"><span id="poolLabelModerate">Moderate</span></label>
                     <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;" min="0" value="3">
                   </div>
                   <div>
-                    <label class="form-label small mb-1" for="poolCountHigh">High traffic</label>
+                    <label class="form-label small mb-1" for="poolCountHigh"><span id="poolLabelHigh">High</span> traffic</label>
                     <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;" min="0" value="5">
                   </div>
                 </div>
@@ -502,35 +533,32 @@
         </div>
 
 
-        <!-- Employee List -->
+        <!-- Email Recipients Configuration -->
+        <div class="col-12 col-md-6">
+          <div class="card h-100">
+            <div class="card-header fw-semibold">Email Recipients</div>
+            <div class="card-body">
+              <p class="small text-comet-muted mb-3">Manage email notifications per department.</p>
+              <div id="mailingListConfig" style="max-height: 300px; overflow-y: auto;">
+                <div class="text-comet-muted small text-center py-3">Loading…</div>
+              </div>
+              <div id="mailingListWarnings" class="mt-2"></div>
+              <button id="btnSaveMailingList" class="btn btn-primary btn-sm mt-3" style="display:none;">Save Configuration</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Employee List (Chips) -->
         <div class="col-12">
           <div class="card">
             <div class="card-header d-flex align-items-center justify-content-between fw-semibold">
-              <span>Employee List</span>
-              <input type="search" id="employeeSearch" placeholder="Search…" class="form-control form-control-sm ms-2"
-                style="max-width:220px;">
+              <span>Employee Directory</span>
+              <input type="search" id="employeeSearch" placeholder="Search by name or ID…" class="form-control form-control-sm ms-2"
+                style="max-width:280px;">
             </div>
-            <div class="card-body p-0">
-              <div class="comet-table-container" style="border:none; border-radius:0;">
-                <table class="table table-hover mb-0">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>ID</th>
-                      <th>Hire Date</th>
-                      <th>Department</th>
-                      <th>Status</th>
-                      <th>FT/PT</th>
-                      <th>Attendance</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody id="employeeTableBody">
-                    <tr>
-                      <td colspan="8" class="text-comet-muted small p-3">Loading…</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <div class="card-body">
+              <div id="employeeChipsContainer" class="d-flex flex-wrap gap-2">
+                <div class="text-comet-muted small text-center w-100 py-3">Loading…</div>
               </div>
             </div>
           </div>
@@ -834,38 +862,41 @@
 
   <!-- Attendance Code Editor Modal -->
   <div id="attendanceCodeModal" class="modal" tabindex="-1" style="display:none;">
-    <div class="modal-dialog modal-sm">
+    <div class="modal-dialog modal-sm" role="dialog" aria-modal="true" aria-labelledby="attendanceCodeModalTitle">
       <div class="modal-content">
         <div class="modal-header py-2">
           <div>
             <h5 class="modal-title mb-0" id="attendanceCodeModalTitle">Edit Codes</h5>
             <div class="text-muted" style="font-size:0.75rem;" id="attendanceCodeModalDate"></div>
           </div>
-          <button type="button" class="btn-close" data-modal="attendanceCodeModal"></button>
+          <button type="button" class="btn-close" data-modal="attendanceCodeModal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
-          <!-- Infraction codes: two columns (Tardies | Other Infractions) -->
+          <!-- Tardy codes section -->
           <div class="mb-3 pb-2 border-bottom">
             <div class="fw-semibold mb-2"
-              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Infraction Codes
+              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Tardy Codes
             </div>
-            <div class="row g-2">
-              <div class="col-6">
-                <div class="fw-semibold small mb-2">Tardies</div>
-                <div class="d-flex flex-column gap-2" id="tardyCodePicker"></div>
-              </div>
-              <div class="col-6">
-                <div class="fw-semibold small mb-2">Other</div>
-                <div class="d-flex flex-wrap gap-2" id="otherInfractionCodePicker"></div>
-              </div>
-            </div>
+            <div class="d-flex flex-wrap gap-2 align-items-center" id="tardyCodesContainer"></div>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="btnAddTardyCode">+ Add Tardy Code</button>
           </div>
+
+          <!-- Other infraction codes section -->
+          <div class="mb-3 pb-2 border-bottom">
+            <div class="fw-semibold mb-2"
+              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Other Infraction Codes
+            </div>
+            <div class="d-flex flex-wrap gap-2 align-items-center" id="otherInfractionCodesContainer"></div>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="btnAddInfractionCode">+ Add Code</button>
+          </div>
+
           <!-- Other codes section -->
           <div>
             <div class="fw-semibold mb-2"
               style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">Other Codes
             </div>
-            <div class="d-flex flex-wrap gap-2" id="otherCodePicker"></div>
+            <div class="d-flex flex-wrap gap-2 align-items-center" id="otherCodesContainer"></div>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="btnAddOtherCode">+ Add Code</button>
           </div>
         </div>
         <div class="modal-footer py-2 justify-content-between">

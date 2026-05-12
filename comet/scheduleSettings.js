@@ -67,11 +67,11 @@ function getDeptSettings_(deptName) {
  * @returns {{ saved: boolean }}
  */
 function saveDeptSettings_(deptName, data) {
+  // Ensure base structure exists and is valid
+  let fullSettings = ensureDeptSettingsBaseStructure_(deptName);
+
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = getOrCreateSettingsSheet_(workbook);
-
-  // Read the current full settings object for this department
-  let fullSettings = readDeptSettingsFromSheet_(sheet, deptName);
 
   // Merge in the new data (partial updates supported)
   if (data.staffingReqs !== undefined && data.staffingReqs !== null) {
@@ -102,6 +102,104 @@ function saveDeptSettings_(deptName, data) {
 
   SpreadsheetApp.flush();
   return { saved: true };
+}
+
+/**
+ * Ensures the base JSON structure exists for a department before any write operation.
+ * Validates and repairs corrupted settings; initializes with defaults if missing.
+ * Every function that writes settings should call this first.
+ *
+ * @param {string} deptName
+ * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object, roles: Array, employeeRoles: object }}
+ */
+function ensureDeptSettingsBaseStructure_(deptName) {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getOrCreateSettingsSheet_(workbook);
+
+  // Find or create the department row (initializes with defaults if missing)
+  const rowNumber = findOrCreateDeptRow_(sheet, deptName);
+
+  // Read back what we now have
+  const data = sheet.getDataRange().getValues();
+  const jsonCell = data[rowNumber - 1][1]; // rowNumber is 1-indexed, data array is 0-indexed
+
+  let settings;
+  try {
+    // Try to parse existing JSON
+    if (jsonCell && typeof jsonCell === 'string') {
+      settings = JSON.parse(jsonCell);
+    } else {
+      settings = null;
+    }
+  } catch (e) {
+    console.warn('ensureDeptSettingsBaseStructure_: JSON parse failed for ' + deptName + ', reinitializing with defaults');
+    settings = null;
+  }
+
+  // If JSON is missing or corrupted, rebuild from defaults
+  if (!settings || typeof settings !== 'object') {
+    settings = getDefaultDeptSettings_();
+    const jsonString = JSON.stringify(settings);
+    sheet.getRange(rowNumber, 2).setValue(jsonString);
+    console.log('ensureDeptSettingsBaseStructure_: reinitialized ' + deptName + ' with default structure');
+  }
+
+  // Validate and repair missing required fields
+  let needsRepair = false;
+
+  if (!Array.isArray(settings.staffingReqs)) {
+    settings.staffingReqs = [];
+    needsRepair = true;
+  }
+  if (!Array.isArray(settings.shifts)) {
+    settings.shifts = [];
+    needsRepair = true;
+  }
+  if (!settings.engineOptions || typeof settings.engineOptions !== 'object') {
+    settings.engineOptions = { enforceRoleMinimums: true, gapFillEnabled: true };
+    needsRepair = true;
+  }
+  if (!settings.roleMinimums || typeof settings.roleMinimums !== 'object') {
+    settings.roleMinimums = {};
+    needsRepair = true;
+  }
+  if (!Array.isArray(settings.roles)) {
+    settings.roles = [];
+    needsRepair = true;
+  }
+  if (!settings.employeeRoles || typeof settings.employeeRoles !== 'object') {
+    settings.employeeRoles = {};
+    needsRepair = true;
+  }
+
+  // Write repaired settings back if any field was missing
+  if (needsRepair) {
+    const jsonString = JSON.stringify(settings);
+    sheet.getRange(rowNumber, 2).setValue(jsonString);
+    console.log('ensureDeptSettingsBaseStructure_: repaired missing fields for ' + deptName);
+  }
+
+  return settings;
+}
+
+/**
+ * Returns the default department settings structure.
+ * Used during initialization and repair.
+ *
+ * @returns {{ staffingReqs: Array, shifts: Array, engineOptions: object, roleMinimums: object, roles: Array, employeeRoles: object }}
+ */
+function getDefaultDeptSettings_() {
+  return {
+    staffingReqs: DAY_NAMES_IN_ORDER.map(day => ({ day, count: DEFAULT_STAFFING_COUNT, mode: STAFFING_MODE.COUNT })),
+    shifts: [
+      { name: 'Morning', ftpt: 'FT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 8, hasLunch: true, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' },
+      { name: 'Morning', ftpt: 'PT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 5, hasLunch: false, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' }
+    ],
+    engineOptions: { enforceRoleMinimums: true, gapFillEnabled: true },
+    roleMinimums: {},
+    roles: [],
+    employeeRoles: {}
+  };
 }
 
 

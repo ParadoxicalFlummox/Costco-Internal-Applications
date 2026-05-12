@@ -1,6 +1,6 @@
 /**
  * callLog.js — Absence log sheet management and email notifications for COMET.
- * VERSION: 0.2.4
+ * VERSION: 0.3.0
  *
  * This file owns all server-side logic for the Absence Log feature:
  *   - Auto-creating a Call Log sheet for each new week
@@ -31,10 +31,12 @@
  *   O (14) — Date          (date value)
  *
  * EMAIL NOTIFICATION:
- *   Recipients are determined by the entry's department using MAILING_LIST
- *   from config.js. Departments not in MAILING_LIST fall back to FALLBACK_EMAIL.
- *   Emails are sent via GmailApp.sendEmail() and are always plain text.
- *   DRY_RUN = true in config.js suppresses sends and logs instead.
+ *   Recipients are determined by the entry's department from the Settings sheet.
+ *   Each department's mailing list is stored in the "mailing" field of that
+ *   department's settings JSON. If no mailing list is configured, email is suppressed
+ *   and a warning is logged. Emails are sent via GmailApp.sendEmail() and are always
+ *   plain text. The sendEmails toggle in the COMET Config sheet controls whether
+ *   emails are actually sent (true) or logged instead (false).
  */
 
 
@@ -139,33 +141,46 @@ function appendCallLogEntry_(data) {
  * Reads the row from the sheet, determines the correct recipients from
  * MAILING_LIST (config.js), and sends a plain-text email via GmailApp.
  *
- * When DRY_RUN is true (config.js), logs the email content instead of sending.
+ * When sendEmails is false in the COMET Config sheet, logs the email content
+ * instead of sending.
  *
  * @param {string} sheetName  — The Call Log sheet tab name.
  * @param {number} rowNumber  — 1-indexed row number to send notification for.
  * @returns {{ sent: boolean, recipients: string[] }}
  */
-function sendAbsenceNotification_(sheetName, rowNumber) {
+function sendAbsenceNotification_(sheetName, rowNumber, isAutoSend = false) {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = workbook.getSheetByName(sheetName);
 
   if (!sheet) throw new Error(`Call Log sheet "${sheetName}" not found.`);
 
-  const totalCols = CALL_LOG_COLUMN.DATE + 1;
+  const totalCols = CALL_LOG_COLUMN.SENT + 1;
   const row = sheet.getRange(rowNumber, 1, 1, totalCols).getValues()[0];
   const entry = rowToCallLogEntry_(row, sheetName, rowNumber);
 
   const recipients = resolveRecipients_(entry.department);
   const { subject, body } = buildEmailContent_(entry);
 
-  if (DRY_RUN) { // config.js
-    console.log(`callLog: DRY RUN — would send to ${recipients.join(', ')}\nSubject: ${subject}\n${body}`);
+  // Read sendEmails from the COMET Config sheet
+  const sendEmailsStr = getConfigSheetValue_('sendEmails'); // setup.js
+  const shouldSendEmails = sendEmailsStr !== null ? sendEmailsStr.toLowerCase() === 'true' : false;
+
+  if (!shouldSendEmails) {
+    console.log(`callLog: sendEmails disabled — would send to ${recipients.join(', ')}\nSubject: ${subject}\n${body}`);
     return { sent: false, recipients };
   }
 
   GmailApp.sendEmail(recipients.join(','), subject, body);
   console.log(`callLog: Sent absence notification for ${entry.name} to ${recipients.join(', ')}`);
-  return { sent: true, recipients };
+
+  // Mark as sent with timestamp
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const mins = String(now.getMinutes()).padStart(2, '0');
+  const sentLabel = isAutoSend ? `auto sent at ${hours}:${mins}` : `sent at ${hours}:${mins}`;
+  sheet.getRange(rowNumber, CALL_LOG_COLUMN.SENT + 1).setValue(sentLabel);
+
+  return { sent: true, recipients, sentLabel };
 }
 
 /**
@@ -219,17 +234,28 @@ function buildEmailContent_(entry) {
 
 /**
  * Resolves the list of email recipients for the given department.
- * Falls back to FALLBACK_EMAIL if the department is not in MAILING_LIST.
+ * Reads from the department's "mailing" field in the Settings sheet.
+ * If no config found, logs a warning and returns empty array (email suppressed).
  *
- * @param {string} department
- * @returns {string[]}
+ * @param {string} department — Department name to look up
+ * @returns {string[]} Array of email addresses (may be empty if not configured)
  */
 function resolveRecipients_(department) {
-  const list = MAILING_LIST[department]; // config.js
-  if (list && list.length > 0) return list;
+  try {
+    // Ensure base settings structure exists and is valid before reading mailing list
+    const settings = ensureDeptSettingsBaseStructure_(department); // scheduleSettings.js
 
-  console.warn(`callLog: No mailing list entry for department "${department}" — using fallback.`);
-  return FALLBACK_EMAIL; // config.js
+    if (settings.mailing && Array.isArray(settings.mailing) && settings.mailing.length > 0) {
+      console.log(`callLog: Resolved mailing list for "${department}" — ${settings.mailing.length} recipient(s)`);
+      return settings.mailing;
+    }
+
+    console.warn(`callLog: No mailing list configured for department "${department}"`);
+    return [];
+  } catch (error) {
+    console.error(`callLog: Error resolving recipients for "${department}" — ${error.message}`);
+    return [];
+  }
 }
 
 
@@ -272,7 +298,7 @@ function writeCallLogHeader_(sheet, date) {
     Utilities.formatDate(sunday, timeZone, 'MMM d, yyyy');
 
   // Row 1 — merged week title
-  const totalCols = CALL_LOG_COLUMN.DATE + 1;
+  const totalCols = CALL_LOG_COLUMN.SENT + 1;
   sheet.getRange(1, 1, 1, totalCols)
     .merge()
     .setValue('Call Log — Week of ' + weekLabel)
@@ -295,6 +321,7 @@ function writeCallLogHeader_(sheet, date) {
   headers[CALL_LOG_COLUMN.SCHEDULED_SHIFT]  = 'Scheduled Shift';
   headers[CALL_LOG_COLUMN.COMMENT]          = 'Comment';
   headers[CALL_LOG_COLUMN.DATE]             = 'Date';
+  headers[CALL_LOG_COLUMN.SENT]             = 'Sent';
 
   sheet.getRange(2, 1, 1, totalCols)
     .setValues([headers])
@@ -455,4 +482,83 @@ function formatCallLogTime_(cellValue) {
     return `${h}:${m}`;
   }
   return String(cellValue);
+}
+
+
+// ---------------------------------------------------------------------------
+// Auto-Send Notifications (Rolling 30-Minute Window)
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-sends absence notifications for entries logged in the last 30 minutes.
+ * Runs on a time-based trigger every 30 minutes. Marks sent entries with
+ * "auto sent at HH:MM" in the SENT column.
+ *
+ * Called by: Time-based trigger (via setup.js)
+ * Behavior: Finds all Call Log sheets for the current week, searches for
+ * unsent entries within the rolling 30-minute window, and sends notifications.
+ */
+function autoSendAbsenceNotifications_() {
+  try {
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const now = new Date();
+    const windowStart = new Date(now.getTime() - 30 * 60 * 1000); // 30 min ago
+    const timeZone = Session.getScriptTimeZone();
+
+    // Get all sheets and filter to Call Log sheets (named "Call Log MM-DD-YYYY")
+    const sheets = workbook.getSheets().filter(s => s.getName().match(/^Call Log/));
+
+    if (sheets.length === 0) {
+      console.log('callLog: No Call Log sheets found for autosend.');
+      return;
+    }
+
+    sheets.forEach(sheet => {
+      const sheetName = sheet.getName();
+      const lastRow = sheet.getLastRow();
+
+      // Data starts at row 3 (row 1 = title, row 2 = headers)
+      if (lastRow < 3) return;
+
+      const totalCols = CALL_LOG_COLUMN.SENT + 1;
+      const values = sheet.getRange(3, 1, lastRow - 2, totalCols).getValues();
+
+      values.forEach((row, index) => {
+        const rowNumber = 3 + index;
+        const sentValue = String(row[CALL_LOG_COLUMN.SENT] || '').trim();
+
+        // Skip if already sent
+        if (sentValue) return;
+
+        // Check if it's an absence entry
+        const isCallout = toBoolean_(row[CALL_LOG_COLUMN.IS_CALLOUT]);
+        const isFmla = toBoolean_(row[CALL_LOG_COLUMN.IS_FMLA]);
+        const isNoShow = toBoolean_(row[CALL_LOG_COLUMN.IS_NOSHOW]);
+        if (!isCallout && !isFmla && !isNoShow) return;
+
+        // Parse the time called
+        const timeValue = row[CALL_LOG_COLUMN.TIME];
+        const timeStr = formatCallLogTime_(timeValue);
+        if (!timeStr) return;
+
+        // Parse HH:MM and create a time for today
+        const [hours, mins] = timeStr.split(':').map(Number);
+        const entryTime = new Date(now);
+        entryTime.setHours(hours, mins, 0, 0);
+
+        // Check if entry is within the 30-minute window
+        if (entryTime < windowStart || entryTime > now) return;
+
+        // Send notification and mark as auto-sent
+        try {
+          sendAbsenceNotification_(sheetName, rowNumber, true);
+          console.log(`callLog: Auto-sent notification for row ${rowNumber} in "${sheetName}"`);
+        } catch (error) {
+          console.error(`callLog: Failed to auto-send row ${rowNumber} in "${sheetName}" — ${error.message}`);
+        }
+      });
+    });
+  } catch (error) {
+    console.error(`callLog: autoSendAbsenceNotifications failed — ${error.message}`);
+  }
 }

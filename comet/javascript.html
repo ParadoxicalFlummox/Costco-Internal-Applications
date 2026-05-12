@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.6.7
+     VERSION: 0.7.0
 
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -932,9 +932,9 @@
               var oldCell = oldGrid[ei] && oldGrid[ei][di];
               // Detect cell content change: different type or different shift/role name
               if (newCell && oldCell &&
-                  (newCell.type !== oldCell.type ||
-                   newCell.shiftName !== oldCell.shiftName ||
-                   newCell.role !== oldCell.role)) {
+                (newCell.type !== oldCell.type ||
+                  newCell.shiftName !== oldCell.shiftName ||
+                  newCell.role !== oldCell.role)) {
                 var empId = _employeeList[ei] ? _employeeList[ei].employeeId : null;
                 if (empId) {
                   _sessionChangedCells[empId + '_' + di] = true;
@@ -1102,6 +1102,7 @@
         return;
       }
       tbody.innerHTML = entries.map(function (e) {
+        var btnId = 'sendBtn_' + e.sheetName.replace(/\s+/g, '_') + '_' + e.rowNumber;
         return '<tr>'
           + '<td>' + esc(e.name) + '</td>'
           + '<td>' + esc(e.department) + '</td>'
@@ -1112,11 +1113,17 @@
           + '<td class="text-center">' + (e.isFmla ? '&#10003;' : '') + '</td>'
           + '<td class="text-center">' + (e.isNoShow ? '&#10003;' : '') + '</td>'
           + '<td>' + esc(e.comment) + '</td>'
-          + '<td><button class="btn btn-outline-primary btn-sm" '
-          + 'onclick="Absences.sendRow(' + JSON.stringify(e.sheetName) + ',' + e.rowNumber + ')">'
+          + '<td><button id="' + btnId + '" class="btn btn-outline-primary btn-sm" '
+          + 'data-sheet-name="' + esc(e.sheetName) + '" data-row-number="' + e.rowNumber + '">'
           + 'Send</button></td>'
           + '</tr>';
       }).join('');
+
+      tbody.querySelectorAll('button').forEach(function (btn) {
+        btn.addEventListener('click', function (event) {
+          sendRow(this.dataset.sheetName, parseInt(this.dataset.rowNumber, 10));
+        });
+      });
     }
 
     function handleSaveAbsence() {
@@ -1143,7 +1150,19 @@
     }
 
     function sendRow(sheetName, rowNumber) {
+      var btnId = 'sendBtn_' + sheetName.replace(/\s+/g, '_') + '_' + rowNumber;
+      var btn = document.getElementById(btnId);
+      if (!btn) return;
+
       UI.callServer('sendNotificationForRow', [sheetName, rowNumber], function () {
+        // Update button to show sent time
+        var now = new Date();
+        var hours = String(now.getHours()).padStart(2, '0');
+        var mins = String(now.getMinutes()).padStart(2, '0');
+        btn.textContent = 'Sent at ' + hours + ':' + mins;
+        btn.disabled = true;
+        btn.classList.remove('btn-outline-primary');
+        btn.classList.add('btn-success');
         UI.showToast('Notification sent.', 'success');
       });
     }
@@ -1299,6 +1318,28 @@
       var btnClearCodes = document.getElementById('btnClearAttendanceCodes');
       if (btnSave) btnSave.onclick = saveCodeModal_;
       if (btnClearCodes) btnClearCodes.onclick = clearCodeModal_;
+
+      // Delegated handler for code modal: chip removal and add button clicks
+      var codeModal = document.getElementById('attendanceCodeModal');
+      if (codeModal) {
+        codeModal.addEventListener('click', function (e) {
+          // Remove chip
+          var removeBtn = e.target.closest('.attn-code-chip-remove');
+          if (removeBtn) {
+            removeBtn.closest('.attn-code-chip').remove();
+            return;
+          }
+
+          // Add code button clicks
+          if (e.target.id === 'btnAddTardyCode') {
+            showAddCodeDropdown_(e.target, 'tardy');
+          } else if (e.target.id === 'btnAddInfractionCode') {
+            showAddCodeDropdown_(e.target, 'infraction');
+          } else if (e.target.id === 'btnAddOtherCode') {
+            showAddCodeDropdown_(e.target, 'other');
+          }
+        });
+      }
 
       // Delegated click on the calendar grid — open code editor for any day cell
       var grid = document.getElementById('calendarGrid');
@@ -1543,26 +1584,24 @@
           dayNum.textContent = d;
           dayCell.appendChild(dayNum);
 
-          // Code indicators (colored bubbles)
+          // Code indicators (inline badges)
           if (codes.length > 0) {
             dayCell.classList.add('has-codes');
             var codesContainer = document.createElement('div');
             codesContainer.className = 'comet-codes-container';
 
-            // Show up to 3 code bubbles; each displays the code text and is color-coded by type
-            codes.slice(0, 3).forEach(function (code) {
-              var dot = document.createElement('div');
-              var cssClass = 'comet-code-dot attn-badge-' + code.toLowerCase();
-              dot.className = cssClass;
-              dot.textContent = code; // Display code text inside bubble
-              dot.title = INFRACTION_CODE_LABELS[code] || OTHER_CODE_LABELS[code] || code; // show infraction code hint on hover
-              codesContainer.appendChild(dot);
+            // Show all codes as small inline badges that wrap naturally
+            var allLabels = Object.assign({}, INFRACTION_CODE_LABELS, OTHER_CODE_LABELS);
+            codes.forEach(function (code) {
+              var badge = document.createElement('span');
+              badge.className = 'comet-code-badge attn-badge-' + code.toLowerCase().replace(/\./g, '-');
+              badge.textContent = code;
+              badge.title = allLabels[code] || code;
+              codesContainer.appendChild(badge);
             });
 
-            // Cap display at 3 dots; full list is visible in the code editor modal
-            if (codes.length > 3) {
-              codesContainer.title = 'Codes: ' + codes.join(', ') + ' — click to edit';
-            }
+            // Set aria-label with full code list for accessibility
+            codesContainer.setAttribute('aria-label', 'Codes: ' + codes.join(', '));
 
             dayCell.appendChild(codesContainer);
           }
@@ -1607,150 +1646,171 @@
       var codesObj = calendarYearCache[cacheKey] || {};
       var codeList = codesObj[isoDate] || [];
 
-      // Count occurrences of each code (e.g., two TD-1s → count[TD-1] = 2)
-      var codeCounts = {};
-      codeList.forEach(function (code) {
-        codeCounts[code] = (codeCounts[code] || 0) + 1;
-      });
-
-      // Populate tardy codes (counters) in left column
-      var tardyPicker = document.getElementById('tardyCodePicker');
-      if (tardyPicker) {
-        tardyPicker.innerHTML = '';
-        ['TD-1', 'TD-2', 'TD-3'].forEach(function (code) {
-          var count = codeCounts[code] || 0;
-          tardyPicker.appendChild(makeCodeCounter_(code, INFRACTION_CODE_LABELS[code], count));
-        });
-      }
-
-      // Populate other infraction codes (toggles) in right column
-      var otherInfractionPicker = document.getElementById('otherInfractionCodePicker');
-      if (otherInfractionPicker) {
-        otherInfractionPicker.innerHTML = '';
-        ['NS', 'SE', 'MP', 'SZ'].forEach(function (code) {
-          var isActive = (codeCounts[code] || 0) > 0;
-          otherInfractionPicker.appendChild(makeCodeToggle_(code, INFRACTION_CODE_LABELS[code], isActive));
-        });
-      }
-
-      // Populate other codes (toggles) in separate section below
-      var otherPicker = document.getElementById('otherCodePicker');
-      if (otherPicker) {
-        otherPicker.innerHTML = '';
-        Object.keys(OTHER_CODE_LABELS).forEach(function (code) {
-          var isActive = (codeCounts[code] || 0) > 0;
-          otherPicker.appendChild(makeCodeToggle_(code, OTHER_CODE_LABELS[code], isActive));
-        });
-      }
-
+      // Render code chips in the three containers
+      renderCodeChips_(codeList);
       openModal('attendanceCodeModal');
     }
 
-    function makeCodeCounter_(code, label, count) {
-      var container = document.createElement('div');
-      container.style.display = 'inline-flex';
-      container.style.alignItems = 'center';
-      container.style.gap = '4px';
-      container.style.marginBottom = '4px';
-      container.style.padding = '4px 8px';
-      container.style.borderRadius = '4px';
-      container.style.backgroundColor = '#f0f0f0';
+    /**
+     * Renders code chips for the modal.
+     * @param {Array} codeList — array of code strings (can have duplicates)
+     */
+    function renderCodeChips_(codeList) {
+      var tardyContainer = document.getElementById('tardyCodesContainer');
+      var infractionContainer = document.getElementById('otherInfractionCodesContainer');
+      var otherContainer = document.getElementById('otherCodesContainer');
 
-      // Code label
-      var label_ = document.createElement('span');
-      label_.textContent = code;
-      label_.style.fontWeight = '700';
-      label_.style.minWidth = '50px';
-      label_.title = label;
-      label_.className = 'attn-badge-' + code.toLowerCase().replace(/\./g, '-');
-      label_.style.padding = '2px 6px';
-      label_.style.borderRadius = '3px';
-      label_.style.color = '#fff';
-      label_.style.textShadow = '0 1px 2px rgba(0,0,0,0.3)';
-      container.appendChild(label_);
+      // Clear containers
+      if (tardyContainer) tardyContainer.innerHTML = '';
+      if (infractionContainer) infractionContainer.innerHTML = '';
+      if (otherContainer) otherContainer.innerHTML = '';
 
-      // Minus button
-      var btnMinus = document.createElement('button');
-      btnMinus.type = 'button';
-      btnMinus.textContent = '−';
-      btnMinus.style.minWidth = '28px';
-      btnMinus.style.padding = '2px 4px';
-      btnMinus.className = 'btn btn-sm btn-outline-secondary';
-      btnMinus.addEventListener('click', function () {
-        if (parseInt(countDisplay.textContent) > 0) {
-          countDisplay.textContent = parseInt(countDisplay.textContent) - 1;
+      // Build chips for each code
+      codeList.forEach(function (code) {
+        var html = buildCodeChip_(code);
+        if (['TD-1', 'TD-2', 'TD-3'].includes(code)) {
+          if (tardyContainer) tardyContainer.insertAdjacentHTML('beforeend', html);
+        } else if (['NS', 'SE', 'MP', 'SZ'].includes(code)) {
+          if (infractionContainer) infractionContainer.insertAdjacentHTML('beforeend', html);
+        } else {
+          if (otherContainer) otherContainer.insertAdjacentHTML('beforeend', html);
         }
       });
-      container.appendChild(btnMinus);
-
-      // Count display
-      var countDisplay = document.createElement('span');
-      countDisplay.textContent = count;
-      countDisplay.style.minWidth = '20px';
-      countDisplay.style.textAlign = 'center';
-      countDisplay.style.fontWeight = '700';
-      countDisplay.title = 'Count for this code';
-      countDisplay.dataset.code = code;
-      container.appendChild(countDisplay);
-
-      // Plus button
-      var btnPlus = document.createElement('button');
-      btnPlus.type = 'button';
-      btnPlus.textContent = '+';
-      btnPlus.style.minWidth = '28px';
-      btnPlus.style.padding = '2px 4px';
-      btnPlus.className = 'btn btn-sm btn-outline-secondary';
-      btnPlus.addEventListener('click', function () {
-        countDisplay.textContent = parseInt(countDisplay.textContent) + 1;
-      });
-      container.appendChild(btnPlus);
-
-      return container;
     }
 
-    function makeCodeToggle_(code, label, isActive) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.dataset.code = code;
-      btn.textContent = code;
-      btn.title = label;
-      btn.className = 'btn btn-sm comet-code-toggle attn-badge-' + code.toLowerCase().replace(/\./g, '-');
-      if (isActive) btn.classList.add('active');
-      btn.addEventListener('click', function (e) {
-        e.preventDefault();
-        btn.classList.toggle('active');
+    /**
+     * Builds HTML for a removable code chip.
+     * @param {string} code
+     * @returns {string}
+     */
+    function buildCodeChip_(code) {
+      var allLabels = Object.assign({}, INFRACTION_CODE_LABELS, OTHER_CODE_LABELS);
+      var label = allLabels[code] || code;
+      return '<span class="attn-code-chip">'
+        + esc(code) + ' '
+        + '<button type="button" class="attn-code-chip-remove" data-code="' + esc(code) + '" aria-label="Remove ' + esc(code) + '">✕</button>'
+        + '</span>';
+    }
+
+    /**
+     * Gets the list of codes already present in the modal (excluding the one being added).
+     * @returns {Array}
+     */
+    function getSelectedCodesInModal_() {
+      var selected = [];
+      document.querySelectorAll('.attn-code-chip').forEach(function (chip) {
+        var btn = chip.querySelector('.attn-code-chip-remove');
+        if (btn && btn.dataset.code) {
+          selected.push(btn.dataset.code);
+        }
       });
-      return btn;
+      return selected;
+    }
+
+    /**
+     * Gets all available codes (all keys from both label objects).
+     * @returns {Array}
+     */
+    function getAllAvailableCodes_() {
+      var allLabels = Object.assign({}, INFRACTION_CODE_LABELS, OTHER_CODE_LABELS);
+      return Object.keys(allLabels);
+    }
+
+    /**
+     * Shows an inline dropdown to add a code, replacing the clicked button.
+     * @param {Element} btn — the "+ Add Code" button that was clicked
+     * @param {string} codeType — 'tardy', 'infraction', or 'other'
+     */
+    function showAddCodeDropdown_(btn, codeType) {
+      if (!btn) return;
+
+      // Filter available codes based on type
+      var availableCodes;
+      if (codeType === 'tardy') {
+        availableCodes = ['TD-1', 'TD-2', 'TD-3'];
+      } else if (codeType === 'infraction') {
+        availableCodes = ['NS', 'SE', 'MP', 'SZ'];
+      } else {
+        availableCodes = Object.keys(OTHER_CODE_LABELS);
+      }
+
+      // Build select with all available codes
+      var select = document.createElement('select');
+      select.className = 'form-select form-select-sm';
+      select.style.width = '130px';
+      select.style.marginTop = '0.5rem';
+
+      var option = document.createElement('option');
+      option.value = '';
+      option.textContent = '— Select code —';
+      select.appendChild(option);
+
+      var allLabels = Object.assign({}, INFRACTION_CODE_LABELS, OTHER_CODE_LABELS);
+      availableCodes.forEach(function (code) {
+        var opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = code;
+        opt.title = allLabels[code];
+        select.appendChild(opt);
+      });
+
+      select.onchange = function () {
+        var code = select.value;
+        if (!code) return;
+
+        // Get the container that precedes the button
+        var container;
+        if (codeType === 'tardy') {
+          container = document.getElementById('tardyCodesContainer');
+        } else if (codeType === 'infraction') {
+          container = document.getElementById('otherInfractionCodesContainer');
+        } else {
+          container = document.getElementById('otherCodesContainer');
+        }
+
+        if (container) {
+          // Add chip to container
+          var html = buildCodeChip_(code);
+          container.insertAdjacentHTML('beforeend', html);
+        }
+
+        select.value = '';
+        select.focus();
+      };
+
+      select.onblur = function () {
+        setTimeout(function () {
+          if (select.parentElement) {
+            btn.style.display = '';
+            select.remove();
+          }
+        }, 150);
+      };
+
+      // Hide the button and replace with select
+      btn.style.display = 'none';
+      btn.parentElement.insertBefore(select, btn);
+      select.focus();
     }
 
     function clearCodeModal_() {
-      // Clear counters in tardy section (set to 0)
-      document.querySelectorAll('#tardyCodePicker span[data-code]')
-        .forEach(function (span) { span.textContent = '0'; });
-      // Clear all toggles (remove active class)
-      document.querySelectorAll('#otherInfractionCodePicker .comet-code-toggle, #otherCodePicker .comet-code-toggle')
-        .forEach(function (btn) { btn.classList.remove('active'); });
+      // Clear all chips
+      document.querySelectorAll('.attn-code-chip').forEach(function (chip) {
+        chip.remove();
+      });
     }
 
     function saveCodeModal_() {
       try {
         var selected = [];
 
-        // Read counts from tardy code counters (TD-1, TD-2, TD-3)
-        document.querySelectorAll('#tardyCodePicker span[data-code]')
-          .forEach(function (span) {
-            var code = span.dataset.code;
-            var count = parseInt(span.textContent) || 0;
-            for (var i = 0; i < count; i++) {
-              selected.push(code);
-            }
-          });
-
-        // Read toggle states from both infraction and other code buttons
-        document.querySelectorAll('#otherInfractionCodePicker .comet-code-toggle.active, #otherCodePicker .comet-code-toggle.active')
-          .forEach(function (btn) {
+        // Collect all chips and extract codes
+        document.querySelectorAll('.attn-code-chip').forEach(function (chip) {
+          var btn = chip.querySelector('.attn-code-chip-remove');
+          if (btn && btn.dataset.code) {
             selected.push(btn.dataset.code);
-          });
+          }
+        });
 
         var isoDate = _codeModalDate;
 
@@ -1828,29 +1888,36 @@
 
     var SETTINGS_DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-    // Time block definitions: key, display label, and which hours map to each block.
-    // Hours outside these ranges (midnight–9am, 9pm+) are set to 0 in synthetic curves.
+    // Two-hour block definitions: key, display label, start hour (for closing-time comparison), and hour indices.
+    // Blocks whose startHour >= the day's closing hour are rendered as "Closed" (non-interactive).
     var HEATMAP_BLOCK_DEFS = [
-      { key: 'morning',   label: 'Open–11am', hours: [9, 10]           },
-      { key: 'midday',    label: '11am–2pm',  hours: [11, 12, 13]      },
-      { key: 'afternoon', label: '2pm–6pm',   hours: [14, 15, 16, 17]  },
-      { key: 'evening',   label: '6pm–Close', hours: [18, 19, 20]      },
+      { key: 'b1', label: '9–11am', startHour: 9, hours: [9, 10] },
+      { key: 'b2', label: '11am–1pm', startHour: 11, hours: [11, 12] },
+      { key: 'b3', label: '1–3pm', startHour: 13, hours: [13, 14] },
+      { key: 'b4', label: '3–5pm', startHour: 15, hours: [15, 16] },
+      { key: 'b5', label: '5–7pm', startHour: 17, hours: [17, 18] },
+      { key: 'b6', label: '7pm–Close', startHour: 19, hours: [19, 20] },
     ];
+
+    // Default closing hours (24h integer) per day group.
+    // Saturday/Sunday typically close earlier; blocks starting at or after this hour are "Closed".
+    var HEATMAP_CLOSING_HOURS_DEFAULT = { weekday: 21, saturday: 19, sunday: 18 };
 
     // Representative door-count values per level. These are fed into the schedule engine
     // (which classifies using low=100, high=300 thresholds) so Low stays below 100,
     // Moderate between 100–300, High above 300.
     var HEATMAP_LEVEL_VALUES = { Low: 50, Moderate: 200, High: 350 };
 
-    // Sensible defaults matching typical Costco traffic patterns (busier weekends, Fri evening rush)
+    // Sensible defaults matching typical Costco traffic patterns (busier weekends, Fri evening rush).
+    // Saturday/Sunday b6 values don't matter — those blocks are rendered as Closed by default.
     var HEATMAP_BLOCKS_DEFAULT = {
-      Monday:    { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
-      Tuesday:   { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
-      Wednesday: { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
-      Thursday:  { morning: 'Low',      midday: 'Moderate', afternoon: 'Moderate', evening: 'Moderate' },
-      Friday:    { morning: 'Moderate', midday: 'Moderate', afternoon: 'High',     evening: 'High'     },
-      Saturday:  { morning: 'Moderate', midday: 'High',     afternoon: 'High',     evening: 'Moderate' },
-      Sunday:    { morning: 'Moderate', midday: 'High',     afternoon: 'High',     evening: 'Low'      },
+      Monday: { b1: 'Low', b2: 'Moderate', b3: 'Moderate', b4: 'Moderate', b5: 'Moderate', b6: 'Low' },
+      Tuesday: { b1: 'Low', b2: 'Moderate', b3: 'Moderate', b4: 'Moderate', b5: 'Moderate', b6: 'Low' },
+      Wednesday: { b1: 'Low', b2: 'Moderate', b3: 'Moderate', b4: 'Moderate', b5: 'Moderate', b6: 'Low' },
+      Thursday: { b1: 'Low', b2: 'Moderate', b3: 'Moderate', b4: 'Moderate', b5: 'High', b6: 'High' },
+      Friday: { b1: 'Moderate', b2: 'Moderate', b3: 'High', b4: 'High', b5: 'High', b6: 'High' },
+      Saturday: { b1: 'Moderate', b2: 'High', b3: 'High', b4: 'High', b5: 'Moderate', b6: 'Low' },
+      Sunday: { b1: 'Moderate', b2: 'High', b3: 'High', b4: 'Moderate', b5: 'Low', b6: 'Low' },
     };
 
     function onShow() {
@@ -2065,6 +2132,8 @@
           _heatmapConfig = {
             enabled: !!wasEnabled,
             trafficBlocks: JSON.parse(JSON.stringify(HEATMAP_BLOCKS_DEFAULT)),
+            levelNames: ['Low', 'Moderate', 'High'],
+            closingHours: JSON.parse(JSON.stringify(HEATMAP_CLOSING_HOURS_DEFAULT)),
             pool: { schedulingCounts: { Low: 1, Moderate: 3, High: 5 } },
           };
           renderHeatmapGrid_(_heatmapConfig);
@@ -2072,6 +2141,47 @@
           _updateDirtyIndicators();
         };
       }
+
+      // Level name inputs — update pill display names in real-time without full re-render
+      [0, 1, 2].forEach(function (index) {
+        var input = document.getElementById('levelName' + index);
+        if (!input) return;
+        input.oninput = function () {
+          var levelNames = getLevelNamesFromDom_();
+          _updatePoolLabels_(levelNames);
+          var canonicalLevels = ['Low', 'Moderate', 'High'];
+          document.querySelectorAll('#heatmapGridBody .comet-traffic-pill:not(.comet-traffic-closed)').forEach(function (btn) {
+            var idx = canonicalLevels.indexOf(btn.dataset.level);
+            if (idx >= 0) {
+              btn.textContent = levelNames[idx] || canonicalLevels[idx];
+              btn.setAttribute('aria-label', btn.dataset.day + ' ' + btn.dataset.block + ': ' + (levelNames[idx] || canonicalLevels[idx]) + '. Click to change.');
+            }
+          });
+          _dirtyState.heatmap = true;
+          _updateDirtyIndicators();
+        };
+      });
+
+      // Closing hour inputs — re-render grid on change, preserving unsaved pill states
+      ['closeHourWeekday', 'closeHourSaturday', 'closeHourSunday'].forEach(function (id) {
+        var input = document.getElementById(id);
+        if (!input) return;
+        input.onchange = function () {
+          if (!_heatmapConfig) return;
+          // Snapshot current pill states so unsaved edits survive the re-render
+          var currentBlocks = {};
+          document.querySelectorAll('#heatmapGridBody .comet-traffic-pill:not(.comet-traffic-closed)').forEach(function (btn) {
+            if (!currentBlocks[btn.dataset.day]) currentBlocks[btn.dataset.day] = {};
+            currentBlocks[btn.dataset.day][btn.dataset.block] = btn.dataset.level;
+          });
+          _heatmapConfig.trafficBlocks = currentBlocks;
+          _heatmapConfig.closingHours = getClosingHoursFromDom_();
+          _heatmapConfig.levelNames = getLevelNamesFromDom_();
+          renderHeatmapGrid_(_heatmapConfig);
+          _dirtyState.heatmap = true;
+          _updateDirtyIndicators();
+        };
+      });
     }
 
     function _populateSettingsDeptSelect(departments) {
@@ -2317,8 +2427,8 @@
       select.className = 'form-select form-select-sm';
       select.innerHTML = '<option value="">Pick a role…</option>'
         + available.map(function (role) {
-            return '<option value="' + esc(role.name) + '">' + esc(role.name) + '</option>';
-          }).join('');
+          return '<option value="' + esc(role.name) + '">' + esc(role.name) + '</option>';
+        }).join('');
 
       btn.replaceWith(select);
       select.focus();
@@ -2439,8 +2549,9 @@
     }
 
     /**
-     * Renders the 7×4 traffic heat grid from config.trafficBlocks.
-     * Falls back to classifying existing trafficCurves if blocks aren't present.
+     * Renders the 7×6 traffic heat grid from config.trafficBlocks.
+     * Populates level name inputs, closing time inputs, pool counts, and the grid.
+     * Blocks whose startHour >= the day's closing hour render as non-interactive "Closed" cells.
      * @param {Object} config — heatmap config object
      */
     function renderHeatmapGrid_(config) {
@@ -2451,16 +2562,30 @@
       enableCheckbox.checked = config.enabled || false;
       controls.style.display = config.enabled ? '' : 'none';
 
-      // Resolve blocks: prefer trafficBlocks, fall back to classifying existing curves, then defaults
-      var blocks = config.trafficBlocks;
-      if (!blocks && config.trafficCurves) {
-        blocks = classifyCurvesToBlocks_(config.trafficCurves, config.thresholds);
-      }
-      if (!blocks) {
-        blocks = JSON.parse(JSON.stringify(HEATMAP_BLOCKS_DEFAULT));
-      }
+      // Resolve blocks, falling back to defaults if not present
+      var blocks = config.trafficBlocks || JSON.parse(JSON.stringify(HEATMAP_BLOCKS_DEFAULT));
 
-      // Pool counts
+      // Resolve level names and closing hours from config (fall back to defaults)
+      var levelNames = (config.levelNames && config.levelNames.length === 3)
+        ? config.levelNames
+        : ['Low', 'Moderate', 'High'];
+      var closingHours = config.closingHours || HEATMAP_CLOSING_HOURS_DEFAULT;
+
+      // Populate level name inputs
+      [0, 1, 2].forEach(function (index) {
+        var input = document.getElementById('levelName' + index);
+        if (input) input.value = levelNames[index];
+      });
+
+      // Populate closing hour inputs
+      var weekdayEl = document.getElementById('closeHourWeekday');
+      var satEl = document.getElementById('closeHourSaturday');
+      var sunEl = document.getElementById('closeHourSunday');
+      if (weekdayEl) weekdayEl.value = formatHourToTimeString_(closingHours.weekday || 21);
+      if (satEl) satEl.value = formatHourToTimeString_(closingHours.saturday || 18);
+      if (sunEl) sunEl.value = formatHourToTimeString_(closingHours.sunday || 18);
+
+      // Pool counts and labels
       var counts = (config.pool && config.pool.schedulingCounts) || { Low: 1, Moderate: 3, High: 5 };
       var poolLow = document.getElementById('poolCountLow');
       var poolMod = document.getElementById('poolCountModerate');
@@ -2468,75 +2593,126 @@
       if (poolLow) poolLow.value = counts.Low || 1;
       if (poolMod) poolMod.value = counts.Moderate || 3;
       if (poolHigh) poolHigh.value = counts.High || 5;
+      _updatePoolLabels_(levelNames);
 
+      // Build dynamic thead
+      var thead = document.getElementById('heatmapGridHead');
+      if (thead) {
+        thead.innerHTML = '<tr>'
+          + '<th scope="col" class="ps-2">Day</th>'
+          + HEATMAP_BLOCK_DEFS.map(function (block) {
+            return '<th scope="col">' + block.label + '</th>';
+          }).join('')
+          + '</tr>';
+      }
+
+      // Build tbody — closed cells for blocks beyond the day's closing hour
       var tbody = document.getElementById('heatmapGridBody');
       if (!tbody) return;
 
+      var canonicalLevels = ['Low', 'Moderate', 'High'];
+
       tbody.innerHTML = SETTINGS_DAY_NAMES.map(function (day) {
-        var dayBlocks = blocks[day] || { morning: 'Low', midday: 'Low', afternoon: 'Low', evening: 'Low' };
+        var closingHour = getClosingHourForDay_(day, closingHours);
+        var dayBlocks = blocks[day] || {};
         return '<tr>'
           + '<th scope="row" class="fw-semibold small align-middle ps-2">' + day + '</th>'
           + HEATMAP_BLOCK_DEFS.map(function (block) {
-              var level = dayBlocks[block.key] || 'Low';
-              return '<td class="p-1">'
-                + '<button type="button" class="comet-traffic-pill comet-traffic-' + level.toLowerCase() + '" '
-                + 'data-day="' + day + '" data-block="' + block.key + '" data-level="' + level + '" '
-                + 'aria-label="' + day + ' ' + block.label + ': ' + level + '. Click to change.">'
-                + level
-                + '</button>'
-                + '</td>';
-            }).join('')
+            if (block.startHour >= closingHour) {
+              return '<td class="p-1"><span class="comet-traffic-pill comet-traffic-closed">Closed</span></td>';
+            }
+            var canonical = dayBlocks[block.key] || 'Low';
+            var displayName = levelNames[canonicalLevels.indexOf(canonical)] || canonical;
+            return '<td class="p-1">'
+              + '<button type="button" class="comet-traffic-pill comet-traffic-' + canonical.toLowerCase() + '" '
+              + 'data-day="' + day + '" data-block="' + block.key + '" data-level="' + canonical + '" '
+              + 'aria-label="' + day + ' ' + block.label + ': ' + displayName + '. Click to change.">'
+              + displayName
+              + '</button>'
+              + '</td>';
+          }).join('')
           + '</tr>';
       }).join('');
 
-      // Single delegated click handler on tbody — use onclick to avoid accumulation on re-render
+      // Single delegated click handler — use onclick to prevent accumulation on re-render
       tbody.onclick = function (e) {
-        var btn = e.target.closest('.comet-traffic-pill');
+        var btn = e.target.closest('.comet-traffic-pill:not(.comet-traffic-closed)');
         if (!btn) return;
-        var levels = ['Low', 'Moderate', 'High'];
-        var nextLevel = levels[(levels.indexOf(btn.dataset.level) + 1) % 3];
-        btn.dataset.level = nextLevel;
-        btn.textContent = nextLevel;
-        btn.className = 'comet-traffic-pill comet-traffic-' + nextLevel.toLowerCase();
-        btn.setAttribute('aria-label', btn.dataset.day + ' ' + btn.dataset.block + ': ' + nextLevel + '. Click to change.');
+        var nextCanonical = canonicalLevels[(canonicalLevels.indexOf(btn.dataset.level) + 1) % 3];
+        var currentLevelNames = getLevelNamesFromDom_();
+        var displayName = currentLevelNames[canonicalLevels.indexOf(nextCanonical)] || nextCanonical;
+        btn.dataset.level = nextCanonical;
+        btn.textContent = displayName;
+        btn.className = 'comet-traffic-pill comet-traffic-' + nextCanonical.toLowerCase();
+        btn.setAttribute('aria-label', btn.dataset.day + ' ' + btn.dataset.block + ': ' + displayName + '. Click to change.');
         _dirtyState.heatmap = true;
         _updateDirtyIndicators();
       };
     }
 
-    /**
-     * Classifies existing 24-hour trafficCurves into block levels.
-     * Used when loading old config data that pre-dates trafficBlocks.
-     * @param {Object} trafficCurves — { Monday: [0..23 values], ... }
-     * @param {Object} thresholds — { low, high }
-     * @returns {Object} trafficBlocks
-     */
-    function classifyCurvesToBlocks_(trafficCurves, thresholds) {
-      var lowThreshold = (thresholds && thresholds.low) || 100;
-      var highThreshold = (thresholds && thresholds.high) || 300;
-      var blocks = {};
-      SETTINGS_DAY_NAMES.forEach(function (day) {
-        var curve = trafficCurves[day] || [];
-        blocks[day] = {};
-        HEATMAP_BLOCK_DEFS.forEach(function (block) {
-          var maxVal = Math.max.apply(null, block.hours.map(function (h) { return curve[h] || 0; }));
-          blocks[day][block.key] = maxVal >= highThreshold ? 'High' : maxVal >= lowThreshold ? 'Moderate' : 'Low';
-        });
+    /** Returns closing hour (integer) for a given day name from a closingHours config object. */
+    function getClosingHourForDay_(day, closingHours) {
+      if (day === 'Saturday') return closingHours.saturday || 18;
+      if (day === 'Sunday') return closingHours.sunday || 18;
+      return closingHours.weekday || 21;
+    }
+
+    /** Reads level name inputs from DOM, returns array of 3 strings. */
+    function getLevelNamesFromDom_() {
+      var defaults = ['Low', 'Moderate', 'High'];
+      return [0, 1, 2].map(function (index) {
+        var input = document.getElementById('levelName' + index);
+        return (input && input.value.trim()) || defaults[index];
       });
-      return blocks;
+    }
+
+    /** Reads closing hour time inputs from DOM, returns { weekday, saturday, sunday } integers. */
+    function getClosingHoursFromDom_() {
+      return {
+        weekday: parseTimeStringToHour_(document.getElementById('closeHourWeekday')) || 21,
+        saturday: parseTimeStringToHour_(document.getElementById('closeHourSaturday')) || 18,
+        sunday: parseTimeStringToHour_(document.getElementById('closeHourSunday')) || 18,
+      };
+    }
+
+    /** Formats an integer hour (e.g. 21) to "HH:00" for a <input type="time"> value. */
+    function formatHourToTimeString_(hour) {
+      return String(hour || 0).padStart(2, '0') + ':00';
+    }
+
+    /** Parses "HH:MM" from a time input element (or string) to an integer hour. */
+    function parseTimeStringToHour_(elOrStr) {
+      var str = (elOrStr && typeof elOrStr === 'object') ? elOrStr.value : elOrStr;
+      if (!str) return 0;
+      return parseInt(str.split(':')[0], 10) || 0;
+    }
+
+    /** Updates pool headcount label spans to show custom level names. */
+    function _updatePoolLabels_(levelNames) {
+      var ids = ['poolLabelLow', 'poolLabelModerate', 'poolLabelHigh'];
+      var defaults = ['Low', 'Moderate', 'High'];
+      ids.forEach(function (id, index) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = levelNames[index] || defaults[index];
+      });
     }
 
     /**
-     * Reads the heat grid DOM and pool count inputs into a heatmap config object.
-     * Also generates synthetic 24-hour trafficCurves for the schedule engine.
-     * @returns {Object} heatmap config ready to pass to saveTrafficHeatmapConfig
+     * Reads the heat grid DOM, level name inputs, closing hour inputs, and pool counts
+     * into a heatmap config object ready to pass to saveTrafficHeatmapConfig.
+     * Also generates synthetic 24-hour trafficCurves for the schedule engine,
+     * leaving hours at 0 for time blocks beyond the day's closing hour.
+     * @returns {Object} heatmap config
      */
     function collectHeatmapConfigFromDom_() {
       var enableCheckbox = document.getElementById('heatmapEnabled');
+      var levelNames = getLevelNamesFromDom_();
+      var closingHours = getClosingHoursFromDom_();
       var trafficBlocks = {};
       var trafficCurves = {};
 
-      document.querySelectorAll('#heatmapGridBody .comet-traffic-pill').forEach(function (btn) {
+      // Collect only active (non-closed) pill states
+      document.querySelectorAll('#heatmapGridBody .comet-traffic-pill:not(.comet-traffic-closed)').forEach(function (btn) {
         var day = btn.dataset.day;
         var block = btn.dataset.block;
         var level = btn.dataset.level;
@@ -2544,13 +2720,17 @@
         trafficBlocks[day][block] = level;
       });
 
-      // Generate synthetic 24-hour curves so the schedule engine can identify peak windows
+      // Generate synthetic 24-hour curves, zeroing out hours beyond closing time
       SETTINGS_DAY_NAMES.forEach(function (day) {
         var curve = new Array(24).fill(0);
         var dayBlocks = trafficBlocks[day] || {};
+        var closingHour = getClosingHourForDay_(day, closingHours);
         HEATMAP_BLOCK_DEFS.forEach(function (block) {
+          if (block.startHour >= closingHour) return;
           var value = HEATMAP_LEVEL_VALUES[dayBlocks[block.key] || 'Low'];
-          block.hours.forEach(function (hour) { curve[hour] = value; });
+          block.hours.forEach(function (hour) {
+            if (hour < closingHour) curve[hour] = value;
+          });
         });
         trafficCurves[day] = curve;
       });
@@ -2560,11 +2740,13 @@
         thresholds: { low: 100, high: 300 },
         trafficBlocks: trafficBlocks,
         trafficCurves: trafficCurves,
+        levelNames: levelNames,
+        closingHours: closingHours,
         pool: {
           schedulingCounts: {
-            Low:      parseInt(document.getElementById('poolCountLow').value, 10) || 1,
+            Low: parseInt(document.getElementById('poolCountLow').value, 10) || 1,
             Moderate: parseInt(document.getElementById('poolCountModerate').value, 10) || 3,
-            High:     parseInt(document.getElementById('poolCountHigh').value, 10) || 5,
+            High: parseInt(document.getElementById('poolCountHigh').value, 10) || 5,
           },
         },
       };
@@ -2579,14 +2761,19 @@
 
   var Admin = (function () {
     var _allEmployees = [];
-    var _renderedEmployees = []; // tracks what's currently in the table (may be filtered)
+    var _renderedEmployees = []; // tracks what's currently in the chips (may be filtered)
     var _currentDeptSettings = null;
     var _employeeListLoaded = false; // Cache guard — only fetch once per session (invalidated by UKG import)
+    var _mailingListConfig = {}; // { dept: [emails...] }
+    var _mailingListLoaded = false;
 
     function onShow() {
       // Only load employee list on first visit; skip on subsequent tabs to avoid redundant 300-employee fetch
       if (!_employeeListLoaded) {
         loadEmployeeList();
+      } else if (!_mailingListLoaded) {
+        // If employees already loaded, load mailing list now
+        loadMailingListConfig();
       }
 
       // UKG Import
@@ -2619,58 +2806,93 @@
       // Employee search
       document.getElementById('employeeSearch').oninput = function () {
         var q = this.value.toLowerCase();
-        renderEmployeeList(_allEmployees.filter(function (e) {
+        renderEmployeeChips(_allEmployees.filter(function (e) {
           return (e.name + e.id + e.department).toLowerCase().includes(q);
         }));
       };
 
       // Employee edit modal save
       document.getElementById('btnSaveEmployee').onclick = handleSaveEmployee;
+
+      // Mailing list event delegation
+      var mailingListConfig = document.getElementById('mailingListConfig');
+      if (mailingListConfig) {
+        mailingListConfig.addEventListener('click', handleMailingListClick_);
+      }
+      document.getElementById('btnSaveMailingList').onclick = handleSaveMailingList;
     }
 
     function loadEmployeeList() {
       UI.callServer('getEmployeeList', undefined, function (data) {
         _allEmployees = data.employees || [];
-        renderEmployeeList(_allEmployees);
+        renderEmployeeChips(_allEmployees);
         Absences.setEmployees(_allEmployees);
         AttendanceCalendar.setEmployeeCache(_allEmployees);
         _employeeListLoaded = true; // Cache is now populated
+
+        // Load mailing list config now that employees are available
+        if (!_mailingListLoaded) {
+          loadMailingListConfig();
+        }
       });
     }
 
-    function renderEmployeeList(employees) {
+    function renderEmployeeChips(employees) {
       _renderedEmployees = employees; // store reference so index-based onclick can look up
-      var tbody = document.getElementById('employeeTableBody');
+      var container = document.getElementById('employeeChipsContainer');
       if (!employees.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-comet-muted small p-3">No employees found.</td></tr>';
+        container.innerHTML = '<div class="text-comet-muted small text-center w-100 py-3">No employees found.</div>';
         return;
       }
-      tbody.innerHTML = employees.map(function (emp, i) {
-        var statusClass = emp.status === 'Archived' ? 'text-muted' : (emp.status === 'LOA' ? 'text-warning' : '');
-        var toggleLabel = emp.status === 'Active' ? 'Archive' : 'Restore';
-        var toggleClass = emp.status === 'Active' ? 'btn-outline-secondary' : 'btn-outline-success';
-        // Calendar button: opens Attendance Dashboard with employee pre-selected
-        var calendarHtml = '<button class="btn btn-sm btn-outline-secondary" '
-          + 'onclick="Admin.openAttendanceCalendar(\'' + esc(emp.id) + '\')">'
-          + 'Calendar</button>';
-        return '<tr class="' + statusClass + '">'
-          + '<td>' + esc(emp.name) + '</td>'
-          + '<td>' + esc(emp.id) + '</td>'
-          + '<td>' + esc(emp.hireDate) + '</td>'
-          + '<td>' + esc(emp.department) + '</td>'
-          + '<td>' + esc(emp.status) + '</td>'
-          + '<td>' + esc(emp.ftpt || '') + '</td>'
-          + '<td>' + calendarHtml + '</td>'
-          // Use index (i) rather than JSON.stringify(emp) — embedded JSON breaks HTML
-          // attribute quoting because JSON uses double-quotes.
-          + '<td class="d-flex gap-1">'
-          + '<button class="btn btn-sm btn-outline-primary" '
-          + 'onclick="Admin.openEmployeeEditModal(' + i + ')">Edit</button>'
-          + '<button class="btn btn-sm ' + toggleClass + '" '
-          + 'onclick="Admin.toggleStatus(' + i + ')">'
-          + toggleLabel + '</button>'
-          + '</td></tr>';
-      }).join('');
+
+      // Group employees by department
+      var deptGroups = {};
+      employees.forEach(function (emp) {
+        var dept = emp.department || 'Unassigned';
+        if (!deptGroups[dept]) deptGroups[dept] = [];
+        deptGroups[dept].push(emp);
+      });
+
+      // Sort departments alphabetically
+      var deptNames = Object.keys(deptGroups).sort();
+
+      // Build HTML with department separators
+      var html = '';
+      deptNames.forEach(function (dept, deptIdx) {
+        // Add department separator (except before first group when showing all)
+        if (deptIdx > 0) {
+          html += '<div class="employee-chip-separator">' + esc(dept) + '</div>';
+        } else {
+          html += '<div class="employee-chip-separator">' + esc(dept) + '</div>';
+        }
+
+        // Add chips for this department
+        deptGroups[dept].forEach(function (emp) {
+          var empIndex = employees.indexOf(emp);
+          var statusClass = emp.status === 'Archived' ? 'inactive' : (emp.status === 'LOA' ? 'loa' : 'active');
+          var calendarLink = '<a href="javascript:Admin.openAttendanceCalendar(\'' + esc(emp.id) + '\')" '
+            + 'class="btn btn-link btn-sm p-0" title="View attendance calendar">Calendar</a>';
+          html += '<div class="employee-chip ' + statusClass + '">'
+            + '<div class="employee-chip-header">'
+            + '<div class="employee-chip-name">' + esc(emp.name) + '</div>'
+            + '<div class="employee-chip-status ' + statusClass + '">' + esc(emp.status) + '</div>'
+            + '</div>'
+            + '<div class="employee-chip-meta">'
+            + '<span><strong>ID:</strong> ' + esc(emp.id) + '</span>'
+            + '<span><strong>Hire Date:</strong> ' + esc(emp.hireDate || '—') + '</span>'
+            + '<span><strong>Dept:</strong> ' + esc(emp.department) + '</span>'
+            + '<span><strong>FT/PT:</strong> ' + esc(emp.ftpt || '—') + '</span>'
+            + '</div>'
+            + '<div class="employee-chip-actions">'
+            + calendarLink
+            + '<button class="btn btn-link btn-sm p-0" '
+            + 'onclick="Admin.openEmployeeEditModal(' + empIndex + ')" title="Edit employee">Edit</button>'
+            + '</div>'
+            + '</div>';
+        });
+      });
+
+      container.innerHTML = html;
     }
 
     function openEmployeeEditModal(i) {
@@ -2760,6 +2982,106 @@
       });
     }
 
+    // ---- Mailing List Configuration ----
+
+    function loadMailingListConfig() {
+      UI.callServer('getMailingListConfig', undefined, function (data) {
+        _mailingListConfig = data.config || {};
+        renderMailingListConfig(_mailingListConfig);
+        _mailingListLoaded = true;
+      });
+    }
+
+    function renderMailingListConfig(config) {
+      var container = document.getElementById('mailingListConfig');
+      if (!container) return;
+
+      // Get list of unique departments from employees
+      var depts = {};
+      _allEmployees.forEach(function (emp) {
+        if (emp.department) depts[emp.department] = true;
+      });
+      var deptList = Object.keys(depts).sort();
+
+      if (deptList.length === 0) {
+        container.innerHTML = '<div class="text-comet-muted small py-3">No departments found. Import employees first.</div>';
+        return;
+      }
+
+      var html = deptList.map(function (dept) {
+        var hasConfig = config[dept] && config[dept].length > 0;
+        var emails = config[dept] || [];
+        var emailsHtml = emails.map(function (email, idx) {
+          return '<span class="mailing-list-email-chip">'
+            + esc(email)
+            + '<button type="button" class="btn-close btn-sm ms-1" data-action="removeEmail" data-dept="' + esc(dept) + '" data-email="' + esc(email) + '" aria-label="Remove email"></button>'
+            + '</span>';
+        }).join('');
+
+        return '<div class="mailing-list-dept">'
+          + '<div class="mailing-list-dept-name">'
+          + esc(dept)
+          + (hasConfig ? '' : '<span class="warning-badge">No emails configured</span>')
+          + '</div>'
+          + '<div class="mailing-list-emails">' + emailsHtml + '</div>'
+          + '<div class="mt-2">'
+          + '<input type="email" class="form-control form-control-sm" placeholder="Add email…" data-dept="' + esc(dept) + '" '
+          + 'onkeydown="if(event.key===\'Enter\'){Admin._addMailingListEmail_(event);event.preventDefault()}">'
+          + '<button class="btn btn-sm btn-outline-primary mt-2" data-action="addEmail" data-dept="' + esc(dept) + '">Add Email</button>'
+          + '</div>'
+          + '</div>';
+      }).join('');
+
+      container.innerHTML = html;
+      document.getElementById('btnSaveMailingList').style.display = 'block';
+    }
+
+    function _addMailingListEmail_(event) {
+      var input = event.target.closest('input[data-dept]');
+      if (!input) return;
+      var email = input.value.trim();
+      var dept = input.dataset.dept;
+      if (!email || !dept) return;
+      if (!_mailingListConfig[dept]) _mailingListConfig[dept] = [];
+      if (_mailingListConfig[dept].indexOf(email) === -1) {
+        _mailingListConfig[dept].push(email);
+        input.value = '';
+        renderMailingListConfig(_mailingListConfig);
+      }
+    }
+
+    function handleMailingListClick_(e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+
+      var action = btn.dataset.action;
+      var dept = btn.dataset.dept;
+
+      if (action === 'addEmail') {
+        var input = btn.parentElement.querySelector('input[data-dept="' + esc(dept) + '"]');
+        if (input) {
+          var event = { target: input, key: 'Enter' };
+          _addMailingListEmail_(event);
+        }
+      } else if (action === 'removeEmail') {
+        var email = btn.dataset.email;
+        if (_mailingListConfig[dept]) {
+          var idx = _mailingListConfig[dept].indexOf(email);
+          if (idx !== -1) {
+            _mailingListConfig[dept].splice(idx, 1);
+            renderMailingListConfig(_mailingListConfig);
+          }
+        }
+      }
+    }
+
+    function handleSaveMailingList() {
+      UI.callServer('saveMailingListConfig', [_mailingListConfig], function () {
+        UI.showToast('Mailing list configuration saved.', 'success');
+        // Don't invalidate _mailingListLoaded here since we just saved and the in-memory state is already updated
+      });
+    }
+
 
 
     // ---- UKG Import ----
@@ -2799,6 +3121,7 @@
     /**
      * Parses a UKG CSV export client-side.
      * Rows 1–9 are metadata/header; last rows named "zz-..." are placeholders.
+     * Normalizes names to ALL CAPS.
      * Returns clean array of { name, id, hireDate, department }.
      */
     function parseUkgCsv_(text) {
@@ -2807,7 +3130,7 @@
       for (var i = 9; i < lines.length; i++) { // skip first 9 rows
         var cols = splitCsvLine_(lines[i]);
         if (cols.length < 5) continue;
-        var name = (cols[0] || '').trim();
+        var name = (cols[0] || '').trim().toUpperCase();
         var id = (cols[1] || '').trim();
         if (!name || !id) continue;
         if (/^zz/i.test(name)) continue; // placeholder row
@@ -2865,7 +3188,16 @@
       });
     }
 
-    return { onShow, loadEmployeeList, openEmployeeEditModal, toggleStatus, openAttendanceCalendar, appendHolidaysForYear };
+    return {
+      onShow,
+      loadEmployeeList,
+      openEmployeeEditModal,
+      toggleStatus,
+      openAttendanceCalendar,
+      appendHolidaysForYear,
+      _addMailingListEmail_,
+      loadMailingListConfig,
+    };
   })();
 
 

@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.5.16
+ * VERSION: 0.6.0
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -810,14 +810,14 @@ function runCNScan(dryRun, sendEmail) {
 
 /**
  * Runs the CN expiry check, marking Active CNs older than EXPIRY_DAYS as
- * Expired and sending expiry notifications to payroll.
+ * Expired and sending expiry notifications to payroll (if enabled in config).
  *
  * @returns {{ ok: boolean, data?: object, error?: string }}
  *
  */
 function runExpiryCheck() {
   try {
-    expireCNsDaily(DRY_RUN); // cnLog.js — respects config.js DRY_RUN flag
+    expireCNsDaily(false); // cnLog.js — always write, email sending is controlled by config sheet
     return { ok: true, data: { expired: 0 } };
   } catch (error) {
     console.error('api: runExpiryCheck failed —', error);
@@ -1073,6 +1073,107 @@ function getEmployeeSheetAge() {
     return { ok: true, data: { ageInDays, lastModified: lastImportTimestamp } };
   } catch (error) {
     console.error('api: getEmployeeSheetAge failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Gets the mailing list configuration from all departments in the Settings sheet.
+ * Returns a JSON object mapping department names to arrays of email addresses.
+ * Reads mailing field from each department's settings JSON (columns A-B).
+ *
+ * @returns {{ ok: boolean, data?: { config }, error?: string }}
+ */
+function getMailingListConfig() {
+  try {
+    const config = {};
+
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const settingsSheet = workbook.getSheetByName('Settings');
+
+    if (!settingsSheet) {
+      return { ok: true, data: { config } };
+    }
+
+    const lastRow = settingsSheet.getLastRow();
+    if (lastRow < 2) {
+      return { ok: true, data: { config } };
+    }
+
+    // Read all departments from Settings sheet
+    const data = settingsSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < data.length; i++) {
+      const dept = String(data[i][0] || '').trim();
+      if (!dept) continue;
+
+      try {
+        // Ensure settings structure is valid before reading mailing list
+        const settings = ensureDeptSettingsBaseStructure_(dept); // scheduleSettings.js
+        if (settings.mailing && Array.isArray(settings.mailing)) {
+          config[dept] = settings.mailing;
+        }
+      } catch (err) {
+        console.warn('api: Failed to get mailing list for ' + dept, err);
+      }
+    }
+
+    return { ok: true, data: { config } };
+  } catch (error) {
+    console.error('api: getMailingListConfig failed —', error);
+    return { ok: true, data: { config: {} } };
+  }
+}
+
+/**
+ * Saves the mailing list configuration to department settings in the Settings sheet.
+ * Updates the "mailing" field in each department's JSON (column B).
+ *
+ * @param {Object} config — Object mapping department names to arrays of emails
+ * @returns {{ ok: boolean, data?: object, error?: string }}
+ */
+function saveMailingListConfig(config) {
+  try {
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const settingsSheet = workbook.getSheetByName('Settings');
+
+    if (!settingsSheet) {
+      return { ok: false, error: 'Settings sheet not found' };
+    }
+
+    const lastRow = settingsSheet.getLastRow();
+    if (lastRow < 2) {
+      return { ok: false, error: 'No departments found in Settings sheet' };
+    }
+
+    // Read all department settings
+    const data = settingsSheet.getRange(2, 1, lastRow - 1, 2).getValues();
+    const updates = [];
+
+    for (let i = 0; i < data.length; i++) {
+      const dept = String(data[i][0] || '').trim();
+
+      if (!dept) continue;
+
+      try {
+        // Ensure base structure exists and is valid before modifying
+        const settings = ensureDeptSettingsBaseStructure_(dept); // scheduleSettings.js
+        // Update mailing list for this department
+        settings.mailing = config[dept] || [];
+        // Write back updated JSON
+        updates.push([JSON.stringify(settings)]);
+      } catch (err) {
+        console.warn('api: Failed to update mailing list for ' + dept, err);
+      }
+    }
+
+    // Write all updated settings back to column B
+    if (updates.length > 0) {
+      settingsSheet.getRange(2, 2, updates.length, 1).setValues(updates);
+    }
+
+    return { ok: true, data: { saved: true } };
+  } catch (error) {
+    console.error('api: saveMailingListConfig failed —', error);
     return { ok: false, error: error.message };
   }
 }

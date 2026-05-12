@@ -1,7 +1,7 @@
 <style>
   /* =========================================================================
      COMET — Custom Stylesheet
-     VERSION: 0.2.4
+     VERSION: 0.3.1
 
      Loaded via <?!= include('stylesheet') ?> in index.html.
      Bootstrap 5 CDN is loaded first; these rules extend and override it.
@@ -13,25 +13,27 @@
      ------------------------------------------------------------------------- */
   /* Inline link tag so GAS include() injects it in <head> alongside custom CSS */
 </style>
-<link rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
-      crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+  integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
 <style>
-
   /* -------------------------------------------------------------------------
      Root Variables
      ------------------------------------------------------------------------- */
   :root {
-    --comet-navy:       #005DAA;   /* Costco blue */
-    --comet-red:        #E31837;   /* Costco red — primary action color */
-    --comet-red-hover:  #C01230;   /* Costco red darkened */
-    --comet-surface:    #F8F9FB;
-    --comet-border:     #E2E8F0;
-    --comet-text:       #1E293B;
-    --comet-muted:      #64748B;
-    --comet-hover-bg:   #EFF6FF;   /* Light blue background for interactive hover states */
-    --comet-navbar-height: 56px;   /* Bootstrap navbar default height; used in calc(100vh - X) for main content */
+    --comet-navy: #005DAA;
+    /* Costco blue */
+    --comet-red: #E31837;
+    /* Costco red — primary action color */
+    --comet-red-hover: #C01230;
+    /* Costco red darkened */
+    --comet-surface: #F8F9FB;
+    --comet-border: #E2E8F0;
+    --comet-text: #1E293B;
+    --comet-muted: #64748B;
+    --comet-hover-bg: #EFF6FF;
+    /* Light blue background for interactive hover states */
+    --comet-navbar-height: 56px;
+    /* Bootstrap navbar default height; used in calc(100vh - X) for main content */
   }
 
 
@@ -52,7 +54,7 @@
   .comet-navbar {
     background-color: var(--comet-navy);
     padding: 0.5rem 1.25rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
   }
 
   .comet-brand {
@@ -68,7 +70,7 @@
   }
 
   .comet-navbar .nav-link {
-    color: rgba(255,255,255,0.75) !important;
+    color: rgba(255, 255, 255, 0.75) !important;
     font-weight: 500;
     padding: 0.55rem 1.4rem;
     border-radius: 4px;
@@ -78,7 +80,7 @@
   .comet-navbar .nav-link:hover,
   .comet-navbar .nav-link.active {
     color: #fff !important;
-    background-color: rgba(255,255,255,0.12);
+    background-color: rgba(255, 255, 255, 0.12);
   }
 
   /* Mobile navbar — compact and horizontal scrollable */
@@ -145,7 +147,8 @@
 
     .comet-main {
       padding: 0.5rem;
-      min-height: calc(100vh - 40px); /* Landscape navbar is slightly smaller */
+      min-height: calc(100vh - 40px);
+      /* Landscape navbar is slightly smaller */
     }
 
     /* Reduce table padding in landscape */
@@ -155,7 +158,8 @@
 
     /* Schedule grid more compact in landscape */
     .comet-table-container {
-      max-height: calc(100vh - 120px); /* Navbar + padding adjustments in landscape */
+      max-height: calc(100vh - 120px);
+      /* Navbar + padding adjustments in landscape */
       overflow: auto;
     }
   }
@@ -184,8 +188,15 @@
   }
 
   @keyframes comet-fade-in {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .comet-view-header {
@@ -229,9 +240,17 @@
   }
 
   /* CN expiry color coding */
-  .cn-expiry-green  { background-color: #D1FAE5 !important; }
-  .cn-expiry-amber  { background-color: #FEF3C7 !important; }
-  .cn-expiry-red    { background-color: #FEE2E2 !important; }
+  .cn-expiry-green {
+    background-color: #D1FAE5 !important;
+  }
+
+  .cn-expiry-amber {
+    background-color: #FEF3C7 !important;
+  }
+
+  .cn-expiry-red {
+    background-color: #FEE2E2 !important;
+  }
 
 
   /* -------------------------------------------------------------------------
@@ -240,7 +259,7 @@
   .card {
     border: 1px solid var(--comet-border);
     border-radius: 8px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   }
 
   .card-header {
@@ -257,7 +276,7 @@
   .comet-loading-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(255,255,255,0.65);
+    background: rgba(255, 255, 255, 0.65);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -302,20 +321,68 @@
   }
 
   /* Schedule cell type styling (base definitions) */
-  .schedule-cell { padding: 4px 2px !important; }
+  .schedule-cell {
+    padding: 4px 2px !important;
+  }
 
-  .schedule-cell-ft   { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #DBEAFE; color: #1E40AF; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-pt   { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #DCFCE7; color: #166534; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-lpt  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #FFF7ED; color: #9A3412; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-vac  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #FEF9C3; color: #854D0E; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-rdo  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: var(--comet-border); color: #475569; font-weight: 600; font-size: 0.75rem; }
-  .schedule-cell-off  { display: inline-block; padding: 2px 5px; border-radius: 4px;
-                        background: #F1F5F9; color: #94A3B8; font-size: 0.75rem; }
+  .schedule-cell-ft {
+    display: inline-block;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #DBEAFE;
+    color: #1E40AF;
+    font-weight: 600;
+    font-size: 0.75rem;
+  }
+
+  .schedule-cell-pt {
+    display: inline-block;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #DCFCE7;
+    color: #166534;
+    font-weight: 600;
+    font-size: 0.75rem;
+  }
+
+  .schedule-cell-lpt {
+    display: inline-block;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #FFF7ED;
+    color: #9A3412;
+    font-weight: 600;
+    font-size: 0.75rem;
+  }
+
+  .schedule-cell-vac {
+    display: inline-block;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #FEF9C3;
+    color: #854D0E;
+    font-weight: 600;
+    font-size: 0.75rem;
+  }
+
+  .schedule-cell-rdo {
+    display: inline-block;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--comet-border);
+    color: #475569;
+    font-weight: 600;
+    font-size: 0.75rem;
+  }
+
+  .schedule-cell-off {
+    display: inline-block;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #F1F5F9;
+    color: #94A3B8;
+    font-size: 0.75rem;
+  }
 
   /* Mobile: allow text wrapping in schedule table */
   @media (max-width: 900px) {
@@ -382,7 +449,7 @@
     right: -6px;
     font-size: 0.65rem;
     cursor: help;
-    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.2));
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
   }
 
   /* Persistent session change highlighting — cells modified by recalculation persist until week/dept change */
@@ -403,46 +470,157 @@
     letter-spacing: 0.02em;
     white-space: nowrap;
   }
+
   /* Front End — blue / cyan / purple family */
-  .role-badge-cashier              { background-color: #DBEAFE; color: #1E40AF; }
-  .role-badge-assistant            { background-color: #BFDBFE; color: #1E40AF; }
-  .role-badge-sco                  { background-color: #BAE6FD; color: #0369A1; }
-  .role-badge-liquor               { background-color: #A5F3FC; color: #0E7490; }
-  .role-badge-prescan              { background-color: #EDE9FE; color: #5B21B6; }
-  .role-badge-go-backs             { background-color: #F5D0FE; color: #86198F; }
-  .role-badge-carts                { background-color: #CBD5E1; color: #334155; }
-  .role-badge-floater              { background-color: #FEF08A; color: #713F12; }
+  .role-badge-cashier {
+    background-color: #DBEAFE;
+    color: #1E40AF;
+  }
+
+  .role-badge-assistant {
+    background-color: #BFDBFE;
+    color: #1E40AF;
+  }
+
+  .role-badge-sco {
+    background-color: #BAE6FD;
+    color: #0369A1;
+  }
+
+  .role-badge-liquor {
+    background-color: #A5F3FC;
+    color: #0E7490;
+  }
+
+  .role-badge-prescan {
+    background-color: #EDE9FE;
+    color: #5B21B6;
+  }
+
+  .role-badge-go-backs {
+    background-color: #F5D0FE;
+    color: #86198F;
+  }
+
+  .role-badge-carts {
+    background-color: #CBD5E1;
+    color: #334155;
+  }
+
+  .role-badge-floater {
+    background-color: #FEF08A;
+    color: #713F12;
+  }
 
   /* Merchandising — green / indigo family */
-  .role-badge-morning              { background-color: #D1FAE5; color: #065F46; }
-  .role-badge-night                { background-color: #C7D2FE; color: #3730A3; }
-  .role-badge-produce              { background-color: #BBF7D0; color: #166534; }
-  .role-badge-stocker              { background-color: #ECFDF5; color: #065F46; }
-  .role-badge-driver               { background-color: #FDBA74; color: #7C2D12; }
+  .role-badge-morning {
+    background-color: #D1FAE5;
+    color: #065F46;
+  }
+
+  .role-badge-night {
+    background-color: #C7D2FE;
+    color: #3730A3;
+  }
+
+  .role-badge-produce {
+    background-color: #BBF7D0;
+    color: #166534;
+  }
+
+  .role-badge-stocker {
+    background-color: #ECFDF5;
+    color: #065F46;
+  }
+
+  .role-badge-driver {
+    background-color: #FDBA74;
+    color: #7C2D12;
+  }
 
   /* Bakery / Food — rose and warm yellow */
-  .role-badge-bakery               { background-color: #FECACA; color: #991B1B; }
-  .role-badge-deli                 { background-color: #FDE68A; color: #92400E; }
-  .role-badge-food-service         { background-color: #FDE68A; color: #92400E; }
-  .role-badge-food-court           { background-color: #FDE68A; color: #92400E; }
+  .role-badge-bakery {
+    background-color: #FECACA;
+    color: #991B1B;
+  }
+
+  .role-badge-deli {
+    background-color: #FDE68A;
+    color: #92400E;
+  }
+
+  .role-badge-food-service {
+    background-color: #FDE68A;
+    color: #92400E;
+  }
+
+  .role-badge-food-court {
+    background-color: #FDE68A;
+    color: #92400E;
+  }
 
   /* Maintenance — amber */
-  .role-badge-maintenance-associate { background-color: #FEF3C7; color: #92400E; }
-  .role-badge-maintenance          { background-color: #FEF3C7; color: #92400E; }
+  .role-badge-maintenance-associate {
+    background-color: #FEF3C7;
+    color: #92400E;
+  }
+
+  .role-badge-maintenance {
+    background-color: #FEF3C7;
+    color: #92400E;
+  }
 
   /* Other departments */
-  .role-badge-receiving            { background-color: #A7F3D0; color: #065F46; }
-  .role-badge-membership-service   { background-color: #FFFBEB; color: #92400E; }
-  .role-badge-security             { background-color: var(--comet-border); color: #334155; }
-  .role-badge-tire-tech            { background-color: #F0FDF4; color: #166534; }
-  .role-badge-gas-attendant        { background-color: #FFEDD5; color: #9A3412; }
-  .role-badge-pharmacy-tech        { background-color: #F3E8FF; color: #6B21A8; }
-  .role-badge-optician             { background-color: #F0F9FF; color: #0369A1; }
-  .role-badge-hearing-specialist   { background-color: #FFF0F5; color: #9D174D; }
+  .role-badge-receiving {
+    background-color: #A7F3D0;
+    color: #065F46;
+  }
+
+  .role-badge-membership-service {
+    background-color: #FFFBEB;
+    color: #92400E;
+  }
+
+  .role-badge-security {
+    background-color: var(--comet-border);
+    color: #334155;
+  }
+
+  .role-badge-tire-tech {
+    background-color: #F0FDF4;
+    color: #166534;
+  }
+
+  .role-badge-gas-attendant {
+    background-color: #FFEDD5;
+    color: #9A3412;
+  }
+
+  .role-badge-pharmacy-tech {
+    background-color: #F3E8FF;
+    color: #6B21A8;
+  }
+
+  .role-badge-optician {
+    background-color: #F0F9FF;
+    color: #0369A1;
+  }
+
+  .role-badge-hearing-specialist {
+    background-color: #FFF0F5;
+    color: #9D174D;
+  }
 
   /* Leadership */
-  .role-badge-lead                 { background-color: #FEE2E2; color: #991B1B; }
-  .role-badge-supervisor           { background-color: #FCE7F3; color: #9D174D; }
+  .role-badge-lead {
+    background-color: #FEE2E2;
+    color: #991B1B;
+  }
+
+  .role-badge-supervisor {
+    background-color: #FCE7F3;
+    color: #9D174D;
+  }
 
   /* Priority role badge in the employee name cell */
   .role-priority-badge {
@@ -454,6 +632,7 @@
     line-height: 1.4;
     vertical-align: middle;
   }
+
   /* Qualified roles list under the employee name */
   .role-qualified-list {
     display: block;
@@ -462,14 +641,33 @@
     margin-top: 1px;
   }
 
-  .schedule-row-ft      td:first-child { border-left: 3px solid #3B82F6; }
-  .schedule-row-pt      td:first-child { border-left: 3px solid #22C55E; }
-  .schedule-row-lpt     td:first-child { border-left: 3px solid #F97316; }
-  .schedule-row-hybrid  td:first-child { border-left: 3px solid #FF7043; background-color: rgba(255, 112, 67, 0.05); }
+  .schedule-row-ft td:first-child {
+    border-left: 3px solid #3B82F6;
+  }
 
-  .schedule-coverage-row td { font-size: 0.78rem; }
+  .schedule-row-pt td:first-child {
+    border-left: 3px solid #22C55E;
+  }
 
-  .cn-badge { font-size: 0.55rem; vertical-align: super; cursor: help; line-height: 1; }
+  .schedule-row-lpt td:first-child {
+    border-left: 3px solid #F97316;
+  }
+
+  .schedule-row-hybrid td:first-child {
+    border-left: 3px solid #FF7043;
+    background-color: rgba(255, 112, 67, 0.05);
+  }
+
+  .schedule-coverage-row td {
+    font-size: 0.78rem;
+  }
+
+  .cn-badge {
+    font-size: 0.55rem;
+    vertical-align: super;
+    cursor: help;
+    line-height: 1;
+  }
 
   /* Cross-department hours badge (split-shift scheduling) */
   .cross-dept-badge {
@@ -486,7 +684,9 @@
   }
 
   /* Scrollable schedule wrapper on small screens */
-  #scheduleTableContainer { overflow-x: auto; }
+  #scheduleTableContainer {
+    overflow-x: auto;
+  }
 
 
   /* -------------------------------------------------------------------------
@@ -523,7 +723,7 @@
     border-radius: 6px;
     padding: 0.75rem;
     background: #fff;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
 
   .comet-month-header {
@@ -556,13 +756,14 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    font-size: 0.72rem;
+    font-size: clamp(0.6rem, 1.5vw, 0.85rem);
     border: 1px solid var(--comet-border);
     border-radius: 4px;
     padding: 0;
     cursor: default;
     background: #FAFAFA;
     color: var(--comet-text);
+    min-height: 35px;
   }
 
   .comet-day-cell:hover {
@@ -572,6 +773,7 @@
   .comet-day-cell.has-codes {
     background: var(--comet-surface);
   }
+
   .comet-day-cell[data-date] {
     cursor: pointer;
   }
@@ -582,7 +784,7 @@
     top: 2px;
     left: 3px;
     font-weight: 700;
-    font-size: 0.65rem;
+    font-size: clamp(0.55rem, 1.2vw, 0.75rem);
     line-height: 1;
     color: var(--comet-text);
   }
@@ -614,31 +816,105 @@
     font-size: clamp(0.5rem, 0.7vw, 0.75rem);
     font-weight: 700;
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   }
 
 
   /* Code color scheme — matched to official Costco attendance controller palette */
-  .attn-badge-td-1 { background: #f4a460; }  /* sandy/light orange — Tardy 4-29 min */
-  .attn-badge-td-2 { background: #e69138; }  /* dark orange 1      — Tardy 30-119 min */
-  .attn-badge-td-3 { background: #c65911; }  /* burnt orange       — Tardy 120+ min */
-  .attn-badge-ns  { background: #cc0000; }  /* red             — No Show */
-  .attn-badge-se  { background: #ffcc00; }  /* yellow          — Swiping Error */
-  .attn-badge-mp  { background: #b45f06; }  /* dark orange 3   — Meal Period */
-  .attn-badge-sz  { background: #741b47; }  /* dark magenta 3  — Suspension */
-  .attn-badge-bl  { background: #b6d7a8; }  /* light green 1   — Bereavement Leave */
-  .attn-badge-lp  { background: #6fa8dc; }  /* light cornflower blue 3 — Personal Leave */
-  .attn-badge-cn  { background: #bb0000; }  /* dark red        — Counseling Notice */
-  .attn-badge-fh  { background: #34a853; }  /* green           — Floating Holiday */
-  .attn-badge-h   { background: #3deb00; }  /* bright lime     — Holiday */
-  .attn-badge-jd  { background: #1155cc; }  /* dark blue 1     — Jury Duty */
-  .attn-badge-spf { background: #351c75; }  /* dark purple 1   — Sick Paid Full */
-  .attn-badge-sph { background: #b4a7d6; }  /* light purple 2  — Sick Paid Half */
-  .attn-badge-suf { background: #ea9999; }  /* light red 1     — Sick Unpaid Full */
-  .attn-badge-suh { background: #e06666; }  /* light red 2     — Sick Unpaid Half */
-  .attn-badge-vac { background: #D97706; }  /* gold            — Vacation */
-  .attn-badge-default { background: #9CA3AF; }
+  .attn-badge-td-1 {
+    background: #f4a460;
+  }
+
+  /* sandy/light orange — Tardy 4-29 min */
+  .attn-badge-td-2 {
+    background: #e69138;
+  }
+
+  /* dark orange 1      — Tardy 30-119 min */
+  .attn-badge-td-3 {
+    background: #c65911;
+  }
+
+  /* burnt orange       — Tardy 120+ min */
+  .attn-badge-ns {
+    background: #cc0000;
+  }
+
+  /* red             — No Show */
+  .attn-badge-se {
+    background: #ffcc00;
+  }
+
+  /* yellow          — Swiping Error */
+  .attn-badge-mp {
+    background: #b45f06;
+  }
+
+  /* dark orange 3   — Meal Period */
+  .attn-badge-sz {
+    background: #741b47;
+  }
+
+  /* dark magenta 3  — Suspension */
+  .attn-badge-bl {
+    background: #b6d7a8;
+  }
+
+  /* light green 1   — Bereavement Leave */
+  .attn-badge-lp {
+    background: #6fa8dc;
+  }
+
+  /* light cornflower blue 3 — Personal Leave */
+  .attn-badge-cn {
+    background: #bb0000;
+  }
+
+  /* dark red        — Counseling Notice */
+  .attn-badge-fh {
+    background: #34a853;
+  }
+
+  /* green           — Floating Holiday */
+  .attn-badge-h {
+    background: #3deb00;
+  }
+
+  /* bright lime     — Holiday */
+  .attn-badge-jd {
+    background: #1155cc;
+  }
+
+  /* dark blue 1     — Jury Duty */
+  .attn-badge-spf {
+    background: #351c75;
+  }
+
+  /* dark purple 1   — Sick Paid Full */
+  .attn-badge-sph {
+    background: #b4a7d6;
+  }
+
+  /* light purple 2  — Sick Paid Half */
+  .attn-badge-suf {
+    background: #ea9999;
+  }
+
+  /* light red 1     — Sick Unpaid Full */
+  .attn-badge-suh {
+    background: #e06666;
+  }
+
+  /* light red 2     — Sick Unpaid Half */
+  .attn-badge-vac {
+    background: #D97706;
+  }
+
+  /* gold            — Vacation */
+  .attn-badge-default {
+    background: #9CA3AF;
+  }
 
   /* Code picker toggle buttons inside the attendance code editor modal */
   .comet-code-toggle {
@@ -648,31 +924,38 @@
     cursor: pointer;
     transition: opacity 0.15s ease, box-shadow 0.15s ease;
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
     opacity: 0.6;
     border: 2px solid transparent;
     outline: none;
   }
+
   /* Light-background codes need dark text */
   .comet-code-toggle.attn-badge-bl,
   .comet-code-toggle.attn-badge-lp,
   .comet-code-toggle.attn-badge-sph,
   .comet-code-toggle.attn-badge-suf,
-  .comet-code-toggle.attn-badge-se  { color: var(--comet-text); text-shadow: none; }
+  .comet-code-toggle.attn-badge-se {
+    color: var(--comet-text);
+    text-shadow: none;
+  }
+
   /* Active (highlighted) state — full opacity + white border ring */
   .comet-code-toggle.active {
     opacity: 1;
-    border-color: rgba(255,255,255,0.8);
-    box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
   }
+
   /* Preserve color on focus/active pseudo-states */
   .comet-code-toggle:focus,
   .comet-code-toggle:active,
   .comet-code-toggle:focus-visible {
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
     outline: none;
   }
+
   .comet-code-toggle.attn-badge-bl:focus,
   .comet-code-toggle.attn-badge-bl:active,
   .comet-code-toggle.attn-badge-bl:focus-visible,
@@ -714,7 +997,7 @@
     background: #fff;
     border: 1px solid var(--comet-border);
     border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     max-height: 240px;
     overflow-y: auto;
     z-index: 100;
@@ -739,12 +1022,22 @@
      Mobile & Touch Optimizations
      ------------------------------------------------------------------------- */
 
-  /* Tablets and small screens — up to 768px */
-  @media (max-width: 768px) {
-    /* Responsive: 2 columns on tablet */
+  /* iPad Landscape — 3 columns (1024px–1366px) */
+  @media (min-width: 1024px) and (max-width: 1366px) {
+    .comet-calendar-grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  /* iPad Portrait or Larger Tablet — 2 columns (769px–1023px) */
+  @media (min-width: 769px) and (max-width: 1023px) {
     .comet-calendar-grid {
       grid-template-columns: repeat(2, 1fr);
     }
+  }
+
+  /* Shared tablet/phone adjustments — up to 1024px */
+  @media (max-width: 1024px) {
 
     /* Allow navbar items to wrap on small screens instead of overflowing */
     .comet-navbar .container-fluid {
@@ -806,71 +1099,130 @@
     .comet-calendar-grid {
       grid-template-columns: 1fr;
     }
+
     .comet-month-card {
       padding: 0.5rem;
     }
   }
 
   /* =========================================================================
-     Mobile Devices — Smartphones (iPhone 14+, modern phones; up to 600px)
+     Phones — Simplified UI, portrait orientation (up to 768px)
      ========================================================================= */
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .comet-main {
-      padding: 0.5rem;
+      padding: 0.4rem;
     }
 
     .comet-view {
-      gap: 0.75rem;
-    }
-
-    .comet-view-header {
-      margin-bottom: 0.75rem;
-    }
-
-    .comet-view-title {
-      font-size: 1.25rem;
-    }
-
-    /* Stack view header controls vertically */
-    .comet-view-header > div {
-      flex-wrap: wrap;
       gap: 0.5rem;
     }
 
-    /* Full-width form controls in modals */
-    .modal-body .form-control,
-    .modal-body .form-select {
-      font-size: 1rem; /* Prevents iOS zoom-on-focus */
+    .comet-view-header {
+      margin-bottom: 0.5rem;
+      flex-direction: column;
+      align-items: stretch;
     }
 
-    /* Year navigation stays inline but compact */
-    .comet-year-display {
-      font-size: 0.95rem;
-      min-width: 50px;
+    .comet-view-title {
+      font-size: 1.1rem;
     }
 
-    /* Tables stack nicely on mobile */
-    .table {
-      font-size: 0.8rem;
+    /* Hide help/descriptive text on phones for simplicity */
+    .text-muted.small,
+    .small.text-muted {
+      display: none;
     }
 
-    /* Calendar adjustments for mobile */
-    .comet-month-card {
+    /* Accordion simplification — reduce padding and spacing */
+    .comet-accordion-card {
+      margin-bottom: 0.4rem;
+    }
+
+    .comet-accordion-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+    }
+
+    .comet-accordion-body {
       padding: 0.5rem;
     }
 
-    .comet-day-cell {
-      aspect-ratio: auto;
-      min-height: 60px;
+    /* Form controls larger for touch */
+    .form-control,
+    .form-select,
+    .btn {
+      font-size: 1rem;
+      min-height: 44px;
+      padding: 0.5rem 0.75rem;
     }
 
-    /* Modal sizing for mobile */
+    .btn-sm {
+      min-height: 36px;
+      font-size: 0.9rem;
+    }
+
+    .form-control-sm,
+    .form-select-sm {
+      min-height: 36px;
+    }
+
+    /* Modal fills screen */
     .modal-dialog {
-      margin: 1rem auto;
+      margin: 0;
+      max-width: 100%;
+      height: 100vh;
+    }
+
+    .modal-content {
+      border-radius: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .modal-body {
+      overflow-y: auto;
+      flex: 1;
+      padding: 1rem 0.75rem;
     }
 
     .modal-sm {
-      max-width: 95vw;
+      max-width: 100%;
+    }
+
+    /* Calendar adjustments for phone */
+    .comet-month-card {
+      padding: 0.4rem;
+    }
+
+    .comet-month-header {
+      font-size: 0.8rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .comet-day-cell {
+      min-height: 45px;
+      aspect-ratio: 1;
+    }
+
+    .comet-day-number {
+      font-size: 0.6rem;
+    }
+
+    /* Hide less critical info on phones */
+    .text-comet-muted {
+      display: none;
+    }
+
+    /* Simplify tables for phone viewing */
+    .table {
+      font-size: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .table th,
+    .table td {
+      padding: 0.4rem 0.25rem;
     }
   }
 
@@ -957,7 +1309,7 @@
     border: 1px solid var(--comet-border);
     border-radius: 8px;
     background: #fff;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
     overflow: hidden;
   }
 
@@ -1038,24 +1390,26 @@
 
   .readiness-banner-label {
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     color: var(--comet-text);
-    margin-bottom: 0.6rem;
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
 
   .readiness-pills {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.4rem;
     flex-wrap: wrap;
   }
 
   .readiness-pill {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.5rem 0.8rem;
-    border-radius: 20px;
-    font-size: 0.8rem;
+    gap: 0.25rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 16px;
+    font-size: 0.75rem;
     font-weight: 500;
     white-space: nowrap;
     cursor: default;
@@ -1083,6 +1437,204 @@
   }
 
   /* =========================================================================
+     Employee Directory Chips (Admin View)
+     ========================================================================= */
+
+  .employee-chip {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.75rem 1rem;
+    background: #fff;
+    border: 1px solid var(--comet-border);
+    border-radius: 6px;
+    width: 330px;
+    height: fit-content;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    transition: box-shadow 0.15s, border-color 0.15s;
+    box-sizing: border-box;
+  }
+
+  .employee-chip:hover {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    border-color: var(--comet-navy);
+  }
+
+  .employee-chip-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .employee-chip-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--comet-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .employee-chip-actions {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .employee-chip-action-btn {
+    background: none;
+    border: none;
+    padding: 0.25rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--comet-muted);
+    transition: color 0.15s;
+  }
+
+  .employee-chip-action-btn:hover {
+    color: var(--comet-navy);
+  }
+
+  .employee-chip-meta {
+    display: grid;
+    grid-template-columns: minmax(55px, auto) 1fr;
+    gap: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--comet-muted);
+  }
+
+  .employee-chip-meta-label {
+    font-weight: 600;
+    color: var(--comet-text);
+  }
+
+  .employee-chip-status {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: #f0f0f0;
+    color: var(--comet-text);
+    width: fit-content;
+  }
+
+  .employee-chip-status.active {
+    background: #d1fae5;
+    color: #065f46;
+  }
+
+  .employee-chip-status.inactive {
+    background: #fee2e2;
+    color: #7f1d1d;
+  }
+
+  .employee-chip-status.loa {
+    background: #fef08a;
+    color: #78350f;
+  }
+
+  .employee-chip-separator {
+    width: 100%;
+    padding: 0.75rem 0;
+    margin: 0.5rem 0 0.75rem 0;
+    border-top: 2px solid var(--comet-navy);
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--comet-navy);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .employee-chip-separator:first-of-type {
+    margin-top: 0;
+  }
+
+  /* Responsive employee chips sizing */
+  @media (max-width: 768px) {
+    .employee-chip {
+      width: calc(50% - 0.5rem);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .employee-chip {
+      width: 100%;
+    }
+  }
+
+  @media (min-width: 1920px) {
+    .employee-chip {
+      width: 360px;
+    }
+  }
+
+  /* Mailing list configuration */
+  .mailing-list-dept {
+    padding: 0.75rem;
+    border: 1px solid var(--comet-border);
+    border-radius: 4px;
+    margin-bottom: 0.75rem;
+  }
+
+  .mailing-list-dept-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .mailing-list-dept-name .warning-badge {
+    display: inline-block;
+    padding: 0.15rem 0.4rem;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 700;
+  }
+
+  .mailing-list-emails {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .mailing-list-email-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 12px;
+    font-size: 0.75rem;
+  }
+
+  .mailing-list-email-chip-remove {
+    background: none;
+    border: none;
+    padding: 0;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--comet-muted);
+    transition: color 0.15s;
+  }
+
+  .mailing-list-email-chip-remove:hover {
+    color: var(--comet-red);
+  }
+
+  .mailing-list-email-input {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  /* =========================================================================
      NEW — Employee Role Assignment (Multi-Role Table)
      ========================================================================= */
 
@@ -1102,8 +1654,13 @@
     font-size: 0.85rem;
   }
 
-  .employee-roles-table th:nth-child(1) { width: 200px; }
-  .employee-roles-table th:nth-child(2) { width: 170px; }
+  .employee-roles-table th:nth-child(1) {
+    width: 200px;
+  }
+
+  .employee-roles-table th:nth-child(2) {
+    width: 170px;
+  }
 
   .employee-roles-table tbody tr {
     border-bottom: 1px solid var(--comet-border);
@@ -1204,7 +1761,7 @@
     background: #fff;
     border: 1px solid var(--comet-border);
     border-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     z-index: 10;
     max-height: 200px;
     overflow-y: auto;
@@ -1253,6 +1810,7 @@
   .comet-heat-grid {
     table-layout: fixed;
   }
+
   .comet-heat-grid thead th {
     text-align: center;
     font-size: 0.74rem;
@@ -1260,10 +1818,12 @@
     background: #f8f9fa;
     white-space: nowrap;
   }
+
   .comet-heat-grid thead th:first-child {
     width: 110px;
     text-align: left;
   }
+
   .comet-heat-grid th[scope="row"] {
     font-size: 0.8125rem;
     font-weight: 600;
@@ -1271,6 +1831,7 @@
     background: #f8f9fa;
     white-space: nowrap;
   }
+
   .comet-heat-grid td {
     padding: 5px 4px;
     text-align: center;
@@ -1291,20 +1852,89 @@
     text-align: center;
     transition: filter 0.1s;
   }
+
   .comet-traffic-pill:hover {
     filter: brightness(0.9);
   }
+
   .comet-traffic-low {
     background: #d1e7dd;
     color: #0a3622;
   }
+
   .comet-traffic-moderate {
     background: #fff3cd;
     color: #664d03;
   }
+
   .comet-traffic-high {
     background: #f8d7da;
     color: #58151c;
   }
 
+  .comet-traffic-closed {
+    background: #f0f0f0;
+    color: #adb5bd;
+    cursor: default;
+    pointer-events: none;
+    font-style: italic;
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+
+  .comet-traffic-closed:hover {
+    filter: none;
+  }
+
+  /* Attendance code chips — removable pills for the code modal */
+  .attn-code-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.65rem 0.35rem 0.75rem;
+    background: #e8f4f8;
+    color: #0c5460;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .attn-code-chip-remove {
+    background: none;
+    border: none;
+    padding: 0;
+    line-height: 1;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: #6c757d;
+    transition: color 0.15s;
+  }
+
+  .attn-code-chip-remove:hover {
+    color: #b91c1c;
+  }
+
+  /* Calendar code badges — inline, wrapping badges */
+  .comet-codes-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 4px;
+    font-size: clamp(0.6rem, 1.2vw, 0.75rem);
+  }
+
+  .comet-code-badge {
+    display: inline-block;
+    padding: clamp(1px, 0.5vw, 3px) clamp(3px, 1vw, 8px);
+    border-radius: 3px;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+    white-space: nowrap;
+  }
+
+  .comet-code-badge[class*="attn-badge-"] {
+    /* Color classes (attn-badge-td-1, etc.) are inherited; no specific rule needed */
+  }
 </style>

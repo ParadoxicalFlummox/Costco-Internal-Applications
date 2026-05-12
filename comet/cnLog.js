@@ -1,6 +1,6 @@
 /**
  * cnLog.js — CN_Log sheet management, Active CNs view, and CN expiry processing.
- * VERSION: 0.2.3
+ * VERSION: 0.3.0
  *
  * This file owns all interactions with the three CN tracking sheets:
  *
@@ -256,11 +256,14 @@ function appendActiveCNRow_(proposal, issuedAt, timeZone) {
  *   1. Updates CN_Log: Status → "Expired", ExpiredAt → current timestamp.
  *      (Written BEFORE the email send so the record is never lost on failure.)
  *   2. Moves the row from Active CNs to (Expired CNs) and hides that sheet.
- *   3. Sends an expiry notification email to payroll.
+ *   3. Sends an expiry notification email to payroll (if sendEmails is true in config).
  *
  * @param {boolean} dryRun — If true, logs what would happen but makes no changes.
  */
 function expireCNsDaily(dryRun) {
+  // Read sendEmails from the COMET Config sheet to determine whether to email
+  const sendEmailsStr = getConfigSheetValue_('sendEmails'); // setup.js
+  const shouldSendEmails = sendEmailsStr !== null ? sendEmailsStr.toLowerCase() === 'true' : false;
   const timeZone = Session.getScriptTimeZone();
   const logSheet = getOrCreateLogSheet_();
   const lastRow = logSheet.getLastRow();
@@ -313,19 +316,21 @@ function expireCNsDaily(dryRun) {
       moveToExpiredSheet_(cnKey, expiredStamp, employeeName, employeeId);
     }
 
-    // Step 3: Send expiry notification
+    // Step 3: Send expiry notification if enabled
     const subject = buildExpiryEmailSubject_(employeeName, employeeId, windowStart, windowEnd, rule);
     const body = buildExpiryEmailBody_(employeeName, employeeId, department, windowStart, windowEnd, rule, issuedStr, expiredStamp);
 
-    if (!dryRun) {
+    if (!dryRun && shouldSendEmails) {
       try {
         GmailApp.sendEmail(PAYROLL_RECIPIENTS.join(','), subject, body); // config.js
         console.log(`cnLog: Expiry email sent for ${employeeName}.`);
       } catch (emailError) {
         console.error(`cnLog: Expiry email failed for row ${sheetRow} — ${emailError.message}`);
       }
-    } else {
+    } else if (dryRun) {
       console.log(`cnLog: [DRY RUN] Would expire CN and send:\n  Subject: ${subject}\n${body}`);
+    } else if (!shouldSendEmails) {
+      console.log(`cnLog: CN expired (emails disabled) — ${employeeName}. Would send:\n  Subject: ${subject}\n${body}`);
     }
 
     expiredCount++;

@@ -72,3 +72,5 @@ test_ukg_sample.csv
 .claude/*
 comet/HANDOFF.md
 comet/test-data.json
+comet/.clasp.json
+comet/.clasp.json

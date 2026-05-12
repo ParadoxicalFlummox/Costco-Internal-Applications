@@ -1,6 +1,6 @@
 /**
  * infractionEngine.js — Main orchestrator for the infraction detection pipeline.
- * VERSION: 0.2.4
+ * VERSION: 0.3.0
  *
  * This file contains a single public function: scanAndIssueCNs(). Its only
  * job is to call the other files in the correct order and pass data between
@@ -45,13 +45,16 @@ function dryRunCNs() {
  * Scans all employee tabs and sends CN notifications for new infractions.
  * Intended to be called by the daily time-driven trigger.
  *
- * Uses DRY_RUN from config.js as the default — flip that constant to false
- * when you are ready to go live.
+ * Reads sendEmails flag from the COMET Config sheet:
+ *   sendEmails = 'true'  → Write CNs and send emails (production)
+ *   sendEmails = 'false' → Write CNs but don't send emails (safe mode)
  *
  * Callable from: "Infraction Notifier" → "Send CNs (Live)" or the daily trigger.
  */
 function sendCNsDaily() {
-  scanAndIssueCNs({ dryRun: !!DRY_RUN }); // DRY_RUN defined in config.js
+  const sendEmailsStr = getConfigSheetValue_('sendEmails'); // setup.js
+  const shouldSendEmails = sendEmailsStr !== null ? sendEmailsStr.toLowerCase() === 'true' : false;
+  scanAndIssueCNs({ sendEmail: shouldSendEmails });
 }
 
 
@@ -83,15 +86,17 @@ function sendCNsDaily() {
  * cannot abort the entire scan.
  *
  * @param {{ dryRun?: boolean, sendEmail?: boolean }} options
+ *   dryRun: If true, log proposals to console without writing to sheets (for testing)
+ *   sendEmail: If true, send CN emails; if false, write CNs but don't email
  * @returns {{ proposals: number, issued: number }}
  */
 function scanAndIssueCNs(options) {
   const opts      = options || {};
-  const dryRun    = opts.dryRun    != null ? !!opts.dryRun    : !!DRY_RUN; // config.js
-  const sendEmail = opts.sendEmail != null ? !!opts.sendEmail : !dryRun;   // default: send when not dry run
+  const dryRun    = opts.dryRun    != null ? !!opts.dryRun    : false;       // default: false (always write)
+  const sendEmail = opts.sendEmail != null ? !!opts.sendEmail : false;       // default: false (safe mode)
   const timeZone = Session.getScriptTimeZone();
 
-  console.log(`infractionEngine: Starting scan — dryRun=${dryRun}, daysBack=${DAYS_BACK}`);
+  console.log(`infractionEngine: Starting scan — dryRun=${dryRun}, sendEmail=${sendEmail}, daysBack=${DAYS_BACK}`);
 
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   const sourceSpreadsheetId = workbook.getId(); // captured once; attached to every proposal
@@ -198,15 +203,15 @@ function scanAndIssueCNs(options) {
   if (toSend.length === 0) return { proposals: newProposals.length, issued: 0 };
 
   // Step 6: Send notifications and/or write to the log
-  // dryRun  → log to console only, no sheet writes, no email
-  // !dryRun → always write to sheet; sendEmail controls whether emails go out
+  // dryRun=true   → log to console only, no sheet writes, no email (test mode)
+  // dryRun=false  → always write to sheet; sendEmail controls whether emails go out
   if (dryRun) {
     sendCNNotifications_(toSend, true, timeZone); // notifier.js — dry-run: console only
     console.log('infractionEngine: Dry run complete. No sheets written.');
     return { proposals: newProposals.length, issued: 0 };
   }
 
-  sendCNNotifications_(toSend, !sendEmail, timeZone); // notifier.js — suppress email when sendEmail=false
+  sendCNNotifications_(toSend, !sendEmail, timeZone); // notifier.js — dryRun=true suppresses emails
 
   const issuedAt = Utilities.formatDate(new Date(), timeZone, 'yyyy-MM-dd HH:mm:ss');
   const issuedBy = Session.getActiveUser() ? Session.getActiveUser().getEmail() : '';

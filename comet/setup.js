@@ -1,6 +1,6 @@
 /**
  * setup.js — First-run sheet bootstrap and onOpen menu for COMET.
- * VERSION: 0.2.8
+ * VERSION: 0.3.0
  *
  * This file has two responsibilities:
  *
@@ -563,6 +563,37 @@ function menuExportEmployees() {
 
 
 // ---------------------------------------------------------------------------
+// Config Sheet Utilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads a single configuration value from the COMET Config sheet.
+ *
+ * @param {string} key — Configuration key name (e.g. 'sendEmails', 'windowMinutes')
+ * @returns {string|null} The configuration value, or null if key not found
+ */
+function getConfigSheetValue_(key) {
+  try {
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
+    if (!configSheet) return null;
+
+    const data = configSheet.getDataRange().getValues();
+    // Row 1 is the title, row 2 is headers, data starts at row 3
+    for (let i = 2; i < data.length; i++) {
+      if (String(data[i][0] || '').trim() === key) {
+        return String(data[i][1] || '').trim();
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('setup: getConfigSheetValue_(' + key + ') failed — ' + error.message);
+    return null;
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // First-Run Setup
 // ---------------------------------------------------------------------------
 
@@ -612,6 +643,11 @@ function runCometSetup_() {
   });
 
   SpreadsheetApp.flush();
+
+  // Install time-based triggers
+  installAutoSendTrigger_();
+  installDailyInfractionScanTrigger_();
+
   console.log(`setup: runCometSetup_ complete — created: [${created.join(', ')}], skipped: [${skipped.join(', ')}]`);
   return { created, skipped };
 }
@@ -690,7 +726,7 @@ function createCometConfigSheet_(workbook) {
   const defaults = [
     ['windowMinutes', '15'],
     ['fyStartMonth', '9'],   // September (Costco fiscal year)
-    ['dryRun', 'true'],
+    ['sendEmails', 'false'], // Email toggle: false = safe mode (no emails), true = production (send emails)
   ];
   sheet.getRange(3, 1, defaults.length, 2).setValues(defaults);
   sheet.setColumnWidth(1, 180);
@@ -763,4 +799,119 @@ function createExpiredCnsSheet_(workbook) {
   sheet.hideSheet();
 
   return sheet;
+}
+
+
+// ---------------------------------------------------------------------------
+// Time-Based Triggers
+// ---------------------------------------------------------------------------
+
+/**
+ * Installs a 30-minute time-based trigger for auto-sending absence notifications.
+ * Called from: onOpen() menu or manually via sheet menu.
+ * Effect: autoSendAbsenceNotifications_() runs every 30 minutes automatically.
+ */
+function installAutoSendTrigger_() {
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const triggerId = scriptProperties.getProperty('AUTOSEND_TRIGGER_ID');
+
+  // Check if trigger already exists
+  if (triggerId) {
+    try {
+      ScriptApp.getProjectTrigger(triggerId);
+      console.log('setup: Auto-send trigger already installed (ID: ' + triggerId + ')');
+      return;
+    } catch (e) {
+      // Trigger doesn't exist anymore, fall through and create a new one
+      scriptProperties.deleteProperty('AUTOSEND_TRIGGER_ID');
+    }
+  }
+
+  // Create a new 30-minute timer trigger
+  const trigger = ScriptApp.newTrigger('autoSendAbsenceNotifications_')
+    .timeBased()
+    .everyMinutes(30)
+    .create();
+
+  scriptProperties.setProperty('AUTOSEND_TRIGGER_ID', trigger.getUniqueId());
+  console.log('setup: Auto-send trigger installed successfully (ID: ' + trigger.getUniqueId() + ')');
+}
+
+/**
+ * Installs a daily trigger to scan for infractions at 2-3 AM.
+ * Called from: onOpen() menu or manually via sheet menu.
+ * Effect: Infraction scanner runs daily between 2-3 AM to generate fresh CNs
+ * before payroll clerks arrive in the morning.
+ */
+function installDailyInfractionScanTrigger_() {
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const triggerId = scriptProperties.getProperty('INFRACTION_SCAN_TRIGGER_ID');
+
+  // Check if trigger already exists
+  if (triggerId) {
+    try {
+      ScriptApp.getProjectTrigger(triggerId);
+      console.log('setup: Daily infraction scan trigger already installed (ID: ' + triggerId + ')');
+      return;
+    } catch (e) {
+      // Trigger doesn't exist anymore, fall through and create a new one
+      scriptProperties.deleteProperty('INFRACTION_SCAN_TRIGGER_ID');
+    }
+  }
+
+  // Create a daily trigger at 2 AM (between 2-3 AM window)
+  const trigger = ScriptApp.newTrigger('runCNScan')
+    .timeBased()
+    .atHour(2)
+    .everyDays(1)
+    .create();
+
+  scriptProperties.setProperty('INFRACTION_SCAN_TRIGGER_ID', trigger.getUniqueId());
+  console.log('setup: Daily infraction scan trigger installed successfully (ID: ' + trigger.getUniqueId() + ')');
+}
+
+/**
+ * Removes the auto-send trigger if it exists.
+ * Called from: Spreadsheet menu for maintenance/debugging.
+ */
+function uninstallAutoSendTrigger_() {
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const triggerId = scriptProperties.getProperty('AUTOSEND_TRIGGER_ID');
+
+  if (!triggerId) {
+    console.log('setup: No auto-send trigger found.');
+    return;
+  }
+
+  try {
+    const trigger = ScriptApp.getProjectTrigger(triggerId);
+    ScriptApp.deleteTrigger(trigger);
+    scriptProperties.deleteProperty('AUTOSEND_TRIGGER_ID');
+    console.log('setup: Auto-send trigger removed successfully.');
+  } catch (e) {
+    console.error('setup: Failed to remove auto-send trigger — ' + e.message);
+  }
+}
+
+/**
+ * Removes the daily infraction scan trigger if it exists.
+ * Called from: Spreadsheet menu for maintenance/debugging.
+ */
+function uninstallDailyInfractionScanTrigger_() {
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const triggerId = scriptProperties.getProperty('INFRACTION_SCAN_TRIGGER_ID');
+
+  if (!triggerId) {
+    console.log('setup: No daily infraction scan trigger found.');
+    return;
+  }
+
+  try {
+    const trigger = ScriptApp.getProjectTrigger(triggerId);
+    ScriptApp.deleteTrigger(trigger);
+    scriptProperties.deleteProperty('INFRACTION_SCAN_TRIGGER_ID');
+    console.log('setup: Daily infraction scan trigger removed successfully.');
+  } catch (e) {
+    console.error('setup: Failed to remove daily infraction scan trigger — ' + e.message);
+  }
 }

@@ -211,11 +211,14 @@ function loadTrafficHeatmapConfig_(deptName) {
 
 /**
  * Writes traffic heatmap configuration for a department to the COMET Config sheet.
+ * Ensures the base department settings structure exists before writing.
  *
  * @param {string} deptName
  * @param {Object} heatmapConfig — { enabled, thresholds, trafficCurves, pool, weeklyOverrides, ... }
  */
 function saveTrafficHeatmapConfig_(deptName, heatmapConfig) {
+  // Ensure base settings structure exists for this department before writing config
+  ensureDeptSettingsBaseStructure_(deptName); // scheduleSettings.js
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   let configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME); // config.js
   if (!configSheet) {
