@@ -1,6 +1,6 @@
 /**
  * infractionEngine.js — Main orchestrator for the infraction detection pipeline.
- * VERSION: 0.3.0
+ * VERSION: 0.3.4
  *
  * This file contains a single public function: scanAndIssueCNs(). Its only
  * job is to call the other files in the correct order and pass data between
@@ -52,8 +52,8 @@ function dryRunCNs() {
  * Callable from: "Infraction Notifier" → "Send CNs (Live)" or the daily trigger.
  */
 function sendCNsDaily() {
-  const sendEmailsStr = getConfigSheetValue_('sendEmails'); // setup.js
-  const shouldSendEmails = sendEmailsStr !== null ? sendEmailsStr.toLowerCase() === 'true' : false;
+  const config = readCometConfig_(); // setup.js
+  const shouldSendEmails = !!config.sendEmails;
   scanAndIssueCNs({ sendEmail: shouldSendEmails });
 }
 
@@ -102,10 +102,10 @@ function scanAndIssueCNs(options) {
   const sourceSpreadsheetId = workbook.getId(); // captured once; attached to every proposal
   const sheets = workbook.getSheets();
 
-  // Step 1: Open the log and build the deduplication index
-  const logSheet = getOrCreateLogSheet_();   // cnLog.js
-  const logIndex = buildLogIndex_(logSheet); // cnLog.js
-  console.log(`infractionEngine: CN_Log loaded — ${logIndex.size} existing entries.`);
+  // Step 1: Build the deduplication and consumed-events indexes from the CN stores
+  const logIndex = buildLogIndex_();                       // cnLog.js
+  const consumedEventsIndex = buildConsumedEventsIndex_(); // cnLog.js
+  console.log(`infractionEngine: CN store loaded — ${logIndex.size} existing entries, ${consumedEventsIndex.size} employee(s) with consumed events.`);
 
   // Build active employee ID set from the Employees sheet so archived employees
   // are excluded from the scan without needing to hide their tabs.
@@ -142,8 +142,19 @@ function scanAndIssueCNs(options) {
       const year = new Date().getFullYear();
 
       const allEvents = parseCalendarEventsFromJson_(sheet, year, timeZone); // calendarParser.js
+
+      // Get the set of already-consumed "YYYY-MM-DD|CODE" keys for this employee
+      const consumedKeys = consumedEventsIndex.get(employeeId) || new Set();
+
       const infractionEvents = allEvents
         .filter(e => e.isInfraction && !e.isIgnored)
+        .filter(e => {
+          const eventKey = `${formatDateYmd_(e.date, timeZone)}|${e.code}`; // infractionDetector.js
+          if (consumedKeys.has(eventKey)) {
+            return false; // already counted in a previous active CN
+          }
+          return true;
+        })
         .sort((a, b) => a.date.getTime() - b.date.getTime());
 
       if (infractionEvents.length === 0) return;
@@ -217,36 +228,20 @@ function scanAndIssueCNs(options) {
   const issuedBy = Session.getActiveUser() ? Session.getActiveUser().getEmail() : '';
 
   toSend.forEach(proposal => {
-    // Write to CN_Log (dedup source of truth)
-    appendLogRow_(logSheet, { // cnLog.js
-      CN_Key: proposal.cnKey,
-      EmployeeID: proposal.employeeId,
-      EmployeeName: proposal.employeeName,
-      Department: proposal.department,
-      WindowStart: formatDateYmd_(proposal.windowStart, timeZone), // infractionDetector.js
-      WindowEnd: formatDateYmd_(proposal.windowEnd, timeZone),
-      Count: String(proposal.count),
-      EventsHash: proposal.eventsHash,
-      IssuedAt: issuedAt,
-      IssuedBy: issuedBy,
-      DryRun: 'FALSE',
-      SheetName: proposal.sheetName || '',
-      Status: 'Active',
-      ExpiredAt: '',
-      Rule: proposal.rule || 'GLOBAL',
-      SourceSpreadsheetId: proposal.sourceSpreadsheetId || '',
-      SourceSheetGid: proposal.sourceSheetGid != null ? String(proposal.sourceSheetGid) : '',
-    });
+    // Write to Active CNs (single store for both dedup and manager view)
+    appendActiveCN_(proposal, issuedAt, issuedBy, timeZone); // cnLog.js
 
-    // Write to Active CNs (manager-facing view with hyperlink)
-    appendActiveCNRow_(proposal, issuedAt, timeZone); // cnLog.js
-
-    // Update the in-memory index so subsequent proposals in the same run
-    // that share a key are not re-logged
+    // Update both in-memory indexes so subsequent proposals in the same run
+    // correctly exclude events already consumed by a proposal issued earlier in this run
     logIndex.set(proposal.cnKey, { eventsHash: proposal.eventsHash });
+    const employeeConsumedKeys = consumedEventsIndex.get(proposal.employeeId) || new Set();
+    (proposal.events || []).forEach(e => {
+      employeeConsumedKeys.add(`${formatDateYmd_(e.date, timeZone)}|${e.code}`);
+    });
+    consumedEventsIndex.set(proposal.employeeId, employeeConsumedKeys);
   });
 
-  console.log(`infractionEngine: ${toSend.length} CN(s) logged to CN_Log. Email sent: ${sendEmail}`);
+  console.log(`infractionEngine: ${toSend.length} CN(s) written to Active CNs. Email sent: ${sendEmail}`);
   console.log('infractionEngine: Scan complete.');
   return { proposals: newProposals.length, issued: toSend.length };
 }

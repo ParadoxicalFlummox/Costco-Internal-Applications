@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <!-- index.html — COMET UI
-     VERSION: 0.7.0
+     VERSION: 0.7.1
 -->
 
 <head>
@@ -81,7 +81,8 @@
         <div class="col-auto">
           <button id="btnGenerate" class="btn btn-primary btn-sm">Generate</button>
           <button id="btnLoadExisting" class="btn btn-outline-secondary btn-sm ms-1">Load Existing</button>
-          <button id="btnAddHybridStaff" class="btn btn-outline-primary btn-sm ms-1" style="display:none;">+ Add Hybrid Staff</button>
+          <button id="btnAddHybridStaff" class="btn btn-outline-primary btn-sm ms-1" style="display:none;">+ Add Hybrid
+            Staff</button>
         </div>
       </div>
       <div id="scheduleTableContainer" class="comet-table-container">
@@ -183,7 +184,8 @@
                   </thead>
                   <tbody id="employeeRolesBody">
                     <tr>
-                      <td colspan="3" class="text-muted small text-center py-3">Select a department to load employees</td>
+                      <td colspan="3" class="text-muted small text-center py-3">Select a department to load employees
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -194,7 +196,8 @@
             <!-- Section C: Role Minimums with Pool Integration -->
             <div>
               <h6 class="fw-semibold mb-2">Role Minimums with Pool Integration</h6>
-              <p class="small text-muted mb-2">Set minimum headcount per role and traffic level. Pool system will add above-base staff as needed.</p>
+              <p class="small text-muted mb-2">Set minimum headcount per role and traffic level. Pool system will add
+                above-base staff as needed.</p>
               <table class="table table-sm mb-2" id="roleMinimumsCoverageTable">
                 <thead>
                   <tr>
@@ -216,17 +219,20 @@
             <!-- Section D: Pool Seniority Threshold -->
             <div class="mt-4 pt-3 border-top">
               <h6 class="fw-semibold mb-2">Pool Member Seniority Threshold</h6>
-              <p class="small text-muted mb-2">Employees with less seniority than this threshold are eligible for the pool.</p>
+              <p class="small text-muted mb-2">Employees with less seniority than this threshold are eligible for the
+                pool.</p>
               <div class="d-flex gap-3 align-items-center flex-wrap">
                 <div style="flex: 1; min-width: 200px;">
                   <label class="form-label small mb-1" for="poolSeniorityYearsSlider">Years Since Hire</label>
-                  <input type="range" id="poolSeniorityYearsSlider" class="form-range" min="0" max="40" value="0" step="1">
+                  <input type="range" id="poolSeniorityYearsSlider" class="form-range" min="0" max="40" value="0"
+                    step="1">
                 </div>
                 <div style="min-width: 120px;">
                   <span id="poolSeniorityYearsDisplay" class="small fw-semibold">All employees (0 years)</span>
                 </div>
               </div>
-              <small class="text-muted d-block mt-1">Employees with &lt; this many years of service are pool-eligible</small>
+              <small class="text-muted d-block mt-1">Employees with &lt; this many years of service are
+                pool-eligible</small>
               <button id="btnSavePoolConfig" class="btn btn-primary btn-sm mt-3">Save Pool Configuration</button>
             </div>
           </div>
@@ -245,14 +251,16 @@
               <label class="form-check-label small fw-semibold" for="engineEnforceRoleMin">
                 Enforce Role Minimums
               </label>
-              <div class="text-muted small">When enabled, Phase 4 ensures each role meets its configured minimum headcount per traffic level.</div>
+              <div class="text-muted small">When enabled, Phase 4 ensures each role meets its configured minimum
+                headcount per traffic level.</div>
             </div>
             <div class="form-check form-switch mb-3">
               <input class="form-check-input" type="checkbox" id="engineGapFillEnabled" checked>
               <label class="form-check-label small fw-semibold" for="engineGapFillEnabled">
                 Enable Gap Fill (Phase 2)
               </label>
-              <div class="text-muted small">When disabled, Phase 2 is skipped entirely and only preference assignments from Phase 1 are used.</div>
+              <div class="text-muted small">When disabled, Phase 2 is skipped entirely and only preference assignments
+                from Phase 1 are used.</div>
             </div>
             <button id="btnSaveEngineOptions" class="btn btn-primary btn-sm">Save Engine Options</button>
           </div>
@@ -265,7 +273,8 @@
             <span class="comet-accordion-toggle">▼</span>
           </button>
           <div id="accordion-heatmap" class="comet-accordion-body">
-            <p class="small text-muted mb-2">Set expected member traffic by day and time block. The schedule engine staggers shift starts toward your busiest windows.</p>
+            <p class="small text-muted mb-2">Set expected member traffic by day and time block. The schedule engine
+              staggers shift starts toward your busiest windows.</p>
 
             <div class="form-check form-switch mb-3">
               <input class="form-check-input" type="checkbox" id="heatmapEnabled">
@@ -283,15 +292,18 @@
                 <div class="d-flex gap-2 flex-wrap">
                   <div>
                     <label class="form-label small mb-1" for="levelName0">Level 1 (lowest)</label>
-                    <input type="text" id="levelName0" class="form-control form-control-sm" style="width:110px;" value="Low" maxlength="20">
+                    <input type="text" id="levelName0" class="form-control form-control-sm" style="width:110px;"
+                      value="Low" maxlength="20">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="levelName1">Level 2 (middle)</label>
-                    <input type="text" id="levelName1" class="form-control form-control-sm" style="width:110px;" value="Moderate" maxlength="20">
+                    <input type="text" id="levelName1" class="form-control form-control-sm" style="width:110px;"
+                      value="Moderate" maxlength="20">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="levelName2">Level 3 (highest)</label>
-                    <input type="text" id="levelName2" class="form-control form-control-sm" style="width:110px;" value="High" maxlength="20">
+                    <input type="text" id="levelName2" class="form-control form-control-sm" style="width:110px;"
+                      value="High" maxlength="20">
                   </div>
                 </div>
               </div>
@@ -303,22 +315,26 @@
                 <div class="d-flex gap-3 flex-wrap align-items-end">
                   <div>
                     <label class="form-label small mb-1" for="closeHourWeekday">Mon–Fri close</label>
-                    <input type="time" id="closeHourWeekday" class="form-control form-control-sm" style="width:115px;" value="21:00">
+                    <input type="time" id="closeHourWeekday" class="form-control form-control-sm" style="width:115px;"
+                      value="21:00">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="closeHourSaturday">Saturday close</label>
-                    <input type="time" id="closeHourSaturday" class="form-control form-control-sm" style="width:115px;" value="18:00">
+                    <input type="time" id="closeHourSaturday" class="form-control form-control-sm" style="width:115px;"
+                      value="18:00">
                   </div>
                   <div>
                     <label class="form-label small mb-1" for="closeHourSunday">Sunday close</label>
-                    <input type="time" id="closeHourSunday" class="form-control form-control-sm" style="width:115px;" value="18:00">
+                    <input type="time" id="closeHourSunday" class="form-control form-control-sm" style="width:115px;"
+                      value="18:00">
                   </div>
                 </div>
               </div>
 
               <!-- Traffic level grid -->
               <div class="table-responsive mb-1 pt-2 border-top">
-                <table class="table table-bordered table-sm comet-heat-grid" id="heatmapGrid" aria-label="Traffic levels by day and time block">
+                <table class="table table-bordered table-sm comet-heat-grid" id="heatmapGrid"
+                  aria-label="Traffic levels by day and time block">
                   <thead id="heatmapGridHead">
                     <!-- Populated by JavaScript -->
                   </thead>
@@ -327,7 +343,8 @@
                   </tbody>
                 </table>
               </div>
-              <p class="small text-muted mb-3">Click any cell to cycle through traffic levels. Greyed cells are outside store hours.</p>
+              <p class="small text-muted mb-3">Click any cell to cycle through traffic levels. Greyed cells are outside
+                store hours.</p>
 
               <!-- Pool scheduling counts -->
               <div class="pt-2 border-top">
@@ -335,16 +352,22 @@
                 <p class="small text-muted mb-2">How many pool employees to schedule at each traffic level.</p>
                 <div class="d-flex gap-3 flex-wrap align-items-end">
                   <div>
-                    <label class="form-label small mb-1" for="poolCountLow"><span id="poolLabelLow">Low</span> traffic</label>
-                    <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;" min="0" value="1">
+                    <label class="form-label small mb-1" for="poolCountLow"><span id="poolLabelLow">Low</span>
+                      traffic</label>
+                    <input type="number" id="poolCountLow" class="form-control form-control-sm" style="width:70px;"
+                      min="0" value="1">
                   </div>
                   <div>
-                    <label class="form-label small mb-1" for="poolCountModerate"><span id="poolLabelModerate">Moderate</span></label>
-                    <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;" min="0" value="3">
+                    <label class="form-label small mb-1" for="poolCountModerate"><span
+                        id="poolLabelModerate">Moderate</span></label>
+                    <input type="number" id="poolCountModerate" class="form-control form-control-sm" style="width:70px;"
+                      min="0" value="3">
                   </div>
                   <div>
-                    <label class="form-label small mb-1" for="poolCountHigh"><span id="poolLabelHigh">High</span> traffic</label>
-                    <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;" min="0" value="5">
+                    <label class="form-label small mb-1" for="poolCountHigh"><span id="poolLabelHigh">High</span>
+                      traffic</label>
+                    <input type="number" id="poolCountHigh" class="form-control form-control-sm" style="width:70px;"
+                      min="0" value="5">
                   </div>
                 </div>
               </div>
@@ -367,11 +390,19 @@
     <div id="view-absences" class="comet-view">
       <div class="comet-view-header d-flex align-items-center justify-content-between">
         <h1 class="comet-view-title">Absence Log</h1>
-        <div class="d-flex align-items-center gap-2">
-          <label class="form-label mb-0 small fw-semibold" for="absenceDate">Date</label>
-          <button id="btnPrevDay" class="btn btn-outline-secondary btn-sm" title="Previous day">&#8592;</button>
-          <input type="date" id="absenceDate" class="form-control form-control-sm" style="width:auto;">
-          <button id="btnNextDay" class="btn btn-outline-secondary btn-sm" title="Next day">&#8594;</button>
+        <div class="d-flex align-items-center gap-3">
+          <div class="d-flex align-items-center gap-2">
+            <label class="form-label mb-0 small fw-semibold" for="absenceDate">Date</label>
+            <button id="btnPrevDay" class="btn btn-outline-secondary btn-sm" title="Previous day">&#8592;</button>
+            <input type="date" id="absenceDate" class="form-control form-control-sm" style="width:auto;">
+            <button id="btnNextDay" class="btn btn-outline-secondary btn-sm" title="Next day">&#8594;</button>
+          </div>
+          <div class="d-flex align-items-center gap-2" style="border-left: 1px solid #dee2e6; padding-left: 1rem;">
+            <div class="form-check mb-0">
+              <input class="form-switch" type="checkbox" id="absenceSendEmailToggle" checked>
+              <label class="form-check-label ms-1 small" for="absenceSendEmailToggle">Send Email</label>
+            </div>
+          </div>
           <button id="btnNewAbsence" class="btn btn-primary btn-sm">+ New Entry</button>
         </div>
       </div>
@@ -431,42 +462,69 @@
 
         <!-- Tab 1: Active Infractions -->
         <div class="tab-pane fade show active" id="tab-attendance-cn" role="tabpanel">
-          <div class="d-flex gap-2 mb-3 align-items-center">
-            <div class="form-check form-switch mb-0 d-flex align-items-center">
-              <input class="form-check-input" type="checkbox" id="dryRunToggle" checked>
-              <label class="form-check-label ms-2 small" for="dryRunToggle">Dry Run</label>
+          <div class="d-flex gap-2 mb-3 align-items-center justify-content-between flex-wrap">
+            <input type="text" id="infractionSearch" class="form-control form-control-sm"
+              placeholder="Search by employee name…" style="max-width:300px;">
+
+            <div class="d-flex align-items-center gap-2" style="border-left: 1px solid #dee2e6; padding-left: 1rem;">
+              <div class="form-check form-switch mb-0 d-flex align-items-center">
+                <input class="form-check-input" type="checkbox" id="dryRunToggle" checked>
+                <label class="form-check-label ms-2 small" for="dryRunToggle">Dry Run</label>
+              </div>
+              <div class="form-check form-switch mb-0 d-flex align-items-center">
+                <input class="form-check-input" type="checkbox" id="sendEmailToggle">
+                <label class="form-check-label ms-2 small" for="sendEmailToggle">Send Email</label>
+              </div>
+              <button id="btnRunScan" class="btn btn-primary btn-sm">Run CN Scan</button>
+              <button id="btnRunExpiry" class="btn btn-outline-secondary btn-sm">Run Expiry Check</button>
             </div>
-            <div class="form-check form-switch mb-0 d-flex align-items-center">
-              <input class="form-check-input" type="checkbox" id="sendEmailToggle">
-              <label class="form-check-label ms-2 small" for="sendEmailToggle">Send Email</label>
-            </div>
-            <button id="btnRunScan" class="btn btn-primary btn-sm">Run CN Scan</button>
-            <button id="btnRunExpiry" class="btn btn-outline-secondary btn-sm">Run Expiry Check</button>
           </div>
 
           <div class="alert alert-info small py-2 mb-3" role="alert">
             <strong>Note:</strong> CN scans read employee attendance data from their individual tabs.
-            Run "Generate Tabs" in Admin first if new employees were added. Active CNs from previous scans are always
-            shown below.
+            Run "Generate Tabs" in Admin first if new employees were added.
           </div>
 
+          <!-- Pending Approval queue — hidden until there are proposed CNs -->
+          <div id="cnPendingSection" style="display:none;" class="mb-4">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <h6 class="fw-semibold mb-0">Awaiting Approval</h6>
+              <span id="cnPendingBadge" class="badge bg-warning text-dark">0</span>
+            </div>
+            <div class="comet-table-container cn-pending-container">
+              <table class="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Rule</th>
+                    <th>Count</th>
+                    <th>Start Date</th>
+                    <th>End Date</th>
+                    <th>Issued</th>
+                    <th class="text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="cnPendingBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Active CNs -->
           <div class="comet-table-container">
             <table class="table table-hover mb-0">
               <thead>
                 <tr>
-                  <th>Employee</th>
-                  <th>Dept</th>
                   <th>Rule</th>
                   <th>Count</th>
-                  <th>Window Start</th>
-                  <th>Window End</th>
-                  <th>Issued At</th>
+                  <th>Start Date</th>
+                  <th>End Date</th>
+                  <th>Issued</th>
                   <th>Days Left</th>
                 </tr>
               </thead>
               <tbody id="cnTableBody">
                 <tr>
-                  <td colspan="8" class="text-comet-muted small p-3">Loading…</td>
+                  <td colspan="6" class="text-comet-muted small p-3">Loading…</td>
                 </tr>
               </tbody>
             </table>
@@ -543,7 +601,8 @@
                 <div class="text-comet-muted small text-center py-3">Loading…</div>
               </div>
               <div id="mailingListWarnings" class="mt-2"></div>
-              <button id="btnSaveMailingList" class="btn btn-primary btn-sm mt-3" style="display:none;">Save Configuration</button>
+              <button id="btnSaveMailingList" class="btn btn-primary btn-sm mt-3" style="display:none;">Save
+                Configuration</button>
             </div>
           </div>
         </div>
@@ -553,8 +612,8 @@
           <div class="card">
             <div class="card-header d-flex align-items-center justify-content-between fw-semibold">
               <span>Employee Directory</span>
-              <input type="search" id="employeeSearch" placeholder="Search by name or ID…" class="form-control form-control-sm ms-2"
-                style="max-width:280px;">
+              <input type="search" id="employeeSearch" placeholder="Search by name or ID…"
+                class="form-control form-control-sm ms-2" style="max-width:280px;">
             </div>
             <div class="card-body">
               <div id="employeeChipsContainer" class="d-flex flex-wrap gap-2">
@@ -878,16 +937,19 @@
               style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Tardy Codes
             </div>
             <div class="d-flex flex-wrap gap-2 align-items-center" id="tardyCodesContainer"></div>
-            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="btnAddTardyCode">+ Add Tardy Code</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="btnAddTardyCode">+ Add Tardy
+              Code</button>
           </div>
 
           <!-- Other infraction codes section -->
           <div class="mb-3 pb-2 border-bottom">
             <div class="fw-semibold mb-2"
-              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Other Infraction Codes
+              style="font-size:0.7rem; color:#b91c1c; text-transform:uppercase; letter-spacing:0.05em;">Other Infraction
+              Codes
             </div>
             <div class="d-flex flex-wrap gap-2 align-items-center" id="otherInfractionCodesContainer"></div>
-            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="btnAddInfractionCode">+ Add Code</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="btnAddInfractionCode">+ Add
+              Code</button>
           </div>
 
           <!-- Other codes section -->

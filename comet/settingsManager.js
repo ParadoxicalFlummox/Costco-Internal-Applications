@@ -1,6 +1,6 @@
 /**
  * settingsManager.js — Builds shift timing maps and staffing requirements for the schedule engine.
- * VERSION: 0.5.3
+ * VERSION: 0.5.4
  *
  * In the original autoScheduleGenerator this file read directly from a Settings sheet.
  * In COMET, settings are owned by scheduleSettings.js and stored in Settings_[Dept] sheets.
@@ -187,31 +187,19 @@ function readShiftNamesForDept_(deptName) {
  * @returns {Object|null} { department, enabled, thresholds, trafficCurves, pool, weeklyOverrides, lastUpdated }
  */
 function loadTrafficHeatmapConfig_(deptName) {
-  const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME); // config.js
-  if (!configSheet) return null;
-
-  const configKey = 'TRAFFIC_HEATMAP_' + (deptName || '').toUpperCase().replace(/\s+/g, '_');
-  const configData = configSheet.getDataRange().getValues();
-
-  for (let rowIdx = 0; rowIdx < configData.length; rowIdx++) {
-    const row = configData[rowIdx];
-    if (row[0] === configKey && row[1]) {
-      try {
-        return JSON.parse(row[1].toString());
-      } catch (e) {
-        logConsole_('WARNING: Failed to parse traffic heatmap config for ' + deptName);
-        return null;
-      }
-    }
+  try {
+    const config = readCometConfig_(); // setup.js
+    const deptKey = (deptName || '').toUpperCase().replace(/\s+/g, '_');
+    return config.trafficHeatmaps && config.trafficHeatmaps[deptKey] ? config.trafficHeatmaps[deptKey] : null;
+  } catch (error) {
+    logConsole_('WARNING: Failed to load traffic heatmap config for ' + deptName + ': ' + error.message);
+    return null;
   }
-
-  return null;
 }
 
 /**
  * Writes traffic heatmap configuration for a department to the COMET Config sheet.
- * Ensures the base department settings structure exists before writing.
+ * Stores under config.trafficHeatmaps[DEPT_KEY].
  *
  * @param {string} deptName
  * @param {Object} heatmapConfig — { enabled, thresholds, trafficCurves, pool, weeklyOverrides, ... }
@@ -219,41 +207,27 @@ function loadTrafficHeatmapConfig_(deptName) {
 function saveTrafficHeatmapConfig_(deptName, heatmapConfig) {
   // Ensure base settings structure exists for this department before writing config
   ensureDeptSettingsBaseStructure_(deptName); // scheduleSettings.js
-  const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  let configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME); // config.js
-  if (!configSheet) {
-    configSheet = workbook.insertSheet(COMET_CONFIG_SHEET_NAME);
-  }
 
-  const configKey = 'TRAFFIC_HEATMAP_' + (deptName || '').toUpperCase().replace(/\s+/g, '_');
-  const configValue = JSON.stringify({
-    department: deptName,
-    enabled: heatmapConfig.enabled || false,
-    thresholds: heatmapConfig.thresholds || HEATMAP_DEFAULTS.thresholds, // config.js
-    trafficCurves: heatmapConfig.trafficCurves || HEATMAP_DEFAULTS.defaultTrafficCurves,
-    pool: heatmapConfig.pool || HEATMAP_DEFAULTS.pool,
-    weeklyOverrides: heatmapConfig.weeklyOverrides || {},
-    lastUpdated: new Date().toISOString(),
-  });
-
-  const configData = configSheet.getDataRange().getValues();
-  let foundRow = -1;
-
-  for (let rowIdx = 0; rowIdx < configData.length; rowIdx++) {
-    if (configData[rowIdx][0] === configKey) {
-      foundRow = rowIdx + 1; // 1-indexed
-      break;
+  try {
+    const deptKey = (deptName || '').toUpperCase().replace(/\s+/g, '_');
+    const config = readCometConfig_(); // setup.js
+    if (!config.trafficHeatmaps) {
+      config.trafficHeatmaps = {};
     }
-  }
 
-  if (foundRow > 0) {
-    // Update existing row
-    configSheet.getRange(foundRow, 2).setValue(configValue);
-  } else {
-    // Append new row
-    const nextRow = configData.length + 1;
-    configSheet.getRange(nextRow, 1).setValue(configKey);
-    configSheet.getRange(nextRow, 2).setValue(configValue);
+    config.trafficHeatmaps[deptKey] = {
+      department: deptName,
+      enabled: heatmapConfig.enabled || false,
+      thresholds: heatmapConfig.thresholds || HEATMAP_DEFAULTS.thresholds, // config.js
+      trafficCurves: heatmapConfig.trafficCurves || HEATMAP_DEFAULTS.defaultTrafficCurves,
+      pool: heatmapConfig.pool || HEATMAP_DEFAULTS.pool,
+      weeklyOverrides: heatmapConfig.weeklyOverrides || {},
+      lastUpdated: new Date().toISOString(),
+    };
+
+    writeCometConfig_(config);
+  } catch (error) {
+    logConsole_('ERROR: saveTrafficHeatmapConfig_ failed for ' + deptName + ': ' + error.message);
   }
 }
 

@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.6.0
+ * VERSION: 0.6.2
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -46,6 +46,9 @@
  *
  *   Attendance Dashboard:
  *     getActiveCNs()                           → { cns }
+ *     approveCN(cnKey, employeeId)             → { ok }
+ *     rejectCN(cnKey, employeeId)              → { ok }
+ *     getExpiredCNsByEmployee(employeeId)      → { cns }
  *     runCNScan(dryRun)                        → { proposals, issued }
  *     runExpiryCheck()                         → { expired }
  *     getAttendanceCalendar(employeeId, year)         → { codes, employeeName, year }
@@ -787,6 +790,61 @@ function getActiveCNs() {
 }
 
 /**
+ * Approves a proposed CN, changing its status to "active".
+ *
+ * @param {string} cnKey      — The CN_Key to approve.
+ * @param {string} employeeId — The employee the CN belongs to.
+ * @returns {{ ok: boolean, data?: object, error?: string }}
+ */
+function approveCN(cnKey, employeeId) {
+  try {
+    if (!cnKey)      throw new Error('cnKey is required.');
+    if (!employeeId) throw new Error('employeeId is required.');
+    approveCN_(cnKey, employeeId); // cnLog.js
+    return { ok: true, data: {} };
+  } catch (error) {
+    console.error('api: approveCN failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Rejects a proposed CN, moving it to (Expired CNs) with status "rejected".
+ *
+ * @param {string} cnKey      — The CN_Key to reject.
+ * @param {string} employeeId — The employee the CN belongs to.
+ * @returns {{ ok: boolean, data?: object, error?: string }}
+ */
+function rejectCN(cnKey, employeeId) {
+  try {
+    if (!cnKey)      throw new Error('cnKey is required.');
+    if (!employeeId) throw new Error('employeeId is required.');
+    rejectCN_(cnKey, employeeId); // cnLog.js
+    return { ok: true, data: {} };
+  } catch (error) {
+    console.error('api: rejectCN failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Returns all expired (and rejected) CN records for a single employee.
+ *
+ * @param {string} employeeId
+ * @returns {{ ok: boolean, data?: { cns: object[] }, error?: string }}
+ */
+function getExpiredCNsByEmployee(employeeId) {
+  try {
+    if (!employeeId) throw new Error('employeeId is required.');
+    const cns = getExpiredCNsForEmployee_(employeeId); // cnLog.js
+    return { ok: true, data: { cns } };
+  } catch (error) {
+    console.error('api: getExpiredCNsByEmployee failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
  * Runs the infraction scanner across all active employee tabs.
  *
  * @param {boolean} dryRun    — When true, proposals are returned but nothing is written.
@@ -1036,23 +1094,8 @@ function getEmployeeList() {
  */
 function getEmployeeSheetAge() {
   try {
-    const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
-    if (!configSheet) throw new Error('COMET Config sheet not found.');
-
-    // Search the config sheet for the "ukgImportLastRan" entry (rows 3+)
-    const lastRow = configSheet.getLastRow();
-    let lastImportTimestamp = null;
-
-    if (lastRow >= 3) {
-      const configData = configSheet.getRange(3, 1, lastRow - 2, 2).getValues();
-      for (let i = 0; i < configData.length; i++) {
-        if (String(configData[i][0] || '').trim() === 'ukgImportLastRan') {
-          lastImportTimestamp = String(configData[i][1] || '').trim();
-          break;
-        }
-      }
-    }
+    const config = readCometConfig_(); // setup.js
+    const lastImportTimestamp = config.ukgImportLastRan;
 
     // If no import timestamp found, return a large age (assume very stale)
     if (!lastImportTimestamp) {
@@ -1443,14 +1486,12 @@ function generateNextYearWorkbook() {
 /**
  * Returns the current values from the COMET Config sheet.
  *
- * @returns {{ ok: boolean, data?: object, error?: string }}
- *
- * TODO Phase 6: Replace stub with COMET Config sheet read.
+ * @returns {{ ok: boolean, data?: { config: object }, error?: string }}
  */
 function getConfig() {
   try {
-    // Phase 1 stub
-    return { ok: true, data: { config: {} } };
+    const config = readCometConfig_(); // setup.js
+    return { ok: true, data: { config: config } };
   } catch (error) {
     console.error('api: getConfig failed —', error);
     return { ok: false, error: error.message };
@@ -1458,18 +1499,16 @@ function getConfig() {
 }
 
 /**
- * Writes a single key-value pair to the COMET Config sheet.
+ * Updates the COMET Config with a partial object and returns the full config.
  *
- * @param {string} key — Config key (must match a row in the COMET Config sheet).
- * @param {string} value — New value to write.
- * @returns {{ ok: boolean, data?: object, error?: string }}
- *
- * TODO Phase 6: Replace stub with COMET Config sheet write.
+ * @param {object} partial — Partial config object with keys to update
+ * @returns {{ ok: boolean, data?: { config: object }, error?: string }}
  */
-function updateConfig(key, value) {
+function updateConfig(partial) {
   try {
-    // Phase 1 stub
-    return { ok: true, data: { updated: false } };
+    updateCometConfig_(partial); // setup.js
+    const config = readCometConfig_();
+    return { ok: true, data: { config: config } };
   } catch (error) {
     console.error('api: updateConfig failed —', error);
     return { ok: false, error: error.message };

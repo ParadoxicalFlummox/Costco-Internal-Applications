@@ -1,12 +1,12 @@
 /**
- * callLog.js — Absence log sheet management and email notifications for COMET.
- * VERSION: 0.3.0
+ * callLog.js — Absence log sheet management for COMET.
+ * VERSION: 0.3.3
  *
  * This file owns all server-side logic for the Absence Log feature:
  *   - Auto-creating a Call Log sheet for each new week
  *   - Reading absence entries for a given date
  *   - Writing new absence entries
- *   - Sending notification emails to the correct department recipients
+ *   - Triggering absence notification emails (construction/sending lives in notifier.js)
  *
  * CALL LOG SHEET NAMING:
  *   One sheet per fiscal week, named "Call Log MM-DD-YYYY" where the date is
@@ -31,12 +31,10 @@
  *   O (14) — Date          (date value)
  *
  * EMAIL NOTIFICATION:
- *   Recipients are determined by the entry's department from the Settings sheet.
- *   Each department's mailing list is stored in the "mailing" field of that
- *   department's settings JSON. If no mailing list is configured, email is suppressed
- *   and a warning is logged. Emails are sent via GmailApp.sendEmail() and are always
- *   plain text. The sendEmails toggle in the COMET Config sheet controls whether
- *   emails are actually sent (true) or logged instead (false).
+ *   This file triggers absence notification emails via sendAbsenceEmail_() and
+ *   resolveAbsenceRecipients_() in notifier.js. Recipients come from the
+ *   department's "mailing" field in the Settings sheet. All email construction
+ *   and sending lives in notifier.js.
  */
 
 
@@ -158,20 +156,29 @@ function sendAbsenceNotification_(sheetName, rowNumber, isAutoSend = false) {
   const row = sheet.getRange(rowNumber, 1, 1, totalCols).getValues()[0];
   const entry = rowToCallLogEntry_(row, sheetName, rowNumber);
 
-  const recipients = resolveRecipients_(entry.department);
-  const { subject, body } = buildEmailContent_(entry);
-
-  // Read sendEmails from the COMET Config sheet
-  const sendEmailsStr = getConfigSheetValue_('sendEmails'); // setup.js
-  const shouldSendEmails = sendEmailsStr !== null ? sendEmailsStr.toLowerCase() === 'true' : false;
-
-  if (!shouldSendEmails) {
-    console.log(`callLog: sendEmails disabled — would send to ${recipients.join(', ')}\nSubject: ${subject}\n${body}`);
-    return { sent: false, recipients };
+  // Check if already sent
+  const sentCell = row[CALL_LOG_COLUMN.SENT];
+  if (sentCell && String(sentCell).trim().length > 0) {
+    console.log(`callLog: Email already sent for ${entry.name} (${entry.department}) — marked as "${sentCell}"`);
+    return { sent: false, alreadySent: true, recipients: [] };
   }
 
-  GmailApp.sendEmail(recipients.join(','), subject, body);
-  console.log(`callLog: Sent absence notification for ${entry.name} to ${recipients.join(', ')}`);
+  // Check if email sending is enabled in UI settings
+  const config = readCometConfig_(); // setup.js
+  const shouldSendEmails = !!config.sendEmails;
+
+  if (!shouldSendEmails) {
+    console.log(`callLog: Email sending is disabled in settings for ${entry.name} (${entry.department})`);
+    return { sent: false, disabled: true, recipients: [] };
+  }
+
+  const recipients = resolveAbsenceRecipients_(entry.department); // notifier.js
+  if (recipients.length === 0) {
+    console.warn(`callLog: No email recipients configured for ${entry.department}`);
+    return { sent: false, noRecipients: true, recipients: [] };
+  }
+
+  sendAbsenceEmail_(entry, recipients); // notifier.js
 
   // Mark as sent with timestamp
   const now = new Date();
@@ -179,84 +186,12 @@ function sendAbsenceNotification_(sheetName, rowNumber, isAutoSend = false) {
   const mins = String(now.getMinutes()).padStart(2, '0');
   const sentLabel = isAutoSend ? `auto sent at ${hours}:${mins}` : `sent at ${hours}:${mins}`;
   sheet.getRange(rowNumber, CALL_LOG_COLUMN.SENT + 1).setValue(sentLabel);
+  SpreadsheetApp.flush();
 
+  console.log(`callLog: Sent email for ${entry.name} (${entry.department}) to ${recipients.join(', ')} — marked as "${sentLabel}"`);
   return { sent: true, recipients, sentLabel };
 }
 
-/**
- * Builds the subject and plain-text body for an absence notification email.
- *
- * @param {CallLogEntry} entry
- * @returns {{ subject: string, body: string }}
- */
-function buildEmailContent_(entry) {
-  const timeZone = Session.getScriptTimeZone();
-  const dateStr = entry.dateRaw
-    ? Utilities.formatDate(coerceCallLogDate_(entry.dateRaw) || new Date(), timeZone, 'MMMM d, yyyy')
-    : 'Unknown date';
-
-  const types = [];
-  if (entry.isCallout) types.push('Call-Out');
-  if (entry.isFmla)    types.push('FMLA');
-  if (entry.isNoShow)  types.push('No Show');
-  const typeLabel = types.length > 0 ? types.join(', ') : 'Absence';
-
-  const subject = `[COMET] ${typeLabel} — ${entry.name} (${entry.department}) — ${dateStr}`;
-
-  const lines = [
-    'COMET Absence Notification',
-    '──────────────────────────',
-    `Employee:        ${entry.name}`,
-    `ID:              ${entry.employeeId || '—'}`,
-    `Department:      ${entry.department || '—'}`,
-    `Date:            ${dateStr}`,
-    `Time Called:     ${entry.time || '—'}`,
-    `Type:            ${typeLabel}`,
-  ];
-
-  if (entry.manager) {
-    lines.push(`Manager:         ${entry.manager}`);
-  }
-
-  if (entry.scheduledShift) {
-    lines.push(`Scheduled Shift: ${entry.scheduledShift}`);
-  }
-
-  if (entry.comment) {
-    lines.push(`Comment:         ${entry.comment}`);
-  }
-
-  lines.push('', '──────────────────────────');
-  lines.push('This notification was generated automatically by COMET.');
-
-  return { subject, body: lines.join('\n') };
-}
-
-/**
- * Resolves the list of email recipients for the given department.
- * Reads from the department's "mailing" field in the Settings sheet.
- * If no config found, logs a warning and returns empty array (email suppressed).
- *
- * @param {string} department — Department name to look up
- * @returns {string[]} Array of email addresses (may be empty if not configured)
- */
-function resolveRecipients_(department) {
-  try {
-    // Ensure base settings structure exists and is valid before reading mailing list
-    const settings = ensureDeptSettingsBaseStructure_(department); // scheduleSettings.js
-
-    if (settings.mailing && Array.isArray(settings.mailing) && settings.mailing.length > 0) {
-      console.log(`callLog: Resolved mailing list for "${department}" — ${settings.mailing.length} recipient(s)`);
-      return settings.mailing;
-    }
-
-    console.warn(`callLog: No mailing list configured for department "${department}"`);
-    return [];
-  } catch (error) {
-    console.error(`callLog: Error resolving recipients for "${department}" — ${error.message}`);
-    return [];
-  }
-}
 
 
 // ---------------------------------------------------------------------------
@@ -531,9 +466,9 @@ function autoSendAbsenceNotifications_() {
         if (sentValue) return;
 
         // Check if it's an absence entry
-        const isCallout = toBoolean_(row[CALL_LOG_COLUMN.IS_CALLOUT]);
-        const isFmla = toBoolean_(row[CALL_LOG_COLUMN.IS_FMLA]);
-        const isNoShow = toBoolean_(row[CALL_LOG_COLUMN.IS_NOSHOW]);
+        const isCallout = coerceBool_(row[CALL_LOG_COLUMN.IS_CALLOUT]);
+        const isFmla = coerceBool_(row[CALL_LOG_COLUMN.IS_FMLA]);
+        const isNoShow = coerceBool_(row[CALL_LOG_COLUMN.IS_NOSHOW]);
         if (!isCallout && !isFmla && !isNoShow) return;
 
         // Parse the time called

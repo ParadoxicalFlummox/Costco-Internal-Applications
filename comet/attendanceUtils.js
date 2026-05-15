@@ -26,7 +26,7 @@
 function normalizeAndSplitCodes_(cellValue) {
   return String(cellValue)
     .split(/[\s,\/;|]+/)
-    .map(token => token.trim().toUpperCase().replace(/[^A-Z]/g, ''))
+    .map(token => token.trim().toUpperCase().replace(/[^A-Z0-9-]/g, ''))
     .filter(Boolean);
 }
 

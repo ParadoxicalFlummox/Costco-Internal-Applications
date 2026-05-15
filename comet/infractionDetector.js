@@ -1,6 +1,6 @@
 /**
  * infractionDetector.js — Rolling-window CN detection logic.
- * VERSION: 0.2.3
+ * VERSION: 0.2.4
  *
  * This file owns the logic for determining whether a sequence of infraction
  * events is severe enough to trigger a Counseling Notice (CN).
@@ -231,7 +231,12 @@ function buildCNProposals_(events, threshold, windowDays, timeZone, ctx, ruleLab
         windowDays: windowDays,
       });
 
-      lastEndKey = endKey;
+      // Consume the events that triggered this CN — they cannot contribute to a
+      // future window. Clearing the queue forces the next proposal to start from
+      // a completely fresh set of events, so 4 events produce exactly one CN
+      // (using events 1–3) and the 4th begins accumulating toward the next one.
+      queue.length = 0;
+      lastEndKey = null;
     }
   }
 

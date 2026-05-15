@@ -1,6 +1,6 @@
 /**
  * setup.js — First-run sheet bootstrap and onOpen menu for COMET.
- * VERSION: 0.3.0
+ * VERSION: 0.3.1
  *
  * This file has two responsibilities:
  *
@@ -31,6 +31,22 @@
  *   Green  (#57BB8A) — Call Log sheets (created by callLog.js)
  *   White  (#FFFFFF) — attendance controller tabs (one per employee)
  */
+
+
+// ---------------------------------------------------------------------------
+// Configuration Defaults
+// ---------------------------------------------------------------------------
+
+/**
+ * Default values for the COMET Config JSON.
+ * These are merged with any stored config to ensure all keys are present.
+ */
+const COMET_CONFIG_DEFAULTS = {
+  sendEmails: false,
+  dryRun: true,
+  ukgImportLastRan: null,
+  trafficHeatmaps: {},
+};
 
 
 // ---------------------------------------------------------------------------
@@ -389,28 +405,13 @@ function menuEmployeeSummary() {
 
 /** Shows last UKG import timestamp. */
 function menuShowLastImport() {
-  const workbook = SpreadsheetApp.getActiveSpreadsheet();
   try {
-    const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
-    if (!configSheet) {
-      workbook.toast('Config sheet not found.', 'Error', 5);
-      return;
-    }
-
-    const data = configSheet.getDataRange().getValues();
-    let lastImport = 'Never';
-
-    for (let i = 2; i < data.length; i++) {
-      if (String(data[i][0] || '').trim() === 'ukgImportLastRan') {
-        lastImport = data[i][1] || 'No timestamp recorded';
-        break;
-      }
-    }
-
+    const config = readCometConfig_();
+    const lastImport = config.ukgImportLastRan || 'Never';
     SpreadsheetApp.getUi().alert('Last UKG Import:\n' + lastImport);
   } catch (error) {
     console.error('setup: menuShowLastImport failed —', error);
-    workbook.toast('Lookup failed. Check logs.', 'Error', 8);
+    SpreadsheetApp.getActiveSpreadsheet().toast('Lookup failed. Check logs.', 'Error', 8);
   }
 }
 
@@ -567,29 +568,83 @@ function menuExportEmployees() {
 // ---------------------------------------------------------------------------
 
 /**
- * Reads a single configuration value from the COMET Config sheet.
+ * Reads the full COMET configuration from the config sheet (JSON cell).
+ * Merges stored config with defaults to ensure all keys are present.
  *
- * @param {string} key — Configuration key name (e.g. 'sendEmails', 'windowMinutes')
- * @returns {string|null} The configuration value, or null if key not found
+ * @returns {Object} The full config object with all keys
  */
-function getConfigSheetValue_(key) {
+function readCometConfig_() {
   try {
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
     const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
-    if (!configSheet) return null;
-
-    const data = configSheet.getDataRange().getValues();
-    // Row 1 is the title, row 2 is headers, data starts at row 3
-    for (let i = 2; i < data.length; i++) {
-      if (String(data[i][0] || '').trim() === key) {
-        return String(data[i][1] || '').trim();
-      }
+    if (!configSheet) {
+      console.warn('setup: COMET Config sheet not found; returning defaults');
+      return Object.assign({}, COMET_CONFIG_DEFAULTS);
     }
-    return null;
+
+    // Config is stored in cell A3 as a JSON string
+    const configJson = configSheet.getRange('A3').getValue();
+    if (!configJson) {
+      console.warn('setup: Config cell A3 is empty; returning defaults');
+      return Object.assign({}, COMET_CONFIG_DEFAULTS);
+    }
+
+    const stored = JSON.parse(String(configJson));
+    // Merge with defaults to ensure all keys are present
+    return Object.assign({}, COMET_CONFIG_DEFAULTS, stored);
   } catch (error) {
-    console.error('setup: getConfigSheetValue_(' + key + ') failed — ' + error.message);
-    return null;
+    console.error('setup: readCometConfig_() failed — ' + error.message);
+    return Object.assign({}, COMET_CONFIG_DEFAULTS);
   }
+}
+
+/**
+ * Writes the full COMET configuration to the config sheet (JSON cell).
+ *
+ * @param {Object} config — The full config object to write
+ */
+function writeCometConfig_(config) {
+  try {
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
+    const configSheet = workbook.getSheetByName(COMET_CONFIG_SHEET_NAME);
+    if (!configSheet) {
+      throw new Error('COMET Config sheet not found');
+    }
+
+    const configJson = JSON.stringify(config, null, 2);
+    configSheet.getRange('A3').setValue(configJson);
+  } catch (error) {
+    console.error('setup: writeCometConfig_() failed — ' + error.message);
+  }
+}
+
+/**
+ * Updates part of the COMET configuration and writes it back.
+ * Reads current config, merges partial update, and writes.
+ *
+ * @param {Object} partial — Partial config object with keys to update
+ */
+function updateCometConfig_(partial) {
+  try {
+    const config = readCometConfig_();
+    Object.assign(config, partial);
+    writeCometConfig_(config);
+  } catch (error) {
+    console.error('setup: updateCometConfig_() failed — ' + error.message);
+  }
+}
+
+/**
+ * Reads a single configuration value from the COMET Config sheet.
+ * DEPRECATED: Use readCometConfig_() instead. Kept for backwards compatibility.
+ *
+ * @param {string} key — Configuration key name
+ * @returns {string|null} The configuration value, or null if key not found
+ */
+function getConfigSheetValue_(key) {
+  const config = readCometConfig_();
+  const value = config[key];
+  return value != null ? String(value) : null;
 }
 
 
@@ -710,7 +765,7 @@ function createEmployeesSheet_(workbook) {
 
 /**
  * Creates and formats the COMET Config sheet.
- * Stores warehouse-level runtime settings as key/value pairs.
+ * Stores warehouse-level runtime settings as a JSON blob in cell A3.
  *
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} workbook
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
@@ -719,17 +774,14 @@ function createCometConfigSheet_(workbook) {
   const sheet = workbook.insertSheet(COMET_CONFIG_SHEET_NAME);
 
   sheet.getRange('A1').setValue('COMET Configuration').setFontWeight('bold').setFontSize(13);
-  sheet.getRange('A2:B2').setValues([['Setting', 'Value']]).setFontWeight('bold')
+  sheet.getRange('A2:B2').setValues([['Config (JSON)', '(do not edit manually)']]).setFontWeight('bold')
     .setBackground('#005DAA').setFontColor('#FFFFFF');
 
-  // Default config values
-  const defaults = [
-    ['windowMinutes', '15'],
-    ['fyStartMonth', '9'],   // September (Costco fiscal year)
-    ['sendEmails', 'false'], // Email toggle: false = safe mode (no emails), true = production (send emails)
-  ];
-  sheet.getRange(3, 1, defaults.length, 2).setValues(defaults);
-  sheet.setColumnWidth(1, 180);
+  // Write default config as JSON to cell A3
+  const configJson = JSON.stringify(COMET_CONFIG_DEFAULTS, null, 2);
+  sheet.getRange('A3').setValue(configJson).setWrap(true);
+
+  sheet.setColumnWidth(1, 600);
   sheet.setColumnWidth(2, 200);
   sheet.setFrozenRows(2);
   sheet.setTabColor('#E31837');

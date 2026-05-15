@@ -119,6 +119,9 @@ function ensureDeptSettingsBaseStructure_(deptName) {
   // Find or create the department row (initializes with defaults if missing)
   const rowNumber = findOrCreateDeptRow_(sheet, deptName);
 
+  // Flush writes so the row is committed before we read it back
+  SpreadsheetApp.flush();
+
   // Read back what we now have
   const data = sheet.getDataRange().getValues();
   const jsonCell = data[rowNumber - 1][1]; // rowNumber is 1-indexed, data array is 0-indexed
@@ -176,6 +179,7 @@ function ensureDeptSettingsBaseStructure_(deptName) {
   if (needsRepair) {
     const jsonString = JSON.stringify(settings);
     sheet.getRange(rowNumber, 2).setValue(jsonString);
+    SpreadsheetApp.flush();
     console.log('ensureDeptSettingsBaseStructure_: repaired missing fields for ' + deptName);
   }
 

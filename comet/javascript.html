@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.7.0
+     VERSION: 0.7.4
 
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -1154,16 +1154,41 @@
       var btn = document.getElementById(btnId);
       if (!btn) return;
 
-      UI.callServer('sendNotificationForRow', [sheetName, rowNumber], function () {
-        // Update button to show sent time
-        var now = new Date();
-        var hours = String(now.getHours()).padStart(2, '0');
-        var mins = String(now.getMinutes()).padStart(2, '0');
-        btn.textContent = 'Sent at ' + hours + ':' + mins;
-        btn.disabled = true;
-        btn.classList.remove('btn-outline-primary');
-        btn.classList.add('btn-success');
-        UI.showToast('Notification sent.', 'success');
+      // Check if email sending is enabled in the UI toggle
+      var sendEmailToggle = document.getElementById('absenceSendEmailToggle');
+      if (!sendEmailToggle || !sendEmailToggle.checked) {
+        UI.showToast('Email sending is disabled. Enable "Send Emails" toggle to send notifications.', 'info');
+        return;
+      }
+
+      UI.callServer('sendNotificationForRow', [sheetName, rowNumber], function (response) {
+        if (!response.ok) {
+          UI.showToast('Error: ' + response.error, 'error');
+          return;
+        }
+
+        const result = response.data || {};
+
+        // Only disable button and show success if email was actually sent
+        if (result.sent === true) {
+          btn.textContent = result.sentLabel || 'Sent';
+          btn.disabled = true;
+          btn.classList.remove('btn-outline-primary');
+          btn.classList.add('btn-success');
+          UI.showToast('Notification sent to ' + (result.recipients.length || 0) + ' recipient(s).', 'success');
+        } else if (result.alreadySent) {
+          btn.textContent = result.sentLabel || 'Already sent';
+          btn.disabled = true;
+          btn.classList.remove('btn-outline-primary');
+          btn.classList.add('btn-secondary');
+          UI.showToast('Email was already sent for this entry.', 'info');
+        } else if (result.disabled) {
+          UI.showToast('Email sending is disabled in backend settings.', 'warning');
+        } else if (result.noRecipients) {
+          UI.showToast('No email recipients configured for this department.', 'warning');
+        } else {
+          UI.showToast('Failed to send notification.', 'error');
+        }
       });
     }
 
@@ -1248,7 +1273,9 @@
 
     function onShow() {
       loadActiveCNs();
+      loadAndSetToggleStates();
       setupCNScanHandlers();
+      setupInfractionSearch();
       // Ensure employee cache is populated for the search dropdown
       if (employeeCache.length === 0) {
         UI.callServer('getEmployeeList', [], function (data) {
@@ -1354,7 +1381,77 @@
 
     // ---- Tab 1: Active Infractions ----
 
+    function loadAndSetToggleStates() {
+      UI.callServer('getConfig', undefined, function (data) {
+        if (data && data.config) {
+          var dryRunToggle = document.getElementById('dryRunToggle');
+          var sendEmailToggle = document.getElementById('sendEmailToggle');
+          if (dryRunToggle) dryRunToggle.checked = !!data.config.dryRun;
+          if (sendEmailToggle) sendEmailToggle.checked = !!data.config.sendEmails;
+        }
+      });
+    }
+
+    function saveToggleState(key, value) {
+      var updateObj = {};
+      updateObj[key] = value;
+      UI.callServer('updateConfig', updateObj, function () {
+        // Quietly update; no toast needed
+      });
+    }
+
     function setupCNScanHandlers() {
+      var dryRunToggle = document.getElementById('dryRunToggle');
+      var sendEmailToggle = document.getElementById('sendEmailToggle');
+
+      // Persist toggle changes to config
+      if (dryRunToggle) {
+        dryRunToggle.addEventListener('change', function () {
+          saveToggleState('dryRun', this.checked);
+        });
+      }
+      if (sendEmailToggle) {
+        sendEmailToggle.addEventListener('change', function () {
+          saveToggleState('sendEmails', this.checked);
+        });
+      }
+
+      // Approve / reject CN proposals via event delegation on the pending table body
+      var pendingBody = document.getElementById('cnPendingBody');
+      if (pendingBody) {
+        pendingBody.addEventListener('click', function (event) {
+          var btn = event.target.closest('.cn-action-btn');
+          if (!btn) return;
+          var cnKey      = btn.getAttribute('data-cn-key');
+          var employeeId = btn.getAttribute('data-employee-id');
+          if (!cnKey || !employeeId) return;
+
+          var isApprove = btn.classList.contains('cn-approve-btn');
+          var action    = isApprove ? 'approveCN' : 'rejectCN';
+          var label     = isApprove ? 'Approving' : 'Rejecting';
+
+          btn.disabled = true;
+          var siblingBtn = btn.closest('td').querySelector(isApprove ? '.cn-reject-btn' : '.cn-approve-btn');
+          if (siblingBtn) siblingBtn.disabled = true;
+
+          UI.callServer(action, [cnKey, employeeId], function () {
+            // callServer already validated ok=true before reaching here;
+            // reload the full CN list so both pending and active sections refresh
+            UI.callServer('getActiveCNs', undefined, function (refreshData) {
+              if (refreshData && refreshData.cns) {
+                CNStore.set(refreshData.cns);
+                renderCNTable(refreshData.cns);
+              }
+            });
+            UI.showToast(isApprove ? 'CN approved.' : 'CN rejected.', 'success');
+          }, function (errorMsg) {
+            UI.showToast((isApprove ? 'Approve' : 'Reject') + ' failed: ' + errorMsg, 'danger');
+            if (btn) btn.disabled = false;
+            if (siblingBtn) siblingBtn.disabled = false;
+          });
+        });
+      }
+
       document.getElementById('btnRunScan').onclick = function () {
         var dryRun = document.getElementById('dryRunToggle').checked;
         var sendEmail = document.getElementById('sendEmailToggle').checked;
@@ -1381,6 +1478,14 @@
       };
     }
 
+    function setupInfractionSearch() {
+      var searchInput = document.getElementById('infractionSearch');
+      if (!searchInput) return;
+      searchInput.addEventListener('input', function () {
+        applyInfractionFilter();
+      });
+    }
+
     function loadActiveCNs() {
       UI.callServer('getActiveCNs', undefined, function (data) {
         CNStore.set(data.cns);
@@ -1388,30 +1493,172 @@
       });
     }
 
+    var _allCNs = [];
+
     function renderCNTable(cns) {
-      var tbody = document.getElementById('cnTableBody');
+      _allCNs = cns;
+      applyInfractionFilter();
+    }
+
+    function applyInfractionFilter() {
+      var tbody         = document.getElementById('cnTableBody');
+      var pendingBody   = document.getElementById('cnPendingBody');
+      var pendingSection = document.getElementById('cnPendingSection');
+      var pendingBadge  = document.getElementById('cnPendingBadge');
       if (!tbody) return;
 
-      if (cns.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-comet-muted small p-3">No active CNs.</td></tr>';
+      var searchInput = document.getElementById('infractionSearch');
+      var searchTerm  = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
+      var filteredCNs = _allCNs.filter(function (cn) {
+        return cn.employeeName.toLowerCase().includes(searchTerm);
+      });
+
+      // Split into pending (proposed) and active
+      var proposedCNs = filteredCNs.filter(function (cn) { return cn.status === 'proposed'; });
+      var activeCNs   = filteredCNs.filter(function (cn) { return cn.status === 'active'; });
+
+      // --- Pending section ---
+      if (pendingSection) pendingSection.style.display = proposedCNs.length ? '' : 'none';
+      if (pendingBadge)   pendingBadge.textContent = proposedCNs.length;
+
+      if (pendingBody) {
+        if (proposedCNs.length === 0) {
+          pendingBody.innerHTML = '';
+        } else {
+          proposedCNs.sort(function (a, b) { return a.employeeName.localeCompare(b.employeeName); });
+          var pendingHtml = '';
+          proposedCNs.forEach(function (cn) {
+            var cnKeyAttr  = 'data-cn-key="' + esc(cn.cnKey) + '"';
+            var empIdAttr  = 'data-employee-id="' + esc(cn.employeeId) + '"';
+            pendingHtml += '<tr>'
+              + '<td class="small fw-semibold">' + esc(cn.employeeName) + '</td>'
+              + '<td><span class="badge bg-secondary">' + esc(cn.rule) + '</span></td>'
+              + '<td class="text-center">' + cn.count + '</td>'
+              + '<td class="small text-muted">' + (cn.windowStart || '') + '</td>'
+              + '<td class="small text-muted">' + (cn.windowEnd || '') + '</td>'
+              + '<td class="small text-muted">' + (cn.issuedAt ? cn.issuedAt.split('T')[0] : '') + '</td>'
+              + '<td class="text-center" style="white-space:nowrap;">'
+              + '<button class="cn-action-btn cn-approve-btn" title="Approve" ' + cnKeyAttr + ' ' + empIdAttr + '>&#10003;</button>'
+              + '<button class="cn-action-btn cn-reject-btn ms-1" title="Reject" ' + cnKeyAttr + ' ' + empIdAttr + '>&#10007;</button>'
+              + '</td>'
+              + '</tr>';
+          });
+          pendingBody.innerHTML = pendingHtml;
+        }
+      }
+
+      // --- Active section ---
+      if (activeCNs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-comet-muted small p-3">No active CNs'
+          + (searchTerm ? ' matching "' + esc(searchTerm) + '"' : '') + '.</td></tr>';
         return;
       }
-      tbody.innerHTML = cns.map(function (cn) {
-        var days = cn.daysUntilExpiry;
-        var exClass = days <= 30 ? 'cn-expiry-red'
-          : days <= 60 ? 'cn-expiry-amber'
-            : 'cn-expiry-green';
-        return `<tr class="${exClass}">
-          <td>${esc(cn.employeeName)}</td>
-          <td>${esc(cn.department)}</td>
-          <td>${esc(cn.rule)}</td>
-          <td class="text-center">${cn.count}</td>
-          <td>${esc(cn.windowStart)}</td>
-          <td>${esc(cn.windowEnd)}</td>
-          <td>${esc(cn.issuedAt)}</td>
-          <td class="text-center fw-semibold">${days}</td>
-        </tr>`;
-      }).join('');
+
+      activeCNs.sort(function (a, b) {
+        var nameCompare = a.employeeName.localeCompare(b.employeeName);
+        if (nameCompare !== 0) return nameCompare;
+        return a.rule.localeCompare(b.rule);
+      });
+
+      var groupedByEmployee = {};
+      activeCNs.forEach(function (cn) {
+        var key = cn.employeeId || cn.employeeName;
+        if (!groupedByEmployee[key]) groupedByEmployee[key] = { employeeName: cn.employeeName, employeeId: cn.employeeId, cns: [] };
+        groupedByEmployee[key].cns.push(cn);
+      });
+
+      var html = '';
+      Object.keys(groupedByEmployee).sort(function (a, b) {
+        return groupedByEmployee[a].employeeName.localeCompare(groupedByEmployee[b].employeeName);
+      }).forEach(function (groupKey) {
+        var group        = groupedByEmployee[groupKey];
+        var employeeId   = group.employeeId;
+        var employeeName = group.employeeName;
+        var infractions  = group.cns;
+
+        html += '<tr class="cn-group-header bg-light">'
+          + '<td colspan="6" class="fw-semibold ps-3">'
+          + '<span class="me-2">' + esc(employeeName) + '</span>'
+          + '<button class="cn-expired-toggle btn btn-link btn-sm p-0 text-muted small" '
+          + 'data-employee-id="' + esc(employeeId) + '" '
+          + 'data-expanded="false">'
+          + '&#9660; Expired CNs'
+          + '</button>'
+          + '</td>'
+          + '</tr>';
+
+        // Placeholder row for lazy-loaded expired CNs (hidden by default)
+        html += '<tr class="cn-expired-container" id="cn-expired-' + esc(employeeId) + '" style="display:none;">'
+          + '<td colspan="6" class="p-0">'
+          + '<div class="cn-expired-inner px-4 py-2"></div>'
+          + '</td>'
+          + '</tr>';
+
+        infractions.forEach(function (cn) {
+          var days = cn.daysUntilExpiry;
+          var statusChipClass = days <= 30 ? 'bg-danger' : days <= 60 ? 'bg-warning' : 'bg-success';
+          html += '<tr>'
+            + '<td class="ps-5"><span class="badge bg-secondary">' + esc(cn.rule) + '</span></td>'
+            + '<td class="text-center">' + cn.count + '</td>'
+            + '<td class="small text-muted">' + (cn.windowStart || '') + '</td>'
+            + '<td class="small text-muted">' + (cn.windowEnd || '') + '</td>'
+            + '<td class="small text-muted">' + (cn.issuedAt ? cn.issuedAt.split('T')[0] : '') + '</td>'
+            + '<td class="text-center"><span class="badge ' + statusChipClass + ' text-white">' + days + 'd</span></td>'
+            + '</tr>';
+        });
+      });
+
+      tbody.innerHTML = html;
+
+      // Wire up expired-CNs toggle buttons
+      tbody.querySelectorAll('.cn-expired-toggle').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var employeeId   = btn.getAttribute('data-employee-id');
+          var expanded     = btn.getAttribute('data-expanded') === 'true';
+          var container    = document.getElementById('cn-expired-' + employeeId);
+          if (!container) return;
+
+          if (expanded) {
+            container.style.display = 'none';
+            btn.setAttribute('data-expanded', 'false');
+            btn.innerHTML = '&#9660; Expired CNs';
+          } else {
+            btn.innerHTML = '&#9650; Expired CNs';
+            btn.setAttribute('data-expanded', 'true');
+            container.style.display = '';
+            var inner = container.querySelector('.cn-expired-inner');
+            if (inner.dataset.loaded) return; // already fetched
+
+            inner.innerHTML = '<span class="text-muted small">Loading…</span>';
+            UI.callServer('getExpiredCNsByEmployee', [employeeId], function (data) {
+              if (!data || !data.cns || data.cns.length === 0) {
+                inner.innerHTML = '<span class="text-muted small fst-italic">No expired CNs.</span>';
+                inner.dataset.loaded = 'true';
+                return;
+              }
+              var expiredHtml = '<table class="table table-sm mb-0 cn-expired-table">'
+                + '<thead><tr><th>Rule</th><th>Count</th><th>Start</th><th>End</th><th>Issued</th><th>Status</th></tr></thead>'
+                + '<tbody>';
+              data.cns.forEach(function (cn) {
+                var statusLabel = cn.status === 'rejected' ? 'Rejected' : 'Expired';
+                var statusClass = cn.status === 'rejected' ? 'bg-secondary' : 'bg-dark';
+                expiredHtml += '<tr>'
+                  + '<td><span class="badge bg-secondary">' + esc(cn.rule || '') + '</span></td>'
+                  + '<td>' + (cn.count || '') + '</td>'
+                  + '<td class="small text-muted">' + (cn.windowStart || '') + '</td>'
+                  + '<td class="small text-muted">' + (cn.windowEnd || '') + '</td>'
+                  + '<td class="small text-muted">' + (cn.issuedAt ? String(cn.issuedAt).split('T')[0] : '') + '</td>'
+                  + '<td><span class="badge ' + statusClass + '">' + statusLabel + '</span></td>'
+                  + '</tr>';
+              });
+              expiredHtml += '</tbody></table>';
+              inner.innerHTML = expiredHtml;
+              inner.dataset.loaded = 'true';
+            });
+          }
+        });
+      });
     }
 
     // ---- Tab 2: Employee Calendar ----
@@ -2872,6 +3119,8 @@
           var statusClass = emp.status === 'Archived' ? 'inactive' : (emp.status === 'LOA' ? 'loa' : 'active');
           var calendarLink = '<a href="javascript:Admin.openAttendanceCalendar(\'' + esc(emp.id) + '\')" '
             + 'class="btn btn-link btn-sm p-0" title="View attendance calendar">Calendar</a>';
+          var infractionLink = '<a href="javascript:Admin.viewEmployeeInfractions(\'' + esc(emp.name) + '\')" '
+            + 'class="btn btn-link btn-sm p-0" title="View infractions">Infractions</a>';
           html += '<div class="employee-chip ' + statusClass + '">'
             + '<div class="employee-chip-header">'
             + '<div class="employee-chip-name">' + esc(emp.name) + '</div>'
@@ -2885,6 +3134,7 @@
             + '</div>'
             + '<div class="employee-chip-actions">'
             + calendarLink
+            + infractionLink
             + '<button class="btn btn-link btn-sm p-0" '
             + 'onclick="Admin.openEmployeeEditModal(' + empIndex + ')" title="Edit employee">Edit</button>'
             + '</div>'
@@ -3188,6 +3438,33 @@
       });
     }
 
+    function viewEmployeeInfractions(employeeName) {
+      // First navigate to the Attendance Dashboard view
+      var attendanceLink = document.querySelector('.nav-link[data-view="attendance"]');
+      if (!attendanceLink) return;
+      attendanceLink.click();
+
+      // Click the Active Infractions tab and set search filter
+      setTimeout(function () {
+        var cnTabBtn = document.getElementById('tab-attendance-cn-btn');
+        if (cnTabBtn) {
+          cnTabBtn.click();
+        }
+
+        // Set the search filter and apply it
+        setTimeout(function () {
+          var searchInput = document.getElementById('infractionSearch');
+          if (searchInput) {
+            searchInput.value = employeeName;
+            // Trigger input event to filter
+            var event = new Event('input', { bubbles: true });
+            searchInput.dispatchEvent(event);
+            searchInput.focus();
+          }
+        }, 150);
+      }, 0);
+    }
+
     return {
       onShow,
       loadEmployeeList,
@@ -3197,6 +3474,7 @@
       appendHolidaysForYear,
       _addMailingListEmail_,
       loadMailingListConfig,
+      viewEmployeeInfractions,
     };
   })();
 

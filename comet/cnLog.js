@@ -1,31 +1,44 @@
 /**
- * cnLog.js — CN_Log sheet management, Active CNs view, and CN expiry processing.
- * VERSION: 0.3.0
+ * cnLog.js — CN store management, deduplication indexes, and CN expiry processing.
+ * VERSION: 0.4.5
  *
- * This file owns all interactions with the three CN tracking sheets:
+ * STORAGE MODEL
+ * -------------
+ * Active CNs and Expired CNs are stored in two Google Sheets tabs, each using
+ * a per-employee row layout:
  *
- *   CN_Log         — The internal source of truth used for idempotent deduplication.
- *                    Every CN ever issued lives here permanently (Active or Expired).
- *                    Not intended for day-to-day manager review.
+ *   Row 1: Title (styled header)
+ *   Row 2: Column headers  (Employee ID | Employee Name | Department | CNs (JSON))
+ *   Row 3+: One row per employee, where the last column is a JSON array of that
+ *           employee's CN records.
  *
- *   Active CNs     — The manager-facing view. Shows all currently Active CNs with
- *                    a clickable hyperlink in the Employee Name column that opens
- *                    the employee's tab in the attendance controller. Rows are
- *                    removed from here when a CN expires.
+ * When a CN is issued:
+ *   → Find the employee's row in Active CNs (by Employee ID).
+ *   → If absent, create a new row.
+ *   → Parse the JSON array, push the new CN record, write back.
  *
- *   (Expired CNs)  — The hidden archive. When a CN expires, its row is moved here
- *                    from Active CNs and the sheet is kept hidden (parentheses
- *                    prefix = hidden in attendance controller convention). The full
- *                    record is preserved for audit purposes.
+ * When a CN expires:
+ *   → Find the employee's row in Active CNs.
+ *   → Remove the expired record from their array and write back.
+ *   → Find (or create) the employee's row in Expired CNs.
+ *   → Push the record (with expiredAt set) into that array and write back.
  *
- * All three sheets live in the same target workbook — either the external log
- * spreadsheet configured in "Infraction Config" B2, or the active workbook as
- * a fallback.
- *
- * SHEET LIFECYCLE:
- *   CN issued  → row appended to CN_Log (Status=Active) + row appended to Active CNs
- *   CN expires → CN_Log row Status updated to Expired + Active CNs row moved to
- *                (Expired CNs) + expiry email sent to payroll
+ * CN record shape (stored in the JSON arrays):
+ * {
+ *   cnKey:               string   — Deduplication key
+ *   windowStart:         string   — YYYY-MM-DD
+ *   windowEnd:           string   — YYYY-MM-DD
+ *   count:               number
+ *   eventsHash:          string
+ *   issuedAt:            string   — "yyyy-MM-dd HH:mm:ss"
+ *   issuedBy:            string
+ *   sheetName:           string
+ *   rule:                string
+ *   sourceSpreadsheetId: string
+ *   sourceSheetGid:      number|string
+ *   consumedEvents:      string[] — ["YYYY-MM-DD|CODE", ...]
+ *   expiredAt?:          string   — set only in Expired CNs
+ * }
  */
 
 
@@ -34,8 +47,7 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the COMET workbook. In COMET all CN sheets live in the active
- * workbook — there is no external log spreadsheet.
+ * Returns the COMET workbook that hosts both CN store sheets.
  *
  * @returns {GoogleAppsScript.Spreadsheet.Spreadsheet}
  */
@@ -45,127 +57,243 @@ function resolveLogWorkbook_() {
 
 
 // ---------------------------------------------------------------------------
-// Sheet Access — CN_Log
+// Sheet Access
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the CN_Log sheet, creating it if it does not yet exist.
- *
- * If the sheet already exists but is missing columns (e.g. after a config
- * update added new headers), the missing columns are appended to the right.
- *
- * @returns {GoogleAppsScript.Spreadsheet.Sheet}
- */
-function getOrCreateLogSheet_() {
-  const workbook = resolveLogWorkbook_();
-  let sheet = workbook.getSheetByName(CN_LOG_SHEET_NAME); // config.js
-
-  if (!sheet) {
-    sheet = workbook.insertSheet(CN_LOG_SHEET_NAME);
-    sheet.getRange(1, 1, 1, CN_LOG_HEADERS.length).setValues([CN_LOG_HEADERS]); // config.js
-    applyHeaderStyle_(sheet.getRange('1:1'), '#005DAA', '#FFFFFF');
-    console.log(`cnLog: Created CN_Log sheet in "${workbook.getName()}".`);
-  } else {
-    upgradeHeaders_(sheet, CN_LOG_HEADERS);
-  }
-
-  return sheet;
-}
-
-
-// ---------------------------------------------------------------------------
-// Sheet Access — Active CNs
-// ---------------------------------------------------------------------------
-
-/**
- * Returns the "Active CNs" sheet, creating it if it does not yet exist.
- *
- * The Active CNs sheet is the manager-facing view of outstanding CNs.
- * It is formatted with a visible header row and auto-resized columns.
+ * Returns the Active CNs sheet, creating it if it does not yet exist.
  *
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
 function getOrCreateActiveCNsSheet_() {
   const workbook = resolveLogWorkbook_();
   let sheet = workbook.getSheetByName(ACTIVE_CNS_SHEET_NAME); // config.js
-
   if (!sheet) {
     sheet = workbook.insertSheet(ACTIVE_CNS_SHEET_NAME);
-    sheet.getRange(1, 1, 1, ACTIVE_CNS_HEADERS.length).setValues([ACTIVE_CNS_HEADERS]); // config.js
-    applyHeaderStyle_(sheet.getRange('1:1'), '#E31837', '#FFFFFF'); // Costco red
-    sheet.setFrozenRows(1);
-
-    // Set column widths for readability
-    const widths = { 1: 220, 2: 180, 3: 100, 4: 120, 5: 60, 6: 55, 7: 110, 8: 110, 9: 160, 10: 180 };
-    Object.entries(widths).forEach(([col, px]) => sheet.setColumnWidth(Number(col), px));
-
+    initializeCNStoreSheet_(sheet, 'Active Counseling Notices', '#E31837', '#FFFFFF');
     console.log(`cnLog: Created Active CNs sheet in "${workbook.getName()}".`);
   }
-
   return sheet;
 }
 
-
-// ---------------------------------------------------------------------------
-// Sheet Access — (Expired CNs)
-// ---------------------------------------------------------------------------
-
 /**
- * Returns the "(Expired CNs)" sheet, creating it (hidden) if it does not exist.
- *
- * The sheet is hidden on creation and kept hidden. It can be revealed for
- * audit purposes via right-click → Show Sheet. The parentheses prefix follows
- * the attendance controller convention for reference/archive sheets.
+ * Returns the (Expired CNs) sheet, creating it (hidden) if it does not exist.
  *
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
 function getOrCreateExpiredCNsSheet_() {
   const workbook = resolveLogWorkbook_();
   let sheet = workbook.getSheetByName(EXPIRED_CNS_SHEET_NAME); // config.js
-
   if (!sheet) {
     sheet = workbook.insertSheet(EXPIRED_CNS_SHEET_NAME);
-    sheet.getRange(1, 1, 1, EXPIRED_CNS_HEADERS.length).setValues([EXPIRED_CNS_HEADERS]); // config.js
-    applyHeaderStyle_(sheet.getRange('1:1'), '#B7B7B7', '#FFFFFF'); // gray — archive
-    sheet.setFrozenRows(1);
-
-    const widths = { 1: 220, 2: 180, 3: 100, 4: 120, 5: 60, 6: 55, 7: 110, 8: 110, 9: 160, 10: 180, 11: 160 };
-    Object.entries(widths).forEach(([col, px]) => sheet.setColumnWidth(Number(col), px));
-
-    sheet.hideSheet(); // hidden by default — accessible via right-click → Show Sheet
+    initializeCNStoreSheet_(sheet, 'Expired Counseling Notices (Archive)', '#B7B7B7', '#FFFFFF');
+    sheet.hideSheet();
     console.log(`cnLog: Created (Expired CNs) sheet (hidden) in "${workbook.getName()}".`);
   }
-
   return sheet;
+}
+
+/**
+ * Writes the title row, header row, and column widths to a freshly created CN
+ * store sheet. Called once during sheet creation only.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {string} title     — Human-readable sheet title (row 1)
+ * @param {string} bgColor   — Header row background color
+ * @param {string} textColor — Header row text color
+ */
+function initializeCNStoreSheet_(sheet, title, bgColor, textColor) {
+  // Row 1: title
+  const titleRange = sheet.getRange(1, 1, 1, CN_STORE_HEADERS.length); // config.js
+  titleRange.merge().setValue(title);
+  titleRange
+    .setBackground(bgColor)
+    .setFontColor(textColor)
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center')
+    .setFontSize(12);
+
+  // Row 2: column headers
+  const headerRange = sheet.getRange(2, 1, 1, CN_STORE_HEADERS.length);
+  headerRange.setValues([CN_STORE_HEADERS]);
+  applyHeaderStyle_(headerRange, bgColor, textColor);
+  sheet.setFrozenRows(2);
+
+  // Column widths
+  sheet.setColumnWidth(CN_STORE_COL.employeeId,   100);  // config.js
+  sheet.setColumnWidth(CN_STORE_COL.employeeName, 200);
+  sheet.setColumnWidth(CN_STORE_COL.department,   130);
+  sheet.setColumnWidth(CN_STORE_COL.cnsJson,      600);
 }
 
 
 // ---------------------------------------------------------------------------
-// Log Index
+// Per-Employee Row Read / Write
 // ---------------------------------------------------------------------------
 
 /**
- * Builds an in-memory Map from the CN_Log for deduplication lookups.
+ * Finds the 1-based sheet row for the given employeeId (searches column A
+ * starting at row 3). Returns -1 if the employee does not have a row yet.
  *
- * Keyed by CN_Key; stores the most recent EventsHash for that key.
- * infractionEngine.js uses this to skip proposals already logged with
- * the same evidence.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {string} employeeId
+ * @returns {number}
+ */
+function findEmployeeRow_(sheet, employeeId) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 3) return -1;
+  const ids = sheet.getRange(3, CN_STORE_COL.employeeId, lastRow - 2, 1).getDisplayValues();
+  for (let i = 0; i < ids.length; i++) {
+    if (String(ids[i][0] || '').trim() === String(employeeId)) return i + 3;
+  }
+  return -1;
+}
+
+/**
+ * Reads the CN JSON array for a single employee from the given sheet.
+ * Returns an empty array if the employee has no row or the cell is empty.
  *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} logSheet
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {string} employeeId
+ * @returns {Object[]}
+ */
+function readEmployeeCNs_(sheet, employeeId) {
+  const row = findEmployeeRow_(sheet, employeeId);
+  if (row === -1) return [];
+  const raw = sheet.getRange(row, CN_STORE_COL.cnsJson).getValue();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(String(raw));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.error(`cnLog: Could not parse CNs JSON for employee ${employeeId} in "${sheet.getName()}": ${e.message}`);
+    return [];
+  }
+}
+
+/**
+ * Writes the CN JSON array for a single employee.
+ * If the employee has no row yet, a new row is appended.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {string} employeeId
+ * @param {string} employeeName
+ * @param {string} department
+ * @param {Object[]} cnArray
+ */
+function writeEmployeeCNs_(sheet, employeeId, employeeName, department, cnArray) {
+  const row = findEmployeeRow_(sheet, employeeId);
+  const jsonString = JSON.stringify(cnArray);
+  if (row === -1) {
+    // appendRow is guaranteed atomic: GAS always places it after the last
+    // populated row regardless of any pending (unflushed) writes in the same
+    // execution. Using getLastRow() + setValues() is unreliable here because
+    // GAS may return a stale lastRow value before earlier setValues calls are
+    // committed, causing two back-to-back appends to land on the same row.
+    sheet.appendRow([employeeId, employeeName, department, jsonString]);
+    console.log(`cnLog: writeEmployeeCNs_ — new row appended for employee ${employeeId} (${employeeName}) in "${sheet.getName()}".`);
+  } else {
+    sheet.getRange(row, CN_STORE_COL.cnsJson).setValue(jsonString);
+    console.log(`cnLog: writeEmployeeCNs_ — updated row ${row} for employee ${employeeId} (${employeeName}) in "${sheet.getName()}".`);
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Full-Store Readers (used for index building)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads every employee row in a CN store sheet and returns a flat array of all
+ * CN records across all employees, each augmented with the employee identity
+ * fields from the row.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @returns {Object[]}
+ */
+function readAllCNsFromSheet_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 3) return [];
+
+  const rows = sheet.getRange(3, 1, lastRow - 2, CN_STORE_HEADERS.length).getValues();
+  const results = [];
+
+  for (const row of rows) {
+    const employeeId   = String(row[CN_STORE_COL.employeeId   - 1] || '').trim();
+    const employeeName = String(row[CN_STORE_COL.employeeName - 1] || '').trim();
+    const department   = String(row[CN_STORE_COL.department   - 1] || '').trim();
+    const rawJson      = String(row[CN_STORE_COL.cnsJson      - 1] || '').trim();
+
+    if (!employeeId || !rawJson) continue;
+
+    let cnArray;
+    try {
+      cnArray = JSON.parse(rawJson);
+    } catch (e) {
+      continue;
+    }
+    if (!Array.isArray(cnArray)) continue;
+
+    for (const cn of cnArray) {
+      results.push({ ...cn, employeeId, employeeName, department });
+    }
+  }
+
+  return results;
+}
+
+
+// ---------------------------------------------------------------------------
+// Index Builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds an in-memory Map for deduplication lookups.
+ * Reads from both Active CNs and Expired CNs so the full history of issued CNs
+ * is covered (prevents re-issuing a CN for the same window even after expiry).
+ *
+ * Keyed by cnKey; value is the most-recently-seen eventsHash for that key.
+ *
  * @returns {Map<string, { eventsHash: string }>}
  */
-function buildLogIndex_(logSheet) {
+function buildLogIndex_() {
   const index = new Map();
-  const lastRow = logSheet.getLastRow();
-  if (lastRow < 2) return index;
 
-  const keys = logSheet.getRange(2, 1, lastRow - 1, 1).getValues();
-  const hashes = logSheet.getRange(2, 8, lastRow - 1, 1).getValues(); // EventsHash col 8
+  const activeCNs  = readAllCNsFromSheet_(getOrCreateActiveCNsSheet_());
+  const expiredCNs = readAllCNsFromSheet_(getOrCreateExpiredCNsSheet_());
 
-  for (let i = 0; i < keys.length; i++) {
-    const key = String(keys[i][0] || '').trim();
-    if (!key) continue;
-    index.set(key, { eventsHash: String(hashes[i][0] || '').trim() });
+  for (const cn of [...activeCNs, ...expiredCNs]) {
+    const key  = String(cn.cnKey      || '').trim();
+    const hash = String(cn.eventsHash || '').trim();
+    if (key) index.set(key, { eventsHash: hash });
+  }
+
+  return index;
+}
+
+/**
+ * Builds a map of consumed event keys per employee from all ACTIVE CNs.
+ * Events from expired CNs are released back into the pool — only active CNs
+ * lock their events.
+ *
+ * Keyed by employeeId; value is a Set of "YYYY-MM-DD|CODE" strings.
+ *
+ * @returns {Map<string, Set<string>>}
+ */
+function buildConsumedEventsIndex_() {
+  const index = new Map();
+  const activeCNs = readAllCNsFromSheet_(getOrCreateActiveCNsSheet_());
+
+  for (const cn of activeCNs) {
+    const employeeId = String(cn.employeeId || '').trim();
+    if (!employeeId) continue;
+
+    const consumedEvents = Array.isArray(cn.consumedEvents) ? cn.consumedEvents : [];
+    if (consumedEvents.length === 0) continue;
+
+    if (!index.has(employeeId)) index.set(employeeId, new Set());
+    const employeeSet = index.get(employeeId);
+    consumedEvents.forEach(eventKey => employeeSet.add(eventKey));
   }
 
   return index;
@@ -173,75 +301,130 @@ function buildLogIndex_(logSheet) {
 
 
 // ---------------------------------------------------------------------------
-// Row Writing
+// CN Write
 // ---------------------------------------------------------------------------
 
 /**
- * Appends one CN record to the CN_Log sheet.
+ * Appends one CN record to the employee's row in the Active CNs sheet.
+ * Finds the employee's row (or creates it) and pushes the new record into
+ * the JSON array stored in the CNs (JSON) column.
  *
- * Values are mapped from rowData using CN_LOG_HEADERS as the key list so
- * column order is always consistent with the header row.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} logSheet
- * @param {Object} rowData — Keys match CN_LOG_HEADERS entries.
+ * @param {CNProposal} proposal  — The CN proposal that was just issued.
+ * @param {string}     issuedAt  — Formatted timestamp string ("yyyy-MM-dd HH:mm:ss").
+ * @param {string}     issuedBy  — Email of the issuing user.
+ * @param {string}     timeZone  — For date formatting.
  */
-function appendLogRow_(logSheet, rowData) {
-  const values = CN_LOG_HEADERS.map(header => rowData[header] != null ? rowData[header] : '');
-  logSheet.appendRow(values);
+function appendActiveCN_(proposal, issuedAt, issuedBy, timeZone) {
+  const formatDate = d => Utilities.formatDate(d, timeZone, 'yyyy-MM-dd');
+
+  const cnRecord = {
+    cnKey:               proposal.cnKey,
+    status:              'proposed',
+    windowStart:         formatDate(proposal.windowStart),
+    windowEnd:           formatDate(proposal.windowEnd),
+    count:               proposal.count,
+    eventsHash:          proposal.eventsHash,
+    issuedAt:            issuedAt,
+    issuedBy:            issuedBy || '',
+    sheetName:           proposal.sheetName || '',
+    rule:                proposal.rule || 'GLOBAL',
+    sourceSpreadsheetId: proposal.sourceSpreadsheetId || '',
+    sourceSheetGid:      proposal.sourceSheetGid != null ? proposal.sourceSheetGid : '',
+    consumedEvents:      (proposal.events || []).map(
+      e => `${formatDate(e.date)}|${e.code}`
+    ),
+  };
+
+  const sheet  = getOrCreateActiveCNsSheet_();
+  const existing = readEmployeeCNs_(sheet, proposal.employeeId);
+  console.log(`cnLog: appendActiveCN_ — writing CN for ${proposal.employeeName} (${proposal.employeeId}), existing count: ${existing.length}`);
+  existing.push(cnRecord);
+  writeEmployeeCNs_(
+    sheet,
+    proposal.employeeId,
+    proposal.employeeName || '',
+    proposal.department   || '',
+    existing
+  );
+}
+
+
+/**
+ * Approves a proposed CN — changes its status from "proposed" to "active".
+ *
+ * @param {string} cnKey      — The CN_Key of the record to approve.
+ * @param {string} employeeId — The employee whose row to update.
+ */
+function approveCN_(cnKey, employeeId) {
+  const sheet = getOrCreateActiveCNsSheet_();
+  const row   = findEmployeeRow_(sheet, employeeId);
+  if (row === -1) throw new Error(`Employee ${employeeId} not found in Active CNs.`);
+
+  const rowData      = sheet.getRange(row, 1, 1, CN_STORE_HEADERS.length).getValues()[0]; // config.js
+  const employeeName = String(rowData[CN_STORE_COL.employeeName - 1] || '');
+  const department   = String(rowData[CN_STORE_COL.department   - 1] || '');
+  const rawJson      = String(rowData[CN_STORE_COL.cnsJson      - 1] || '');
+
+  let cnArray;
+  try { cnArray = JSON.parse(rawJson); } catch (e) { cnArray = []; }
+
+  const targetIndex = cnArray.findIndex(cn => cn.cnKey === cnKey);
+  if (targetIndex === -1) throw new Error(`CN "${cnKey}" not found for employee ${employeeId}.`);
+
+  cnArray[targetIndex] = Object.assign({}, cnArray[targetIndex], { status: 'active' });
+  writeEmployeeCNs_(sheet, employeeId, employeeName, department, cnArray);
 }
 
 /**
- * Appends one row to the Active CNs manager-facing sheet.
+ * Rejects a proposed CN — removes it from Active CNs and pushes it to
+ * (Expired CNs) with status "rejected".
  *
- * The Employee Name cell is written as a HYPERLINK formula that links
- * directly to the employee's tab in the attendance controller. If the
- * source spreadsheet ID or sheet GID is not available (e.g. the proposal
- * came from a local fallback), the name is written as plain text.
- *
- * @param {CNProposal} proposal     — The CN proposal that was just issued.
- * @param {string}     issuedAt     — Formatted timestamp string.
- * @param {string}     timeZone     — For date formatting.
+ * @param {string} cnKey      — The CN_Key of the record to reject.
+ * @param {string} employeeId — The employee whose row to update.
  */
-function appendActiveCNRow_(proposal, issuedAt, timeZone) {
-  const sheet = getOrCreateActiveCNsSheet_();
+function rejectCN_(cnKey, employeeId) {
+  const timeZone     = Session.getScriptTimeZone();
+  const expiredStamp = Utilities.formatDate(new Date(), timeZone, 'yyyy-MM-dd HH:mm:ss');
+  const activeSheet  = getOrCreateActiveCNsSheet_();
+  const expiredSheet = getOrCreateExpiredCNsSheet_();
 
-  // Build the employee name cell — hyperlink if we have source location info,
-  // plain text otherwise.
-  let nameCell;
-  if (proposal.sourceSpreadsheetId && proposal.sourceSheetGid != null) {
-    const url = `https://docs.google.com/spreadsheets/d/${proposal.sourceSpreadsheetId}/edit#gid=${proposal.sourceSheetGid}`;
-    const escapedName = String(proposal.employeeName || '').replace(/"/g, '""');
-    nameCell = `=HYPERLINK("${url}","${escapedName}")`;
-  } else {
-    nameCell = proposal.employeeName || '';
-  }
+  const activeRow = findEmployeeRow_(activeSheet, employeeId);
+  if (activeRow === -1) throw new Error(`Employee ${employeeId} not found in Active CNs.`);
 
-  const formatDate = d => Utilities.formatDate(d, timeZone, 'yyyy-MM-dd');
+  const rowData      = activeSheet.getRange(activeRow, 1, 1, CN_STORE_HEADERS.length).getValues()[0];
+  const employeeName = String(rowData[CN_STORE_COL.employeeName - 1] || '');
+  const department   = String(rowData[CN_STORE_COL.department   - 1] || '');
+  const rawJson      = String(rowData[CN_STORE_COL.cnsJson      - 1] || '');
 
-  // Build the row in ACTIVE_CNS_HEADERS order:
-  // CN_Key | Employee Name | Employee ID | Department | Rule | Count |
-  // Window Start | Window End | Issued At | Sheet
-  const rowValues = [
-    proposal.cnKey,
-    nameCell,
-    proposal.employeeId || '',
-    proposal.department || '',
-    proposal.rule || 'GLOBAL',
-    proposal.count,
-    formatDate(proposal.windowStart),
-    formatDate(proposal.windowEnd),
-    issuedAt,
-    proposal.sheetName || '',
-  ];
+  let cnArray;
+  try { cnArray = JSON.parse(rawJson); } catch (e) { cnArray = []; }
 
-  const newRow = sheet.getLastRow() + 1;
-  sheet.getRange(newRow, 1, 1, rowValues.length).setValues([rowValues]);
+  const targetIndex = cnArray.findIndex(cn => cn.cnKey === cnKey);
+  if (targetIndex === -1) throw new Error(`CN "${cnKey}" not found for employee ${employeeId}.`);
 
-  // The name cell (column B = index 2) contains a formula — write it separately
-  // so it is treated as a formula rather than a literal string.
-  if (proposal.sourceSpreadsheetId && proposal.sourceSheetGid != null) {
-    sheet.getRange(newRow, 2).setFormula(nameCell);
-  }
+  const rejectedRecord = Object.assign({}, cnArray[targetIndex], {
+    status:    'rejected',
+    expiredAt: expiredStamp,
+  });
+  const remaining = cnArray.filter((_, index) => index !== targetIndex);
+
+  writeEmployeeCNs_(activeSheet, employeeId, employeeName, department, remaining);
+
+  const existingExpired = readEmployeeCNs_(expiredSheet, employeeId);
+  existingExpired.push(rejectedRecord);
+  writeEmployeeCNs_(expiredSheet, employeeId, employeeName, department, existingExpired);
+
+  if (!expiredSheet.isSheetHidden()) expiredSheet.hideSheet();
+}
+
+/**
+ * Returns all CN records for a single employee from the (Expired CNs) sheet.
+ *
+ * @param {string} employeeId
+ * @returns {Object[]}
+ */
+function getExpiredCNsForEmployee_(employeeId) {
+  return readEmployeeCNs_(getOrCreateExpiredCNsSheet_(), employeeId);
 }
 
 
@@ -250,195 +433,104 @@ function appendActiveCNRow_(proposal, issuedAt, timeZone) {
 // ---------------------------------------------------------------------------
 
 /**
- * Scans the CN_Log for Active CNs that have passed EXPIRY_DAYS and processes each.
+ * Scans the Active CNs sheet for records that have passed EXPIRY_DAYS.
  *
- * For each expired CN:
- *   1. Updates CN_Log: Status → "Expired", ExpiredAt → current timestamp.
- *      (Written BEFORE the email send so the record is never lost on failure.)
- *   2. Moves the row from Active CNs to (Expired CNs) and hides that sheet.
- *   3. Sends an expiry notification email to payroll (if sendEmails is true in config).
+ * For each expired CN record:
+ *   1. Removes it from the employee's active array.
+ *   2. Pushes it (with expiredAt) into the employee's row in (Expired CNs).
+ *   3. Sends an expiry notification email if sendEmails is enabled.
  *
  * @param {boolean} dryRun — If true, logs what would happen but makes no changes.
  */
 function expireCNsDaily(dryRun) {
-  // Read sendEmails from the COMET Config sheet to determine whether to email
-  const sendEmailsStr = getConfigSheetValue_('sendEmails'); // setup.js
-  const shouldSendEmails = sendEmailsStr !== null ? sendEmailsStr.toLowerCase() === 'true' : false;
-  const timeZone = Session.getScriptTimeZone();
-  const logSheet = getOrCreateLogSheet_();
-  const lastRow = logSheet.getLastRow();
+  const config         = readCometConfig_(); // setup.js
+  const shouldSendEmails = !!config.sendEmails;
+  const timeZone       = Session.getScriptTimeZone();
+  const activeSheet    = getOrCreateActiveCNsSheet_();
+  const expiredSheet   = getOrCreateExpiredCNsSheet_();
+  const lastRow        = activeSheet.getLastRow();
 
-  if (lastRow < 2) {
-    console.log('cnLog: CN_Log is empty — nothing to expire.');
+  if (lastRow < 3) {
+    console.log('cnLog: Active CNs sheet is empty — nothing to expire.');
     return;
   }
 
-  // Build a dynamic column index from the header row so we are resilient to
-  // column reordering. col.X returns the 1-based column number for header "X".
-  const headerRow = logSheet.getRange(1, 1, 1, logSheet.getLastColumn()).getDisplayValues()[0];
-  const col = {};
-  headerRow.forEach((name, i) => { col[String(name).trim()] = i + 1; });
-
-  const allRows = logSheet.getRange(2, 1, lastRow - 1, logSheet.getLastColumn()).getValues();
-  const now = new Date();
+  const now      = new Date();
   const expiryMs = EXPIRY_DAYS * 24 * 60 * 60 * 1000; // config.js
-  let expiredCount = 0;
+  let   expiredCount = 0;
 
-  allRows.forEach((row, rowOffset) => {
-    const sheetRow = rowOffset + 2;
-    const status = String(row[(col.Status || 13) - 1] || '').trim() || 'Active';
-    if (status !== 'Active') return;
+  const rows = activeSheet.getRange(3, 1, lastRow - 2, CN_STORE_HEADERS.length).getValues();
 
-    const issuedStr = String(row[(col.IssuedAt || 9) - 1] || '').trim();
-    const issuedAt = parseTimestamp_(issuedStr) || new Date(row[(col.IssuedAt || 9) - 1]);
-    if (!issuedAt || isNaN(issuedAt.getTime())) return;
-    if (now.getTime() - issuedAt.getTime() < expiryMs) return;
+  for (let rowOffset = 0; rowOffset < rows.length; rowOffset++) {
+    const row          = rows[rowOffset];
+    const employeeId   = String(row[CN_STORE_COL.employeeId   - 1] || '').trim();
+    const employeeName = String(row[CN_STORE_COL.employeeName - 1] || '').trim();
+    const department   = String(row[CN_STORE_COL.department   - 1] || '').trim();
+    const rawJson      = String(row[CN_STORE_COL.cnsJson      - 1] || '').trim();
 
-    // --- This CN has expired ---
-    const cnKey = String(row[(col.CN_Key || 1) - 1] || '').trim();
-    const employeeName = String(row[(col.EmployeeName || 3) - 1] || '').trim();
-    const employeeId = String(row[(col.EmployeeID || 2) - 1] || '').trim();
-    const department = String(row[(col.Department || 4) - 1] || '').trim();
-    const windowStart = String(row[(col.WindowStart || 5) - 1] || '').trim();
-    const windowEnd = String(row[(col.WindowEnd || 6) - 1] || '').trim();
-    const rule = String(row[(col.Rule || 15) - 1] || '').trim();
-    const sheetName = String(row[(col.SheetName || 12) - 1] || '').trim();
+    if (!employeeId || !rawJson) continue;
+
+    let cnArray;
+    try { cnArray = JSON.parse(rawJson); } catch (e) { continue; }
+    if (!Array.isArray(cnArray)) continue;
+
+    const remaining = [];
+    const toExpire  = [];
+
+    for (const cn of cnArray) {
+      // Only auto-expire approved (active) CNs; proposed ones need explicit
+      // manager approval before they count toward expiry.
+      if ((cn.status || 'proposed') !== 'active') {
+        remaining.push(cn);
+        continue;
+      }
+      const issuedAt = parseTimestamp_(String(cn.issuedAt || ''));
+      if (!issuedAt || isNaN(issuedAt.getTime())) {
+        remaining.push(cn);
+        continue;
+      }
+      if (now.getTime() - issuedAt.getTime() >= expiryMs) {
+        toExpire.push(cn);
+      } else {
+        remaining.push(cn);
+      }
+    }
+
+    if (toExpire.length === 0) continue;
+
     const expiredStamp = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd HH:mm:ss');
 
-    console.log(`cnLog: CN expired — ${employeeName} (${employeeId}) | Rule: ${rule} | Window: ${windowStart}–${windowEnd}`);
+    for (const cn of toExpire) {
+      console.log(
+        `cnLog: CN expired — ${employeeName} (${employeeId}) | ` +
+        `Rule: ${cn.rule} | Window: ${cn.windowStart}–${cn.windowEnd}`
+      );
+    }
 
     if (!dryRun) {
-      // Step 1: Update CN_Log status FIRST (before email, so record is never lost)
-      if (col.Status) logSheet.getRange(sheetRow, col.Status).setValue('Expired');
-      if (col.ExpiredAt) logSheet.getRange(sheetRow, col.ExpiredAt).setValue(expiredStamp);
+      // Update the employee's active array (remove expired records)
+      writeEmployeeCNs_(activeSheet, employeeId, employeeName, department, remaining);
 
-      // Step 2: Move the row from Active CNs to (Expired CNs)
-      moveToExpiredSheet_(cnKey, expiredStamp, employeeName, employeeId);
-    }
-
-    // Step 3: Send expiry notification if enabled
-    const subject = buildExpiryEmailSubject_(employeeName, employeeId, windowStart, windowEnd, rule);
-    const body = buildExpiryEmailBody_(employeeName, employeeId, department, windowStart, windowEnd, rule, issuedStr, expiredStamp);
-
-    if (!dryRun && shouldSendEmails) {
-      try {
-        GmailApp.sendEmail(PAYROLL_RECIPIENTS.join(','), subject, body); // config.js
-        console.log(`cnLog: Expiry email sent for ${employeeName}.`);
-      } catch (emailError) {
-        console.error(`cnLog: Expiry email failed for row ${sheetRow} — ${emailError.message}`);
+      // Push expired records into the employee's row in (Expired CNs)
+      const expiredExisting = readEmployeeCNs_(expiredSheet, employeeId);
+      for (const cn of toExpire) {
+        expiredExisting.push({ ...cn, expiredAt: expiredStamp });
       }
-    } else if (dryRun) {
-      console.log(`cnLog: [DRY RUN] Would expire CN and send:\n  Subject: ${subject}\n${body}`);
-    } else if (!shouldSendEmails) {
-      console.log(`cnLog: CN expired (emails disabled) — ${employeeName}. Would send:\n  Subject: ${subject}\n${body}`);
+      writeEmployeeCNs_(expiredSheet, employeeId, employeeName, department, expiredExisting);
+
+      // Keep (Expired CNs) hidden
+      if (!expiredSheet.isSheetHidden()) expiredSheet.hideSheet();
     }
 
-    expiredCount++;
-  });
+    // Send expiry notification emails (construction and sending live in notifier.js)
+    for (const cn of toExpire) {
+      sendCNExpiryNotification_(employeeName, employeeId, department, cn, expiredStamp, dryRun, shouldSendEmails); // notifier.js
+    }
+
+    expiredCount += toExpire.length;
+  }
 
   console.log(`cnLog: Expiry scan complete — ${expiredCount} CN(s) expired.`);
-}
-
-/**
- * Finds the row in Active CNs matching the given CN_Key, copies it to
- * (Expired CNs) with the expiry timestamp appended, then deletes it from
- * Active CNs. Ensures (Expired CNs) remains hidden after the move.
- *
- * If no matching row is found in Active CNs (e.g. it was manually deleted),
- * the function logs a warning and skips the move without throwing.
- *
- * @param {string} cnKey        — The CN_Key to find in Active CNs (column A).
- * @param {string} expiredStamp — The expiry timestamp string to append.
- * @param {string} employeeName — For logging only.
- * @param {string} employeeId   — For logging only.
- */
-function moveToExpiredSheet_(cnKey, expiredStamp, employeeName, employeeId) {
-  try {
-    const activeSheet = getOrCreateActiveCNsSheet_();
-    const expiredSheet = getOrCreateExpiredCNsSheet_();
-
-    const lastActiveRow = activeSheet.getLastRow();
-    if (lastActiveRow < 2) {
-      console.warn(`cnLog: Active CNs sheet is empty — cannot move ${cnKey}.`);
-      return;
-    }
-
-    // Find the row by CN_Key (column A)
-    const keys = activeSheet.getRange(2, 1, lastActiveRow - 1, 1).getDisplayValues();
-    let foundRow = -1;
-    for (let i = 0; i < keys.length; i++) {
-      if (String(keys[i][0] || '').trim() === cnKey) {
-        foundRow = i + 2; // 1-based sheet row
-        break;
-      }
-    }
-
-    if (foundRow === -1) {
-      console.warn(`cnLog: Row for CN_Key "${cnKey}" not found in Active CNs — skipping move.`);
-      return;
-    }
-
-    // Read the full row from Active CNs
-    const activeRowData = activeSheet
-      .getRange(foundRow, 1, 1, ACTIVE_CNS_HEADERS.length)
-      .getValues()[0];
-
-    // Append to (Expired CNs) with the expiry timestamp as the last column
-    const expiredRowData = activeRowData.concat([expiredStamp]);
-    const newExpiredRow = expiredSheet.getLastRow() + 1;
-    expiredSheet.getRange(newExpiredRow, 1, 1, expiredRowData.length).setValues([expiredRowData]);
-
-    // The Employee Name cell in Active CNs may be a HYPERLINK formula — copy it
-    // to (Expired CNs) as a formula so the link is preserved in the archive.
-    const nameFormula = activeSheet.getRange(foundRow, 2).getFormula();
-    if (nameFormula) {
-      expiredSheet.getRange(newExpiredRow, 2).setFormula(nameFormula);
-    }
-
-    // Delete the row from Active CNs
-    activeSheet.deleteRow(foundRow);
-
-    // Keep (Expired CNs) hidden — deleteRow can un-hide a sheet in some GAS versions
-    if (!expiredSheet.isSheetHidden()) {
-      expiredSheet.hideSheet();
-    }
-
-    console.log(`cnLog: Moved CN for ${employeeName} (${employeeId}) from Active CNs to (Expired CNs).`);
-  } catch (error) {
-    console.error(`cnLog: Failed to move CN_Key "${cnKey}" to (Expired CNs) — ${error.message}`);
-  }
-}
-
-
-// ---------------------------------------------------------------------------
-// Expiry Email Builders
-// ---------------------------------------------------------------------------
-
-/**
- * Builds the subject line for a CN expiry notification email.
- */
-function buildExpiryEmailSubject_(employeeName, employeeId, windowStart, windowEnd, rule) {
-  const ruleLabel = rule ? ` [${rule}]` : '';
-  return `CN Expired: ${employeeName} (${employeeId || 'N/A'})${ruleLabel} — ${windowStart} to ${windowEnd}`;
-}
-
-/**
- * Builds the plain-text body for a CN expiry notification email.
- */
-function buildExpiryEmailBody_(employeeName, employeeId, department, windowStart, windowEnd, rule, issuedStr, expiredStamp) {
-  return [
-    `Employee:          ${employeeName} (${employeeId || 'N/A'})`,
-    `Department:        ${department || 'Unknown'}`,
-    `Original window:   ${windowStart} — ${windowEnd}${rule ? '  [' + rule + ']' : ''}`,
-    `Originally issued: ${issuedStr}`,
-    `Expired:           ${expiredStamp}`,
-    '',
-    `This Counseling Notice has automatically expired after ${EXPIRY_DAYS} days.`, // config.js
-    'The record has been moved to the (Expired CNs) sheet in the CN Log workbook.',
-    'No further action is required unless the employee\'s situation has changed.',
-    '',
-    'Auto-generated by the Costco Infraction Notifier.',
-  ].join('\n');
 }
 
 
@@ -447,10 +539,8 @@ function buildExpiryEmailBody_(employeeName, employeeId, department, windowStart
 // ---------------------------------------------------------------------------
 
 /**
- * Returns all rows from the Active CNs sheet as plain objects for the web UI.
- *
- * Computes daysUntilExpiry from the IssuedAt timestamp so the frontend can
- * apply color coding without any date math.
+ * Returns all active CN records as plain objects for the web UI dashboard.
+ * Computes daysUntilExpiry from issuedAt so the frontend needs no date math.
  *
  * @returns {Array<{
  *   cnKey:           string,
@@ -467,64 +557,32 @@ function buildExpiryEmailBody_(employeeName, employeeId, department, windowStart
  * }>}
  */
 function getActiveCNsForDashboard_() {
-  const sheet = getOrCreateActiveCNsSheet_();
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
+  const now    = new Date();
+  const allCNs = readAllCNsFromSheet_(getOrCreateActiveCNsSheet_());
 
-  const data = sheet.getRange(2, 1, lastRow - 1, ACTIVE_CNS_HEADERS.length).getValues(); // config.js
-  const now = new Date();
+  return allCNs.map(cn => {
+    let daysUntilExpiry = null;
+    const issuedAt = parseTimestamp_(String(cn.issuedAt || ''));
+    if (issuedAt && !isNaN(issuedAt.getTime())) {
+      const elapsedDays = (now.getTime() - issuedAt.getTime()) / (24 * 60 * 60 * 1000);
+      daysUntilExpiry   = Math.max(0, Math.round(EXPIRY_DAYS - elapsedDays)); // config.js
+    }
 
-  return data
-    .filter(row => String(row[0] || '').trim() !== '')
-    .map(row => {
-      const issuedAtRaw = row[8]; // column I — Issued At
-      let daysUntilExpiry = null;
-      const issuedAt = issuedAtRaw instanceof Date
-        ? issuedAtRaw
-        : parseTimestamp_(String(issuedAtRaw || ''));
-
-      if (issuedAt && !isNaN(issuedAt.getTime())) {
-        const elapsedDays = (now.getTime() - issuedAt.getTime()) / (24 * 60 * 60 * 1000);
-        daysUntilExpiry = Math.max(0, Math.round(EXPIRY_DAYS - elapsedDays)); // config.js
-      }
-
-      return {
-        cnKey:           String(row[0] || '').trim(),
-        employeeName:    String(row[1] || '').trim(),
-        employeeId:      String(row[2] || '').trim(),
-        department:      String(row[3] || '').trim(),
-        rule:            String(row[4] || '').trim(),
-        count:           Number(row[5]) || 0,
-        windowStart:     String(row[6] || '').trim(),
-        windowEnd:       String(row[7] || '').trim(),
-        issuedAt:        String(row[8] || '').trim(),
-        sheetName:       String(row[9] || '').trim(),
-        daysUntilExpiry,
-      };
-    });
-}
-
-
-// ---------------------------------------------------------------------------
-// Header Upgrade Utility
-// ---------------------------------------------------------------------------
-
-/**
- * Appends any expected headers that are missing from the sheet's current
- * header row. Allows new columns to be added to a headers array in config.js
- * without requiring a manual sheet reset.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @param {string[]} expectedHeaders
- */
-function upgradeHeaders_(sheet, expectedHeaders) {
-  const existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  const existingSet = new Set(existing.map(h => String(h || '').trim()));
-  const missing = expectedHeaders.filter(h => !existingSet.has(h));
-  if (missing.length === 0) return;
-  const merged = existing.concat(missing);
-  sheet.getRange(1, 1, 1, merged.length).setValues([merged]);
-  console.log(`cnLog: Added missing headers to "${sheet.getName()}": ${missing.join(', ')}`);
+    return {
+      cnKey:           String(cn.cnKey           || '').trim(),
+      status:          String(cn.status          || 'proposed').trim(),
+      employeeName:    String(cn.employeeName     || '').trim(),
+      employeeId:      String(cn.employeeId       || '').trim(),
+      department:      String(cn.department       || '').trim(),
+      rule:            String(cn.rule             || '').trim(),
+      count:           Number(cn.count)           || 0,
+      windowStart:     String(cn.windowStart      || '').trim(),
+      windowEnd:       String(cn.windowEnd        || '').trim(),
+      issuedAt:        String(cn.issuedAt         || '').trim(),
+      sheetName:       String(cn.sheetName        || '').trim(),
+      daysUntilExpiry,
+    };
+  });
 }
 
 

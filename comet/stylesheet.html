@@ -1,7 +1,7 @@
 <style>
   /* =========================================================================
      COMET — Custom Stylesheet
-     VERSION: 0.3.1
+     VERSION: 0.3.3
 
      Loaded via <?!= include('stylesheet') ?> in index.html.
      Bootstrap 5 CDN is loaded first; these rules extend and override it.
@@ -233,6 +233,9 @@
     font-weight: 600;
     border-color: var(--comet-navy);
     white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 10;
   }
 
   .comet-table-container tbody tr:hover {
@@ -250,6 +253,74 @@
 
   .cn-expiry-red {
     background-color: #FEE2E2 !important;
+  }
+
+  .cn-group-header {
+    font-weight: 600;
+    border-top: 2px solid var(--comet-border);
+  }
+
+  .cn-group-header td {
+    padding-top: 12px !important;
+    padding-bottom: 8px !important;
+  }
+
+  /* Pending approval section */
+  .cn-pending-container {
+    border: 1px solid #fbbf24;
+    border-radius: 6px;
+  }
+
+  /* Approve / reject icon buttons */
+  .cn-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .cn-action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cn-approve-btn { background: #d1fae5; color: #065f46; }
+  .cn-approve-btn:hover:not(:disabled) { background: #6ee7b7; }
+  .cn-reject-btn  { background: #fee2e2; color: #991b1b; }
+  .cn-reject-btn:hover:not(:disabled)  { background: #fca5a5; }
+
+  /* Expired CNs per-employee toggle */
+  .cn-expired-toggle {
+    font-size: 0.72rem;
+    text-decoration: none;
+    opacity: 0.6;
+  }
+  .cn-expired-toggle:hover { opacity: 1; }
+
+  /* Expired CNs expanded sub-table */
+  .cn-expired-inner {
+    background: #f8fafc;
+    border-top: 1px solid var(--comet-border);
+  }
+  .cn-expired-table { font-size: 0.8rem; margin-bottom: 0; }
+  .cn-expired-table thead th { font-size: 0.72rem; color: #64748b; font-weight: 600; }
+
+  /* Infraction table cell alignment */
+  .comet-table-container tbody td {
+    text-align: left;
+  }
+
+  .comet-table-container tbody td:nth-child(2),
+  .comet-table-container tbody td:nth-child(6) {
+    text-align: center;
+  }
+
+  .comet-table-container tbody td:nth-child(3),
+  .comet-table-container tbody td:nth-child(4),
+  .comet-table-container tbody td:nth-child(5) {
+    text-align: left;
   }
 
 
@@ -713,7 +784,7 @@
 
   .comet-calendar-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 1rem;
     margin-top: 1rem;
   }
@@ -1022,13 +1093,6 @@
      Mobile & Touch Optimizations
      ------------------------------------------------------------------------- */
 
-  /* iPad Landscape — 3 columns (1024px–1366px) */
-  @media (min-width: 1024px) and (max-width: 1366px) {
-    .comet-calendar-grid {
-      grid-template-columns: repeat(3, 1fr);
-    }
-  }
-
   /* iPad Portrait or Larger Tablet — 2 columns (769px–1023px) */
   @media (min-width: 769px) and (max-width: 1023px) {
     .comet-calendar-grid {
@@ -1282,6 +1346,11 @@
     /* More spacious table layout */
     .table {
       font-size: 0.95rem;
+    }
+
+    /* Calendar expands to 4 columns on ultrawide — enough room to breathe */
+    .comet-calendar-grid {
+      grid-template-columns: repeat(4, 1fr);
     }
 
     /* Calendar cards get better spacing */

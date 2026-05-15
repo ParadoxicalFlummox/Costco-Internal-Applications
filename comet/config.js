@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.15
+ * VERSION: 0.5.16
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -588,42 +588,26 @@ const ATTENDANCE_JSON = {
   SCHEMA_VERSION:  1,
 };
 
-/** CN_Log sheet tab name. */
-const CN_LOG_SHEET_NAME = 'CN_Log';
-
 /** Active counseling notices sheet tab name. */
 const ACTIVE_CNS_SHEET_NAME = 'Active CNs';
 
 /** Archived (expired) CNs sheet tab name. */
 const EXPIRED_CNS_SHEET_NAME = '(Expired CNs)';
 
-/** Column headers for the CN_Log sheet. */
-const CN_LOG_HEADERS = [
-  'CN_Key', 'EmployeeID', 'EmployeeName', 'Department',
-  'WindowStart', 'WindowEnd', 'Count', 'EventsHash',
-  'IssuedAt', 'IssuedBy', 'DryRun', 'SheetName',
-  'Status', 'ExpiredAt', 'Rule',
-  'SourceSpreadsheetId', 'SourceSheetGid',
-];
+/**
+ * Column layout for both the Active CNs and Expired CNs sheets.
+ * Each sheet has a title row, a header row, and then one data row per employee.
+ * Col A: Employee ID  |  Col B: Employee Name  |  Col C: Department  |  Col D: CNs (JSON)
+ */
+const CN_STORE_HEADERS = ['Employee ID', 'Employee Name', 'Department', 'CNs (JSON)'];
 
-/** Column headers for the Active CNs sheet. */
-const ACTIVE_CNS_HEADERS = [
-  'CN_Key', 'Employee Name', 'Employee ID', 'Department',
-  'Rule', 'Count', 'Window Start', 'Window End', 'Issued At', 'Sheet',
-];
-
-/** Column headers for the (Expired CNs) sheet. */
-const EXPIRED_CNS_HEADERS = [
-  'CN_Key', 'Employee Name', 'Employee ID', 'Department',
-  'Rule', 'Count', 'Window Start', 'Window End', 'Issued At', 'Sheet',
-  'Expired At',
-];
-
-/** Name of the configuration sheet that holds the CN Log spreadsheet ID. */
-const INFRACTION_CONFIG_SHEET_NAME = 'Infraction Config';
-
-/** Cell on INFRACTION_CONFIG_SHEET_NAME where the CN Log spreadsheet ID is entered. */
-const LOG_SPREADSHEET_ID_CELL = 'B2';
+/** 1-based column positions in the CN store sheets. */
+const CN_STORE_COL = {
+  employeeId:   1,
+  employeeName: 2,
+  department:   3,
+  cnsJson:      4,
+};
 
 
 // ---------------------------------------------------------------------------
