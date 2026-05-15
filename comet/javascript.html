@@ -1488,6 +1488,13 @@
 
     function loadActiveCNs() {
       UI.callServer('getActiveCNs', undefined, function (data) {
+        console.log('loadActiveCNs callback — received data:', data);
+        console.log('  data.cns length:', data.cns ? data.cns.length : 'undefined');
+        if (data.cns) {
+          data.cns.forEach(function (cn, idx) {
+            console.log(`  CN[${idx}]: ${cn.employeeName} (${cn.employeeId}) status="${cn.status}"`);
+          });
+        }
         CNStore.set(data.cns);
         renderCNTable(data.cns || []);
       });
@@ -1496,6 +1503,7 @@
     var _allCNs = [];
 
     function renderCNTable(cns) {
+      console.log('renderCNTable called with', cns.length, 'CNs');
       _allCNs = cns;
       applyInfractionFilter();
     }
@@ -1517,6 +1525,10 @@
       // Split into pending (proposed) and active
       var proposedCNs = filteredCNs.filter(function (cn) { return cn.status === 'proposed'; });
       var activeCNs   = filteredCNs.filter(function (cn) { return cn.status === 'active'; });
+      console.log('applyInfractionFilter — _allCNs:', _allCNs.length, 'filtered:', filteredCNs.length, 'proposed:', proposedCNs.length, 'active:', activeCNs.length);
+      proposedCNs.forEach(function (cn) {
+        console.log('  proposed CN:', cn.employeeName, cn.status);
+      });
 
       // --- Pending section ---
       if (pendingSection) pendingSection.style.display = proposedCNs.length ? '' : 'none';

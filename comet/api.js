@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.6.2
+ * VERSION: 0.6.3
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -1617,13 +1617,12 @@ function sortWorkbookSheets_() {
     if (name === EMPLOYEES_SHEET_NAME)     return 0;
     if (name === COMET_CONFIG_SHEET_NAME)  return 1;
     if (name === ACTIVE_CNS_SHEET_NAME)    return 2;
-    if (name === CN_LOG_SHEET_NAME)        return 3;
-    if (name === EXPIRED_CNS_SHEET_NAME)   return 4;
-    if (name === 'Settings')               return 5;
-    if (name.startsWith('Week_'))          return 6;
-    if (name.startsWith('Call Log'))       return 7;
-    if (EMPLOYEE_TAB_PATTERN.test(name))   return 9;
-    return 8;
+    if (name === EXPIRED_CNS_SHEET_NAME)   return 3;
+    if (name === 'Settings')               return 4;
+    if (name.startsWith('Week_'))          return 5;
+    if (name.startsWith('Call Log'))       return 6;
+    if (EMPLOYEE_TAB_PATTERN.test(name))   return 8;
+    return 7;
   }
 
   const sorted = sheets.slice().sort(function(a, b) {

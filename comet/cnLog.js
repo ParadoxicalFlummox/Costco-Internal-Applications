@@ -1,6 +1,6 @@
 /**
  * cnLog.js — CN store management, deduplication indexes, and CN expiry processing.
- * VERSION: 0.4.5
+ * VERSION: 0.4.7
  *
  * STORAGE MODEL
  * -------------
@@ -185,14 +185,18 @@ function writeEmployeeCNs_(sheet, employeeId, employeeName, department, cnArray)
   const row = findEmployeeRow_(sheet, employeeId);
   const jsonString = JSON.stringify(cnArray);
   if (row === -1) {
-    // appendRow is guaranteed atomic: GAS always places it after the last
-    // populated row regardless of any pending (unflushed) writes in the same
-    // execution. Using getLastRow() + setValues() is unreliable here because
-    // GAS may return a stale lastRow value before earlier setValues calls are
-    // committed, causing two back-to-back appends to land on the same row.
-    sheet.appendRow([employeeId, employeeName, department, jsonString]);
-    console.log(`cnLog: writeEmployeeCNs_ — new row appended for employee ${employeeId} (${employeeName}) in "${sheet.getName()}".`);
+    const preAppendRow = sheet.getLastRow();
+    console.log(`cnLog: writeEmployeeCNs_ — appending new row for ${employeeId} (${employeeName}), sheet last row before: ${preAppendRow}`);
+    try {
+      sheet.appendRow([employeeId, employeeName, department, jsonString]);
+      const postAppendRow = sheet.getLastRow();
+      console.log(`cnLog: writeEmployeeCNs_ — new row appended for employee ${employeeId} (${employeeName}) in "${sheet.getName()}", last row after: ${postAppendRow}`);
+    } catch (e) {
+      console.error(`cnLog: writeEmployeeCNs_ — FAILED to append row for ${employeeId} — ${e.message}`);
+      throw e;
+    }
   } else {
+    console.log(`cnLog: writeEmployeeCNs_ — updating existing row ${row} for employee ${employeeId} (${employeeName})`);
     sheet.getRange(row, CN_STORE_COL.cnsJson).setValue(jsonString);
     console.log(`cnLog: writeEmployeeCNs_ — updated row ${row} for employee ${employeeId} (${employeeName}) in "${sheet.getName()}".`);
   }
@@ -334,6 +338,10 @@ function appendActiveCN_(proposal, issuedAt, issuedBy, timeZone) {
       e => `${formatDate(e.date)}|${e.code}`
     ),
   };
+
+  // Flush to ensure any prior sheet writes (from previous proposals in this batch)
+  // are committed before we call getLastRow() via findEmployeeRow_().
+  SpreadsheetApp.flush();
 
   const sheet  = getOrCreateActiveCNsSheet_();
   const existing = readEmployeeCNs_(sheet, proposal.employeeId);

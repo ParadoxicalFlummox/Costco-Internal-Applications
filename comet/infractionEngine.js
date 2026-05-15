@@ -1,6 +1,6 @@
 /**
  * infractionEngine.js — Main orchestrator for the infraction detection pipeline.
- * VERSION: 0.3.4
+ * VERSION: 0.3.6
  *
  * This file contains a single public function: scanAndIssueCNs(). Its only
  * job is to call the other files in the correct order and pass data between
@@ -227,9 +227,9 @@ function scanAndIssueCNs(options) {
   const issuedAt = Utilities.formatDate(new Date(), timeZone, 'yyyy-MM-dd HH:mm:ss');
   const issuedBy = Session.getActiveUser() ? Session.getActiveUser().getEmail() : '';
 
-  toSend.forEach(proposal => {
+  toSend.forEach((proposal, index) => {
     // Write to Active CNs (single store for both dedup and manager view)
-    appendActiveCN_(proposal, issuedAt, issuedBy, timeZone); // cnLog.js
+    appendActiveCN_(proposal, issuedAt, issuedBy, timeZone); // cnLog.js — handles flush before read
 
     // Update both in-memory indexes so subsequent proposals in the same run
     // correctly exclude events already consumed by a proposal issued earlier in this run

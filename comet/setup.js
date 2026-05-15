@@ -1,6 +1,6 @@
 /**
  * setup.js — First-run sheet bootstrap and onOpen menu for COMET.
- * VERSION: 0.3.1
+ * VERSION: 0.3.2
  *
  * This file has two responsibilities:
  *
@@ -16,16 +16,19 @@
  *
  * SHEETS CREATED:
  *   Employees       — master employee roster (UKG import target)
- *   COMET Config    — runtime settings (FY start, window minutes, etc.)
- *   CN_Log          — infraction records written by the infraction scanner
- *   Active CNs      — manager-facing view of currently active CNs
- *   (Expired CNs)   — archived CNs moved here on expiry; hidden from tab bar
+ *   COMET Config    — runtime settings stored as a single JSON blob (cell A3)
+ *   Active CNs      — per-employee JSON row store for proposed/active CNs
+ *   (Expired CNs)   — per-employee JSON row store for expired/rejected CNs; hidden
+ *
+ * CN sheet initialization is delegated to getOrCreateActiveCNsSheet_() and
+ * getOrCreateExpiredCNsSheet_() in cnLog.js, which apply the correct two-row
+ * header layout (title row + column headers row).
  *
  * Call Log sheets are NOT created here — they are created on demand by
  * callLog.js whenever the first absence entry for a new week is logged.
  *
  * TAB COLOR CONVENTION:
- *   Blue   (#005DAA) — core data sheets (Employees, CN_Log)
+ *   Blue   (#005DAA) — core data sheets (Employees)
  *   Red    (#E31837) — active manager views (Active CNs, COMET Config)
  *   Gray   (#B7B7B7) — archive/hidden sheets ((Expired CNs))
  *   Green  (#57BB8A) — Call Log sheets (created by callLog.js)
@@ -675,16 +678,12 @@ function runCometSetup_() {
       create: () => createCometConfigSheet_(workbook),
     },
     {
-      name: CN_LOG_SHEET_NAME,          // config.js
-      create: () => createCnLogSheet_(workbook),
-    },
-    {
       name: ACTIVE_CNS_SHEET_NAME,      // config.js
-      create: () => createActiveCnsSheet_(workbook),
+      create: () => getOrCreateActiveCNsSheet_(),   // cnLog.js — applies two-row header layout
     },
     {
       name: EXPIRED_CNS_SHEET_NAME,     // config.js
-      create: () => createExpiredCnsSheet_(workbook),
+      create: () => getOrCreateExpiredCNsSheet_(),  // cnLog.js — applies two-row header layout + hides sheet
     },
   ];
 
@@ -789,69 +788,6 @@ function createCometConfigSheet_(workbook) {
   return sheet;
 }
 
-/**
- * Creates and formats the CN_Log sheet with the correct headers.
- *
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} workbook
- * @returns {GoogleAppsScript.Spreadsheet.Sheet}
- */
-function createCnLogSheet_(workbook) {
-  const sheet = workbook.insertSheet(CN_LOG_SHEET_NAME);
-
-  sheet.getRange(1, 1, 1, CN_LOG_HEADERS.length)  // config.js
-    .setValues([CN_LOG_HEADERS])
-    .setFontWeight('bold')
-    .setBackground('#005DAA')
-    .setFontColor('#FFFFFF');
-
-  sheet.setFrozenRows(1);
-  sheet.setTabColor('#005DAA');
-
-  return sheet;
-}
-
-/**
- * Creates and formats the Active CNs sheet with the correct headers.
- *
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} workbook
- * @returns {GoogleAppsScript.Spreadsheet.Sheet}
- */
-function createActiveCnsSheet_(workbook) {
-  const sheet = workbook.insertSheet(ACTIVE_CNS_SHEET_NAME);
-
-  sheet.getRange(1, 1, 1, ACTIVE_CNS_HEADERS.length)  // config.js
-    .setValues([ACTIVE_CNS_HEADERS])
-    .setFontWeight('bold')
-    .setBackground('#E31837')
-    .setFontColor('#FFFFFF');
-
-  sheet.setFrozenRows(1);
-  sheet.setTabColor('#E31837');
-
-  return sheet;
-}
-
-/**
- * Creates, formats, and hides the (Expired CNs) archive sheet.
- *
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} workbook
- * @returns {GoogleAppsScript.Spreadsheet.Sheet}
- */
-function createExpiredCnsSheet_(workbook) {
-  const sheet = workbook.insertSheet(EXPIRED_CNS_SHEET_NAME);
-
-  sheet.getRange(1, 1, 1, EXPIRED_CNS_HEADERS.length)  // config.js
-    .setValues([EXPIRED_CNS_HEADERS])
-    .setFontWeight('bold')
-    .setBackground('#B7B7B7')
-    .setFontColor('#FFFFFF');
-
-  sheet.setFrozenRows(1);
-  sheet.setTabColor('#B7B7B7');
-  sheet.hideSheet();
-
-  return sheet;
-}
 
 
 // ---------------------------------------------------------------------------
