@@ -1,7 +1,7 @@
 <style>
   /* =========================================================================
      COMET — Custom Stylesheet
-     VERSION: 0.3.3
+     VERSION: 0.3.5
 
      Loaded via <?!= include('stylesheet') ?> in index.html.
      Bootstrap 5 CDN is loaded first; these rules extend and override it.
@@ -312,9 +312,8 @@
     text-align: left;
   }
 
-  .comet-table-container tbody td:nth-child(2),
-  .comet-table-container tbody td:nth-child(6) {
-    text-align: center;
+  .comet-table-container tbody td:nth-child(2) {
+    text-align: left;
   }
 
   .comet-table-container tbody td:nth-child(3),
@@ -692,6 +691,25 @@
     background-color: #FCE7F3;
     color: #9D174D;
   }
+
+  /* Absence call-type chips (Absence Log table) */
+  .absence-chip {
+    display: inline-block;
+    padding: 2px 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border-radius: 4px;
+    line-height: 1.5;
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+  }
+  .absence-chip + .absence-chip {
+    margin-left: 3px;
+  }
+  .absence-chip-callout  { background-color: #FEF3C7; color: #92400E; }
+  .absence-chip-fmla     { background-color: #DBEAFE; color: #1E40AF; }
+  .absence-chip-noshow   { background-color: #FEE2E2; color: #991B1B; }
+  .absence-chip-late     { background-color: #FDBA74; color: #7C2D12; }
 
   /* Priority role badge in the employee name cell */
   .role-priority-badge {
@@ -1816,6 +1834,70 @@
     color: var(--comet-muted);
     cursor: pointer;
     transition: border-color 0.15s ease, color 0.15s ease;
+  }
+
+  /* shift-chip mirrors role-chip for the Schedule Preferences accordion */
+  .shift-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem 0.3rem 0.75rem;
+    background-color: #F0FDF4;
+    border: 1px solid #BBF7D0;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    color: var(--comet-text);
+    white-space: nowrap;
+  }
+
+  .shift-chip-remove {
+    background: none;
+    border: none;
+    padding: 0;
+    line-height: 1;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--comet-muted);
+    transition: color 0.15s ease;
+    margin-left: 0.1rem;
+  }
+
+  .shift-chip-remove:hover {
+    color: var(--comet-red);
+  }
+
+  /* Column widths for the Schedule Preferences table (5 cols vs. roles table's 3). */
+  #schedulePrefsTable th:nth-child(1) { width: 180px; }
+  #schedulePrefsTable th:nth-child(2) { width: 120px; }
+  #schedulePrefsTable th:nth-child(3) { width: 120px; }
+  #schedulePrefsTable th:nth-child(4) { width: 210px; }
+  /* col 5 (Qualified Shifts) takes the remainder */
+
+  /* Constrain selects to their column width so they don't push the cell wider. */
+  #schedulePrefsTable .day-off-one,
+  #schedulePrefsTable .day-off-two {
+    width: 100%;
+    max-width: 110px;
+  }
+
+  #schedulePrefsTable .pref-shift {
+    width: 100%;
+    max-width: 200px;
+  }
+
+  .qualified-shifts-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+    min-width: 0;
+    padding: 0.15rem 0;
+  }
+
+  .qualified-shifts-chips .btn-add-qual-shift {
+    flex-shrink: 0;
+    margin-top: 0.1rem;
   }
 
   .role-chip-add-btn:hover {

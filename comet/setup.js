@@ -1,6 +1,6 @@
 /**
  * setup.js — First-run sheet bootstrap and onOpen menu for COMET.
- * VERSION: 0.3.2
+ * VERSION: 0.3.5
  *
  * This file has two responsibilities:
  *
@@ -238,7 +238,7 @@ function menuVerifyShifts() {
     // Check each shift exists in at least one department's settings (consolidated Settings sheet)
     referencedShifts.forEach(function (shift) {
       let found = false;
-      const settingsSheet = workbook.getSheetByName('Settings');
+      const settingsSheet = workbook.getSheetByName(SETTINGS_SHEET_NAME); // config.js
       if (settingsSheet) {
         const settingsData = settingsSheet.getDataRange().getValues();
         // Each row has [Department, JSON settings]
@@ -492,12 +492,8 @@ function menuWipeEmployees() {
 
     // Recreate with headers
     const newSheet = workbook.insertSheet(EMPLOYEES_SHEET_NAME, 0);
-    const headers = [
-      'Name', 'ID', 'Hire Date', 'Department', 'Status',
-      'FT/PT', 'Preferred Days Off (Full)', 'Preferred Days Off (Part)', 'Preferred Shift',
-      'Qualified Shifts', 'Vacation Dates', 'Role', 'Secondary Department', 'Seniority Rank'
-    ];
-    newSheet.appendRow(headers);
+    writeEmployeesSheetHeader_(newSheet); // ukgImport.js — single source of truth for headers
+    newSheet.setTabColor(SHEET_TAB_COLORS.EMPLOYEES); // config.js
 
     workbook.toast('Employee sheet wiped and recreated. Ready for fresh import.', 'Success', 8);
   } catch (error) {
@@ -721,44 +717,8 @@ function runCometSetup_() {
  */
 function createEmployeesSheet_(workbook) {
   const sheet = workbook.insertSheet(EMPLOYEES_SHEET_NAME);
-  const headers = [
-    'Name (Last, First)',
-    'Employee ID',
-    'Hire Date',
-    'Department',
-    'Status',
-    'FT/PT',
-    'Day Off Pref 1',
-    'Day Off Pref 2',
-    'Preferred Shift',
-    'Qualified Shifts',
-    'Vacation Dates',
-    'Role',
-    'Seniority Rank'
-  ];
-
-  sheet.getRange(1, 1, 1, headers.length)
-    .setValues([headers])
-    .setFontWeight('bold')
-    .setBackground('#005DAA')
-    .setFontColor('#FFFFFF');
-
-  sheet.setColumnWidth(1, 200);
-  sheet.setColumnWidth(2, 110);
-  sheet.setColumnWidth(3, 110);
-  sheet.setColumnWidth(4, 160);
-  sheet.setColumnWidth(5, 90);
-  sheet.setColumnWidth(6, 80);   // FT/PT
-  sheet.setColumnWidth(7, 140);  // Day Off Pref 1
-  sheet.setColumnWidth(8, 140);  // Day Off Pref 2
-  sheet.setColumnWidth(9, 130);  // Preferred Shift
-  sheet.setColumnWidth(10, 150); // Qualified Shifts
-  sheet.setColumnWidth(11, 150); // Vacation Dates
-  sheet.setColumnWidth(12, 120); // Role
-  sheet.setColumnWidth(13, 130); // Seniority Rank
-  sheet.setFrozenRows(1);
-  sheet.setTabColor('#005DAA');
-
+  writeEmployeesSheetHeader_(sheet); // ukgImport.js — single source of truth for headers
+  sheet.setTabColor(SHEET_TAB_COLORS.EMPLOYEES); // config.js
   return sheet;
 }
 
@@ -774,7 +734,7 @@ function createCometConfigSheet_(workbook) {
 
   sheet.getRange('A1').setValue('COMET Configuration').setFontWeight('bold').setFontSize(13);
   sheet.getRange('A2:B2').setValues([['Config (JSON)', '(do not edit manually)']]).setFontWeight('bold')
-    .setBackground('#005DAA').setFontColor('#FFFFFF');
+    .setBackground(SHEET_TAB_COLORS.EMPLOYEES).setFontColor(COLORS.HEADER_TEXT); // config.js
 
   // Write default config as JSON to cell A3
   const configJson = JSON.stringify(COMET_CONFIG_DEFAULTS, null, 2);
@@ -783,7 +743,7 @@ function createCometConfigSheet_(workbook) {
   sheet.setColumnWidth(1, 600);
   sheet.setColumnWidth(2, 200);
   sheet.setFrozenRows(2);
-  sheet.setTabColor('#E31837');
+  sheet.setTabColor(SHEET_TAB_COLORS.ACTIVE); // config.js
 
   return sheet;
 }
@@ -903,3 +863,4 @@ function uninstallDailyInfractionScanTrigger_() {
     console.error('setup: Failed to remove daily infraction scan trigger — ' + e.message);
   }
 }
+

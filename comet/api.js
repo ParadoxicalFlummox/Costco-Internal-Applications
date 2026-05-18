@@ -1,6 +1,6 @@
 /**
  * api.js — Public API layer for COMET.
- * VERSION: 0.6.3
+ * VERSION: 0.6.6
  *
  * This file contains the functions that the frontend calls via google.script.run.
  * Every public function here is a thin wrapper: it validates inputs, calls the
@@ -38,6 +38,7 @@
  *     saveSupervisorPeakConfig(deptName, config)                            → { saved }
  *     updateCellOverride(weekSheetName, employeeId, dayIndex, newType)      → { weekGrid, employeeList }
  *     updateEmployeeScheduleFields(id, fields)                              → { updated }
+ *     batchSaveSchedulePrefs(updates)                                       → { savedCount }
  *
  *   Absences:
  *     getAbsenceLogForDay(dateString)          → { entries }
@@ -88,9 +89,9 @@ function getScheduleForWeek(deptName, mondayDate) {
     // Re-run Phase 4 role assignment so roles are visible when loading an existing sheet.
     // readExistingWeekSchedule_ reads VAC/RDO/SHIFT state but does not populate cell.role.
     const getWeekEngineOptions = loadEngineOptions(deptName); // settingsManager.js
-    const getWeekRoleMinimums  = loadRoleMinimums(deptName);  // settingsManager.js
+    const getWeekRoleMinimums = loadRoleMinimums(deptName);  // settingsManager.js
     const getWeekTrafficLevels = {};
-    DAY_NAMES_IN_ORDER.forEach(function(dayName) { getWeekTrafficLevels[dayName] = 'Moderate'; });
+    DAY_NAMES_IN_ORDER.forEach(function (dayName) { getWeekTrafficLevels[dayName] = 'Moderate'; });
     runPhaseRoleAssignment_(result.weekGrid, result.employeeList, deptName, getWeekTrafficLevels, getWeekRoleMinimums, getWeekEngineOptions); // scheduleEngine.js
     const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
     return {
@@ -129,59 +130,59 @@ function generateSchedule(deptName, mondayDate) {
     // from generating the same schedule simultaneously. If a generation is already
     // in progress, the caller waits up to 10 s then receives a clear error rather
     // than silently writing garbled interleaved data.
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
 
-    const engineOptions = loadEngineOptions(deptName); // settingsManager.js
-    const roleMinimums  = loadRoleMinimums(deptName);  // settingsManager.js
+      const engineOptions = loadEngineOptions(deptName); // settingsManager.js
+      const roleMinimums = loadRoleMinimums(deptName);  // settingsManager.js
 
-    const { result } = logExecutionTime_('generateWeeklySchedule_', function() {
-      return generateWeeklySchedule_(deptName, weekStartDate, engineOptions, roleMinimums); // scheduleEngine.js
-    });
+      const { result } = logExecutionTime_('generateWeeklySchedule_', function () {
+        return generateWeeklySchedule_(deptName, weekStartDate, engineOptions, roleMinimums); // scheduleEngine.js
+      });
 
-    // Write to sheet via formatter.
-    const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    let sheet = workbook.getSheetByName(result.weekSheetName);
-    if (!sheet) sheet = workbook.insertSheet(result.weekSheetName);
+      // Write to sheet via formatter.
+      const workbook = SpreadsheetApp.getActiveSpreadsheet();
+      let sheet = workbook.getSheetByName(result.weekSheetName);
+      if (!sheet) sheet = workbook.insertSheet(result.weekSheetName);
 
-    // If this is a re-generation, read locks from the existing JSON sheet and apply to grid.
-    // Locked cells are stored in the JSON payload itself, so they're preserved on read.
-    if (sheet.getLastRow() > WEEK_SHEET.COLUMN_HEADER_ROW) {
-      logExecutionTime_('Apply existing locks', function() {
-        const existingGrid = readJsonScheduleFromSheet_(sheet, result.employeeList); // scheduleEngine.js
-        for (let ei = 0; ei < result.employeeList.length; ei++) {
-          for (let di = 0; di < WEEK_SHEET.DAYS_IN_WEEK; di++) {
-            if (existingGrid[ei] && existingGrid[ei][di] && existingGrid[ei][di].locked && result.weekGrid[ei][di].type === 'SHIFT') {
-              result.weekGrid[ei][di].locked = true;
+      // If this is a re-generation, read locks from the existing JSON sheet and apply to grid.
+      // Locked cells are stored in the JSON payload itself, so they're preserved on read.
+      if (sheet.getLastRow() > WEEK_SHEET.COLUMN_HEADER_ROW) {
+        logExecutionTime_('Apply existing locks', function () {
+          const existingGrid = readJsonScheduleFromSheet_(sheet, result.employeeList); // scheduleEngine.js
+          for (let ei = 0; ei < result.employeeList.length; ei++) {
+            for (let di = 0; di < WEEK_SHEET.DAYS_IN_WEEK; di++) {
+              if (existingGrid[ei] && existingGrid[ei][di] && existingGrid[ei][di].locked && result.weekGrid[ei][di].type === 'SHIFT') {
+                result.weekGrid[ei][di].locked = true;
+              }
             }
           }
-        }
+        });
+      }
+
+      const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
+      writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName, result.poolMemberIds, result.comboParticipantIds); // formatter.js
+
+      // Sort workbook tabs and clean up stale Week sheets.
+      logExecutionTime_('Cleanup and sort sheets', function () {
+        cleanupWeekSheets_();
+        sortWorkbookSheets_();
       });
-    }
 
-    const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
-    writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName, result.poolMemberIds, result.comboParticipantIds); // formatter.js
+      const elapsed = Date.now() - scriptStart;
+      console.log('[API] generateSchedule completed in ' + elapsed + 'ms');
+      if (elapsed > MAX_SAFE_EXECUTION_MS) {
+        console.warn('[TIMEOUT_RISK] generateSchedule took ' + elapsed + 'ms (limit is ' + MAX_SAFE_EXECUTION_MS + 'ms)');
+      }
 
-    // Sort workbook tabs and clean up stale Week sheets.
-    logExecutionTime_('Cleanup and sort sheets', function() {
-      cleanupWeekSheets_();
-      sortWorkbookSheets_();
-    });
-
-    const elapsed = Date.now() - scriptStart;
-    console.log('[API] generateSchedule completed in ' + elapsed + 'ms');
-    if (elapsed > MAX_SAFE_EXECUTION_MS) {
-      console.warn('[TIMEOUT_RISK] generateSchedule took ' + elapsed + 'ms (limit is ' + MAX_SAFE_EXECUTION_MS + 'ms)');
-    }
-
-    return {
-      ok: true,
-      data: {
-        weekSheetName: result.weekSheetName,
-        weekGrid: serializeWeekGrid_(result.weekGrid, result.employeeList),
-        employeeList: serializeEmployeeList_(result.employeeList, result.weekGrid),
-        staffingRequirements: staffingRequirements,
-      },
-    };
+      return {
+        ok: true,
+        data: {
+          weekSheetName: result.weekSheetName,
+          weekGrid: serializeWeekGrid_(result.weekGrid, result.employeeList),
+          employeeList: serializeEmployeeList_(result.employeeList, result.weekGrid),
+          staffingRequirements: staffingRequirements,
+        },
+      };
     }); // end withDocumentLock_
   } catch (error) {
     console.error('api: generateSchedule failed —', error);
@@ -202,16 +203,16 @@ function appendHybridEmployees(deptName, mondayDate) {
     if (!deptName || !mondayDate) throw new Error('deptName and mondayDate are required.');
     const weekStartDate = new Date(mondayDate + 'T00:00:00');
 
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
       const result = appendHybridEmployees_(deptName, weekStartDate); // scheduleEngine.js
       // appendHybridEmployees_ already writes the full updated schedule back to the sheet
 
       return {
         ok: true,
         data: {
-          added:        result.added,
-          skipped:      result.skipped,
-          weekGrid:     serializeWeekGrid_(result.weekGrid, result.employeeList),
+          added: result.added,
+          skipped: result.skipped,
+          weekGrid: serializeWeekGrid_(result.weekGrid, result.employeeList),
           employeeList: serializeEmployeeList_(result.employeeList, result.weekGrid),
         },
       };
@@ -247,16 +248,16 @@ function getCrossDeptHoursForWeek(employeeId, mondayDate) {
 
     // Scan all Week sheets for this week to find hours scheduled across departments
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const sheetNames = workbook.getSheets().map(function(s) { return s.getName(); });
+    const sheetNames = workbook.getSheets().map(function (s) { return s.getName(); });
     const month = String(weekStartDate.getMonth() + 1).padStart(2, '0');
-    const day   = String(weekStartDate.getDate()).padStart(2, '0');
-    const year  = String(weekStartDate.getFullYear()).slice(-2);
+    const day = String(weekStartDate.getDate()).padStart(2, '0');
+    const year = String(weekStartDate.getFullYear()).slice(-2);
     const weekBaseName = 'Week_' + month + '_' + day + '_' + year;
 
     const assignments = [];
     let totalHours = 0;
 
-    sheetNames.forEach(function(sheetName) {
+    sheetNames.forEach(function (sheetName) {
       if (!sheetName.startsWith(weekBaseName)) return;
 
       const prefix = weekBaseName + '_';
@@ -318,7 +319,7 @@ function getCrossDeptHoursForWeekBatch(employeeIds, mondayDate) {
     const weekStartDate = new Date(mondayDate + 'T00:00:00');
     const employees = getActiveEmployees_(); // ukgImport.js
     const employeeMap = {};
-    employees.forEach(function(e) {
+    employees.forEach(function (e) {
       employeeMap[String(e.id)] = e;
     });
 
@@ -330,14 +331,14 @@ function getCrossDeptHoursForWeekBatch(employeeIds, mondayDate) {
 
     // Scan all week sheets once
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const sheetNames = workbook.getSheets().map(function(s) { return s.getName(); });
+    const sheetNames = workbook.getSheets().map(function (s) { return s.getName(); });
     const result = {};
 
-    employeeIds.forEach(function(eId) {
+    employeeIds.forEach(function (eId) {
       result[String(eId)] = { totalHours: 0, assignments: [] };
     });
 
-    sheetNames.forEach(function(sheetName) {
+    sheetNames.forEach(function (sheetName) {
       if (!sheetName.startsWith(weekBaseName + '_')) return;
 
       const prefix = weekBaseName + '_';
@@ -358,7 +359,7 @@ function getCrossDeptHoursForWeekBatch(employeeIds, mondayDate) {
         if (!empName) continue;
 
         const empNameTrimmed = empName.toString().trim();
-        const matchedId = employeeIds.find(function(eId) {
+        const matchedId = employeeIds.find(function (eId) {
           const emp = employeeMap[String(eId)];
           return emp && emp.name.toString().trim() === empNameTrimmed;
         });
@@ -415,16 +416,16 @@ function getDeptSettings(deptName) {
       for (let i = 0; i < settings.shifts.length; i++) {
         const s = settings.shifts[i];
         shiftsArray.push({
-          name:               String(s.name         || ''),
-          ftpt:               String(s.ftpt         || ''),
-          weekdayStart:       String(s.weekdayStart || ''),
-          satStart:           String(s.satStart     || ''),
-          sunStart:           String(s.sunStart     || ''),
-          paidHours:          Number(s.paidHours    || 0),
-          hasLunch:           Boolean(s.hasLunch),
-          flexEnabled:        Boolean(s.flexEnabled !== false),
+          name: String(s.name || ''),
+          ftpt: String(s.ftpt || ''),
+          weekdayStart: String(s.weekdayStart || ''),
+          satStart: String(s.satStart || ''),
+          sunStart: String(s.sunStart || ''),
+          paidHours: Number(s.paidHours || 0),
+          hasLunch: Boolean(s.hasLunch),
+          flexEnabled: Boolean(s.flexEnabled !== false),
           flexWindowEarliest: String(s.flexWindowEarliest || ''),
-          flexWindowLatest:   String(s.flexWindowLatest   || ''),
+          flexWindowLatest: String(s.flexWindowLatest || ''),
         });
       }
     }
@@ -445,11 +446,11 @@ function getDeptSettings(deptName) {
           (sheetRow[EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS - 1] || '').toString().trim();
       }
     }
-    const hasComboParticipants = allActiveEmployees.some(function(rawEmployee) {
+    const hasComboParticipants = allActiveEmployees.some(function (rawEmployee) {
       if (rawEmployee.department.toString().trim().toLowerCase().replace(/\s+/g, ' ') === normalizedTarget) return false;
       const secondaryRaw = secondaryDeptByEmployeeId[rawEmployee.id.toString().trim()] || '';
       if (!secondaryRaw) return false;
-      return secondaryRaw.split(',').some(function(d) {
+      return secondaryRaw.split(',').some(function (d) {
         return d.trim().toLowerCase().replace(/\s+/g, ' ') === normalizedTarget;
       });
     });
@@ -467,12 +468,12 @@ function getDeptSettings(deptName) {
     const response = {
       ok: true,
       data: {
-        staffingReqs:        staffingReqsArray,
-        shifts:              shiftsArray,
-        engineOptions:       settings.engineOptions  || { enforceRoleMinimums: true, gapFillEnabled: true },
-        roleMinimums:        settings.roleMinimums   || {},
-        roles:               rolesArray,
-        employeeRoles:       settings.employeeRoles  || {},
+        staffingReqs: staffingReqsArray,
+        shifts: shiftsArray,
+        engineOptions: settings.engineOptions || { enforceRoleMinimums: true, gapFillEnabled: true },
+        roleMinimums: settings.roleMinimums || {},
+        roles: rolesArray,
+        employeeRoles: settings.employeeRoles || {},
         hasComboParticipants: hasComboParticipants,
       }
     };
@@ -496,8 +497,24 @@ function getDeptSettings(deptName) {
 function saveDeptSettings(deptName, data) {
   try {
     if (!deptName) throw new Error('deptName is required.');
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
       saveDeptSettings_(deptName, data); // scheduleSettings.js
+
+      // Sync primary roles to Column L — best-effort; Settings JSON save already completed above.
+      if (data && data.employeeRoles) {
+        try {
+          Object.keys(data.employeeRoles).forEach(function (employeeId) {
+            if (!employeeId || employeeId === 'undefined') return;
+            const assignment = data.employeeRoles[employeeId];
+            const primaryRole = (typeof assignment === 'string') ? assignment : (assignment.primary || '');
+            const qualifiedRoles = (assignment && Array.isArray(assignment.qualified)) ? assignment.qualified.join(', ') : '';
+            updateEmployeeScheduleFields_(employeeId, { role: primaryRole, qualifiedRoles }); // ukgImport.js
+          });
+        } catch (syncError) {
+          console.warn('api: saveDeptSettings — Column L role sync failed (non-fatal):', syncError);
+        }
+      }
+
       return { ok: true, data: { saved: true } };
     });
   } catch (error) {
@@ -538,7 +555,7 @@ function saveTrafficHeatmapConfig(deptName, config) {
   try {
     if (!deptName) throw new Error('deptName is required.');
     if (!config) throw new Error('config is required.');
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
       saveTrafficHeatmapConfig_(deptName, config); // settingsManager.js
       return { ok: true, data: { saved: true } };
     });
@@ -570,94 +587,94 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
     if (!weekSheetName || !employeeId || dayIndex == null || !newType) {
       throw new Error('weekSheetName, employeeId, dayIndex, and newType are all required.');
     }
-    return withDocumentLock_(10000, function() {
-    const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = workbook.getSheetByName(weekSheetName);
-    if (!sheet) throw new Error('Week sheet "' + weekSheetName + '" not found.');
+    return withDocumentLock_(10000, function () {
+      const workbook = SpreadsheetApp.getActiveSpreadsheet();
+      const sheet = workbook.getSheetByName(weekSheetName);
+      if (!sheet) throw new Error('Week sheet "' + weekSheetName + '" not found.');
 
-    // Derive dept name and weekStartDate from the sheet name: "Week_MM_DD_YY_DeptName"
-    // Format: Week_MM_DD_YY where MM/DD/YY are two-digit month, day, 2-digit year.
-    const parts = weekSheetName.split('_');
-    const deptName = parts.slice(4).join('_'); // everything after Week_MM_DD_YY_
-    if (!deptName) throw new Error('Could not derive department from sheet name "' + weekSheetName + '".');
+      // Derive dept name and weekStartDate from the sheet name: "Week_MM_DD_YY_DeptName"
+      // Format: Week_MM_DD_YY where MM/DD/YY are two-digit month, day, 2-digit year.
+      const parts = weekSheetName.split('_');
+      const deptName = parts.slice(4).join('_'); // everything after Week_MM_DD_YY_
+      if (!deptName) throw new Error('Could not derive department from sheet name "' + weekSheetName + '".');
 
-    // Reconstruct weekStartDate from parts[1]=MM, parts[2]=DD, parts[3]=YY
-    const mm = parts[1];
-    const dd = parts[2];
-    const yy = parts[3];
-    const weekStartDate = new Date('20' + yy + '-' + mm + '-' + dd + 'T00:00:00');
+      // Reconstruct weekStartDate from parts[1]=MM, parts[2]=DD, parts[3]=YY
+      const mm = parts[1];
+      const dd = parts[2];
+      const yy = parts[3];
+      const weekStartDate = new Date('20' + yy + '-' + mm + '-' + dd + 'T00:00:00');
 
-    const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate); // scheduleEngine.js
-    const employeeIndex = employeeList.findIndex(e => String(e.employeeId) === String(employeeId));
-    if (employeeIndex === -1) throw new Error('Employee ' + employeeId + ' not found in ' + deptName + ' roster.');
+      const employeeList = loadRosterSortedBySeniority_(deptName, weekStartDate); // scheduleEngine.js
+      const employeeIndex = employeeList.findIndex(e => String(e.employeeId) === String(employeeId));
+      if (employeeIndex === -1) throw new Error('Employee ' + employeeId + ' not found in ' + deptName + ' roster.');
 
-    // Read the existing grid to get current state
-    const existingGrid = readJsonScheduleFromSheet_(sheet, employeeList); // scheduleEngine.js
+      // Read the existing grid to get current state
+      const existingGrid = readJsonScheduleFromSheet_(sheet, employeeList); // scheduleEngine.js
 
-    // Build the override cell based on newType
-    let overrideCell = {};
-    if (newType === 'VAC') {
-      overrideCell = { type: 'VAC', shiftName: null, displayText: null, paidHours: 0, role: null, locked: true };
-    } else if (newType === 'RDO') {
-      overrideCell = { type: 'RDO', shiftName: null, displayText: null, paidHours: 0, role: null, locked: true };
-    } else if (newType === 'OFF') {
-      overrideCell = { type: 'OFF', shiftName: null, displayText: null, paidHours: 0, role: null, locked: true };
-    } else if (newType === 'SHIFT') {
-      // For SHIFT: look up shift definition.
-      if (!shiftName) throw new Error('shiftName is required when newType is "SHIFT".');
+      // Build the override cell based on newType
+      let overrideCell = {};
+      if (newType === 'VAC') {
+        overrideCell = { type: 'VAC', shiftName: null, displayText: null, paidHours: 0, role: null, locked: true };
+      } else if (newType === 'RDO') {
+        overrideCell = { type: 'RDO', shiftName: null, displayText: null, paidHours: 0, role: null, locked: true };
+      } else if (newType === 'OFF') {
+        overrideCell = { type: 'OFF', shiftName: null, displayText: null, paidHours: 0, role: null, locked: true };
+      } else if (newType === 'SHIFT') {
+        // For SHIFT: look up shift definition.
+        if (!shiftName) throw new Error('shiftName is required when newType is "SHIFT".');
 
-      let displayText = '';
-      let paidHours = 0;
-      let resolvedShiftName = shiftName;
+        let displayText = '';
+        let paidHours = 0;
+        let resolvedShiftName = shiftName;
 
-      if (shiftName === '__CUSTOM__') {
-        if (!customDisplayText) throw new Error('customDisplayText is required for custom shifts.');
-        if (customPaidHours == null) throw new Error('customPaidHours is required for custom shifts.');
-        displayText = customDisplayText;
-        paidHours = Number(customPaidHours);
-        resolvedShiftName = null;
-      } else {
-        const employee = employeeList[employeeIndex];
-        // Normalize shift name to lowercase for consistent lookup
-        const normalizedShiftName = shiftName.toLowerCase().trim();
-        const shiftKey = normalizedShiftName + '|' + employee.status;
-        const shiftTimingMap = buildShiftTimingMap(deptName); // settingsManager.js
-        const shiftDef = shiftTimingMap[shiftKey];
+        if (shiftName === '__CUSTOM__') {
+          if (!customDisplayText) throw new Error('customDisplayText is required for custom shifts.');
+          if (customPaidHours == null) throw new Error('customPaidHours is required for custom shifts.');
+          displayText = customDisplayText;
+          paidHours = Number(customPaidHours);
+          resolvedShiftName = null;
+        } else {
+          const employee = employeeList[employeeIndex];
+          // Normalize shift name to lowercase for consistent lookup
+          const normalizedShiftName = shiftName.toLowerCase().trim();
+          const shiftKey = normalizedShiftName + '|' + employee.status;
+          const shiftTimingMap = buildShiftTimingMap(deptName); // settingsManager.js
+          const shiftDef = shiftTimingMap[shiftKey];
 
-        if (!shiftDef) {
-          throw new Error('Shift "' + shiftName + '" not found for ' + employee.status + ' employees in ' + deptName + '.');
+          if (!shiftDef) {
+            throw new Error('Shift "' + shiftName + '" not found for ' + employee.status + ' employees in ' + deptName + '.');
+          }
+
+          displayText = shiftDef.displayText;
+          paidHours = shiftDef.paidHours;
+          resolvedShiftName = shiftDef.name;
         }
 
-        displayText = shiftDef.displayText;
-        paidHours = shiftDef.paidHours;
-        resolvedShiftName = shiftDef.name;
+        overrideCell = { type: 'SHIFT', shiftName: resolvedShiftName, displayText: displayText, paidHours: paidHours, role: null, locked: true };
       }
 
-      overrideCell = { type: 'SHIFT', shiftName: resolvedShiftName, displayText: displayText, paidHours: paidHours, role: null, locked: true };
-    }
+      // Apply the override to the grid
+      existingGrid[employeeIndex][dayIndex] = overrideCell;
 
-    // Apply the override to the grid
-    existingGrid[employeeIndex][dayIndex] = overrideCell;
+      // Re-run Phase 4 to assign roles
+      const overrideEngineOptions = loadEngineOptions(deptName); // settingsManager.js
+      const overrideRoleMinimums = loadRoleMinimums(deptName);  // settingsManager.js
+      const overrideTrafficLevels = {};
+      DAY_NAMES_IN_ORDER.forEach(function (dayName) { overrideTrafficLevels[dayName] = 'Moderate'; });
+      runPhaseRoleAssignment_(existingGrid, employeeList, deptName, overrideTrafficLevels, overrideRoleMinimums, overrideEngineOptions); // scheduleEngine.js
 
-    // Re-run Phase 4 to assign roles
-    const overrideEngineOptions = loadEngineOptions(deptName); // settingsManager.js
-    const overrideRoleMinimums  = loadRoleMinimums(deptName);  // settingsManager.js
-    const overrideTrafficLevels = {};
-    DAY_NAMES_IN_ORDER.forEach(function(dayName) { overrideTrafficLevels[dayName] = 'Moderate'; });
-    runPhaseRoleAssignment_(existingGrid, employeeList, deptName, overrideTrafficLevels, overrideRoleMinimums, overrideEngineOptions); // scheduleEngine.js
+      // Write updated grid back to the sheet
+      const staffingReqs = loadStaffingRequirements(deptName); // settingsManager.js
+      writeAndFormatSchedule(sheet, employeeList, existingGrid, staffingReqs, weekStartDate, deptName); // formatter.js
 
-    // Write updated grid back to the sheet
-    const staffingReqs = loadStaffingRequirements(deptName); // settingsManager.js
-    writeAndFormatSchedule(sheet, employeeList, existingGrid, staffingReqs, weekStartDate, deptName); // formatter.js
-
-    return {
-      ok: true,
-      data: {
-        weekGrid: serializeWeekGrid_(existingGrid, employeeList),
-        employeeList: serializeEmployeeList_(employeeList, existingGrid),
-        staffingRequirements: staffingReqs,
-      },
-    };
+      return {
+        ok: true,
+        data: {
+          weekGrid: serializeWeekGrid_(existingGrid, employeeList),
+          employeeList: serializeEmployeeList_(employeeList, existingGrid),
+          staffingRequirements: staffingReqs,
+        },
+      };
     }); // end withDocumentLock_
   } catch (error) {
     console.error('api: updateCellOverride failed —', error);
@@ -676,12 +693,42 @@ function updateCellOverride(weekSheetName, employeeId, dayIndex, newType, shiftN
 function updateEmployeeScheduleFields(id, fields) {
   try {
     if (!id) throw new Error('id is required.');
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
       const updated = updateEmployeeScheduleFields_(id, fields); // ukgImport.js
       return { ok: true, data: { updated } };
     });
   } catch (error) {
     console.error('api: updateEmployeeScheduleFields failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+
+/**
+ * Saves day-off preferences and shift assignments for multiple employees in a single lock.
+ *
+ * @param {Array<{ id: string, dayOffPrefOne: string, dayOffPrefTwo: string, preferredShift: string, qualifiedShifts: string }>} updates
+ * @returns {{ ok: boolean, data?: { savedCount: number }, error?: string }}
+ */
+function batchSaveSchedulePrefs(updates) {
+  try {
+    if (!Array.isArray(updates)) throw new Error('updates must be an array.');
+    return withDocumentLock_(15000, function () {
+      let savedCount = 0;
+      updates.forEach(function (update) {
+        if (!update.id) return;
+        const updated = updateEmployeeScheduleFields_(update.id, {
+          dayOffPrefOne: update.dayOffPrefOne || '',
+          dayOffPrefTwo: update.dayOffPrefTwo || '',
+          preferredShift: update.preferredShift || '',
+          qualifiedShifts: update.qualifiedShifts || '',
+        });
+        if (updated) savedCount++;
+      });
+      return { ok: true, data: { savedCount } };
+    });
+  } catch (error) {
+    console.error('api: batchSaveSchedulePrefs failed —', error);
     return { ok: false, error: error.message };
   }
 }
@@ -713,6 +760,7 @@ function getAbsenceLogForDay(dateString) {
       isCallout: e.isCallout,
       isFmla: e.isFmla,
       isNoShow: e.isNoShow,
+      isLate: e.isLate,
       department: e.department,
       time: e.time,
       manager: e.manager,
@@ -740,7 +788,7 @@ function logAbsenceEntry(data) {
     // Document lock is critical here: appendCallLogEntry_ uses getLastRow() + append.
     // Without it two concurrent calls can get the same last-row number and one entry
     // silently overwrites the other.
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
       const result = appendCallLogEntry_(data); // callLog.js
       return { ok: true, data: result };
     });
@@ -764,6 +812,108 @@ function sendNotificationForRow(sheetName, rowNumber) {
     return { ok: true, data: result };
   } catch (error) {
     console.error('api: sendNotificationForRow failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Returns all absence log entries for a week (Monday–Sunday).
+ *
+ * @param {string} dateString — ISO date string (YYYY-MM-DD) within the target week.
+ * @returns {{ ok: boolean, data?: object, error?: string }}
+ *
+ */
+function getAbsenceLogForWeek(dateString) {
+  try {
+    const result = getCallLogEntriesForWeek_(dateString); // callLog.js
+    const timeZone = Session.getScriptTimeZone();
+    const entries = result.entries.map(e => ({
+      name: e.name,
+      employeeId: e.employeeId,
+      isCallout: e.isCallout,
+      isFmla: e.isFmla,
+      isNoShow: e.isNoShow,
+      isLate: e.isLate,
+      department: e.department,
+      time: e.time,
+      manager: e.manager,
+      scheduledShift: e.scheduledShift,
+      comment: e.comment,
+      date: e.date ? Utilities.formatDate(e.date, timeZone, 'yyyy-MM-dd') : '',
+      sheetName: e.sheetName,
+      rowNumber: e.rowNumber,
+    }));
+    return { ok: true, data: { weekStart: result.weekStart, weekEnd: result.weekEnd, entries } };
+  } catch (error) {
+    console.error('api: getAbsenceLogForWeek failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Returns all absence log entries for a month.
+ *
+ * @param {string} dateString — ISO date string (YYYY-MM-DD) within the target month.
+ * @returns {{ ok: boolean, data?: object, error?: string }}
+ *
+ */
+function getAbsenceLogForMonth(dateString) {
+  try {
+    const result = getCallLogEntriesForMonth_(dateString); // callLog.js
+    const timeZone = Session.getScriptTimeZone();
+    const entries = result.entries.map(e => ({
+      name: e.name,
+      employeeId: e.employeeId,
+      isCallout: e.isCallout,
+      isFmla: e.isFmla,
+      isNoShow: e.isNoShow,
+      isLate: e.isLate,
+      department: e.department,
+      time: e.time,
+      manager: e.manager,
+      scheduledShift: e.scheduledShift,
+      comment: e.comment,
+      date: e.date ? Utilities.formatDate(e.date, timeZone, 'yyyy-MM-dd') : '',
+      sheetName: e.sheetName,
+      rowNumber: e.rowNumber,
+    }));
+    return { ok: true, data: { month: result.month, year: result.year, entries } };
+  } catch (error) {
+    console.error('api: getAbsenceLogForMonth failed —', error);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Searches absence log entries by employee name (partial match, case-insensitive).
+ *
+ * @param {string} query — Search query (e.g. "Smith" or "john").
+ * @returns {{ ok: boolean, data?: object, error?: string }}
+ *
+ */
+function searchAbsenceLog(query) {
+  try {
+    const result = searchCallLogEntries_(query); // callLog.js
+    const timeZone = Session.getScriptTimeZone();
+    const entries = result.entries.map(e => ({
+      name: e.name,
+      employeeId: e.employeeId,
+      isCallout: e.isCallout,
+      isFmla: e.isFmla,
+      isNoShow: e.isNoShow,
+      isLate: e.isLate,
+      department: e.department,
+      time: e.time,
+      manager: e.manager,
+      scheduledShift: e.scheduledShift,
+      comment: e.comment,
+      date: e.date ? Utilities.formatDate(e.date, timeZone, 'yyyy-MM-dd') : '',
+      sheetName: e.sheetName,
+      rowNumber: e.rowNumber,
+    }));
+    return { ok: true, data: { query: result.query, entries } };
+  } catch (error) {
+    console.error('api: searchAbsenceLog failed —', error);
     return { ok: false, error: error.message };
   }
 }
@@ -798,7 +948,7 @@ function getActiveCNs() {
  */
 function approveCN(cnKey, employeeId) {
   try {
-    if (!cnKey)      throw new Error('cnKey is required.');
+    if (!cnKey) throw new Error('cnKey is required.');
     if (!employeeId) throw new Error('employeeId is required.');
     approveCN_(cnKey, employeeId); // cnLog.js
     return { ok: true, data: {} };
@@ -817,7 +967,7 @@ function approveCN(cnKey, employeeId) {
  */
 function rejectCN(cnKey, employeeId) {
   try {
-    if (!cnKey)      throw new Error('cnKey is required.');
+    if (!cnKey) throw new Error('cnKey is required.');
     if (!employeeId) throw new Error('employeeId is required.');
     rejectCN_(cnKey, employeeId); // cnLog.js
     return { ok: true, data: {} };
@@ -855,11 +1005,13 @@ function getExpiredCNsByEmployee(employeeId) {
 function runCNScan(dryRun, sendEmail) {
   try {
     const result = scanAndIssueCNs({ dryRun: !!dryRun, sendEmail: !!sendEmail }); // infractionEngine.js
-    return { ok: true, data: {
-      proposals: (result && result.proposals) || 0,
-      issued:    (result && result.issued)    || 0,
-      dryRun:    !!dryRun,
-    }};
+    return {
+      ok: true, data: {
+        proposals: (result && result.proposals) || 0,
+        issued: (result && result.issued) || 0,
+        dryRun: !!dryRun,
+      }
+    };
   } catch (error) {
     console.error('api: runCNScan failed —', error);
     return { ok: false, error: error.message };
@@ -919,8 +1071,8 @@ function getAttendanceCalendar(employeeId, year) {
 
     const numDataRows = lastRow - ATTENDANCE_JSON.DATA_START_ROW + 1;
     const dataRange = employeeSheet.getRange(ATTENDANCE_JSON.DATA_START_ROW,
-                                            ATTENDANCE_JSON.COL_YEAR,
-                                            numDataRows, 3);
+      ATTENDANCE_JSON.COL_YEAR,
+      numDataRows, 3);
     const allRows = dataRange.getValues();
 
     let codesJson = null;
@@ -1019,7 +1171,7 @@ function runSetup() {
  */
 function importFromUKG(rows) {
   try {
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
       const result = importEmployeesFromUkg_(rows); // ukgImport.js
       // Calculate and write seniority ranks for all employees
       calculateAndWriteSeniorityRanks_(); // scheduleEngine.js
@@ -1066,14 +1218,14 @@ function getDepartments() {
  */
 function getEmployeeList() {
   try {
-    const workbook   = SpreadsheetApp.getActiveSpreadsheet();
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
     const workbookUrl = workbook.getUrl();
-    const employees  = getAllEmployees_(); // ukgImport.js
+    const employees = getAllEmployees_(); // ukgImport.js
 
     // Attach attendance sheet URL to each employee in one pass.
-    employees.forEach(function(emp) {
+    employees.forEach(function (emp) {
       const tabName = emp.name + ' - ' + emp.id;
-      const sheet   = workbook.getSheetByName(tabName);
+      const sheet = workbook.getSheetByName(tabName);
       emp.attendanceSheetUrl = sheet
         ? workbookUrl + '#gid=' + sheet.getSheetId()
         : null;
@@ -1132,7 +1284,7 @@ function getMailingListConfig() {
     const config = {};
 
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const settingsSheet = workbook.getSheetByName('Settings');
+    const settingsSheet = workbook.getSheetByName(SETTINGS_SHEET_NAME); // config.js
 
     if (!settingsSheet) {
       return { ok: true, data: { config } };
@@ -1177,7 +1329,7 @@ function getMailingListConfig() {
 function saveMailingListConfig(config) {
   try {
     const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const settingsSheet = workbook.getSheetByName('Settings');
+    const settingsSheet = workbook.getSheetByName(SETTINGS_SHEET_NAME); // config.js
 
     if (!settingsSheet) {
       return { ok: false, error: 'Settings sheet not found' };
@@ -1231,7 +1383,7 @@ function saveMailingListConfig(config) {
  */
 function setEmployeeStatus(id, status) {
   try {
-    return withDocumentLock_(10000, function() {
+    return withDocumentLock_(10000, function () {
       const updated = setEmployeeStatus_(id, status); // ukgImport.js
       return { ok: true, data: { updated } };
     });
@@ -1269,18 +1421,20 @@ function generateAttendanceTabs(year) {
 function getAttendanceSheetUrl(employeeId) {
   try {
     if (!employeeId) throw new Error('employeeId is required.');
-    const workbook  = SpreadsheetApp.getActiveSpreadsheet();
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
     const employees = getAllEmployees_(); // ukgImport.js
     const emp = employees.find(e => String(e.id) === String(employeeId));
     if (!emp) throw new Error('Employee ' + employeeId + ' not found.');
 
     const tabName = emp.name + ' - ' + emp.id;
-    const sheet   = workbook.getSheetByName(tabName);
+    const sheet = workbook.getSheetByName(tabName);
     if (!sheet) {
-      return { ok: true, data: {
-        url: null,
-        message: 'No attendance controller tab found for ' + emp.name + '. Use "Generate Attendance Tabs" in Admin first.',
-      }};
+      return {
+        ok: true, data: {
+          url: null,
+          message: 'No attendance controller tab found for ' + emp.name + '. Use "Generate Attendance Tabs" in Admin first.',
+        }
+      };
     }
     const url = workbook.getUrl() + '#gid=' + sheet.getSheetId();
     return { ok: true, data: { url } };
@@ -1310,7 +1464,7 @@ function importAttendanceData(payload) {
     let imported = 0;
     let failed = 0;
 
-    payload.forEach(function(record) {
+    payload.forEach(function (record) {
       try {
         const result = importAttendanceJson_(record); // tabManager.js
         results.push({
@@ -1370,13 +1524,13 @@ function getScheduleWeeksForMonth(deptName, monthDate) {
       ? new Date(monthDate + 'T00:00:00')
       : new Date();
     const currentMonth = anchor.getMonth(); // 0-based, for sorting hint only
-    const currentYear  = anchor.getFullYear();
+    const currentYear = anchor.getFullYear();
 
-    const workbook       = SpreadsheetApp.getActiveSpreadsheet();
+    const workbook = SpreadsheetApp.getActiveSpreadsheet();
     const normalizedDept = deptName.toString().trim().toLowerCase().replace(/\s+/g, ' ');
-    const weeks          = [];
+    const weeks = [];
 
-    workbook.getSheets().forEach(function(sheet) {
+    workbook.getSheets().forEach(function (sheet) {
       const name = sheet.getName();
       if (!name.startsWith('Week_')) return;
 
@@ -1397,13 +1551,13 @@ function getScheduleWeeksForMonth(deptName, monthDate) {
 
       weeks.push({
         weekSheetName: name,
-        mondayDate:    sheetDate.toISOString().slice(0, 10),
+        mondayDate: sheetDate.toISOString().slice(0, 10),
         inCurrentMonth: sheetDate.getMonth() === currentMonth && sheetDate.getFullYear() === currentYear,
       });
     });
 
     // Sort newest first so the most recent week is auto-loaded
-    weeks.sort(function(a, b) { return b.mondayDate.localeCompare(a.mondayDate); });
+    weeks.sort(function (a, b) { return b.mondayDate.localeCompare(a.mondayDate); });
     return { ok: true, data: { weeks } };
   } catch (error) {
     console.error('api: getScheduleWeeksForMonth failed —', error);
@@ -1423,11 +1577,11 @@ function getScheduleWeeksForMonth(deptName, monthDate) {
  */
 function cleanupWeekSheets_() {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const now      = new Date();
+  const now = new Date();
 
   // Monday of the current week
-  const today    = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dow      = today.getDay();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dow = today.getDay();
   const daysToMon = (dow === 0) ? -6 : 1 - dow;
   const thisMonday = new Date(today);
   thisMonday.setDate(today.getDate() + daysToMon);
@@ -1438,7 +1592,7 @@ function cleanupWeekSheets_() {
   let hidden = 0;
   let deleted = 0;
 
-  workbook.getSheets().forEach(function(sheet) {
+  workbook.getSheets().forEach(function (sheet) {
     const name = sheet.getName();
     if (!name.startsWith('Week_')) return;
 
@@ -1614,18 +1768,18 @@ function sortWorkbookSheets_() {
   const sheets = workbook.getSheets();
 
   function groupOf(name) {
-    if (name === EMPLOYEES_SHEET_NAME)     return 0;
-    if (name === COMET_CONFIG_SHEET_NAME)  return 1;
-    if (name === ACTIVE_CNS_SHEET_NAME)    return 2;
-    if (name === EXPIRED_CNS_SHEET_NAME)   return 3;
-    if (name === 'Settings')               return 4;
-    if (name.startsWith('Week_'))          return 5;
-    if (name.startsWith('Call Log'))       return 6;
-    if (EMPLOYEE_TAB_PATTERN.test(name))   return 8;
+    if (name === EMPLOYEES_SHEET_NAME) return 0;
+    if (name === COMET_CONFIG_SHEET_NAME) return 1;
+    if (name === ACTIVE_CNS_SHEET_NAME) return 2;
+    if (name === EXPIRED_CNS_SHEET_NAME) return 3;
+    if (name === SETTINGS_SHEET_NAME) return 4; // config.js
+    if (name.startsWith('Week_')) return 5;
+    if (name.startsWith('Call Log')) return 6;
+    if (EMPLOYEE_TAB_PATTERN.test(name)) return 8;
     return 7;
   }
 
-  const sorted = sheets.slice().sort(function(a, b) {
+  const sorted = sheets.slice().sort(function (a, b) {
     const ga = groupOf(a.getName());
     const gb = groupOf(b.getName());
     if (ga !== gb) return ga - gb;
@@ -1637,7 +1791,7 @@ function sortWorkbookSheets_() {
     return a.getName().localeCompare(b.getName());
   });
 
-  sorted.forEach(function(sheet, index) {
+  sorted.forEach(function (sheet, index) {
     workbook.setActiveSheet(sheet);
     workbook.moveActiveSheet(index + 1);
   });

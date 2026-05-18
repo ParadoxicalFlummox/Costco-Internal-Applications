@@ -1,6 +1,6 @@
 /**
  * formatter.js — Writes schedule data to the Week sheet in JSON format.
- * VERSION: 0.6.0
+ * VERSION: 0.6.1
  *
  * In the new architecture, the Week sheet is pure data storage, not a visual display.
  * One row per employee; one JSON string per row in column C.
@@ -114,7 +114,7 @@ function writeWeekHeader_(scheduleSheet, weekStartDate, departmentName) {
   timestampRange.merge();
   timestampRange.setValue(timestampText);
   timestampRange.setFontSize(10);
-  timestampRange.setFontColor('#666666');
+  timestampRange.setFontColor(COLORS.TEXT_MUTED); // config.js
   timestampRange.setHorizontalAlignment('left');
 
   // Row 3: Department name
@@ -124,11 +124,11 @@ function writeWeekHeader_(scheduleSheet, weekStartDate, departmentName) {
   deptRange.setValue(deptText);
   deptRange.setFontSize(11);
   deptRange.setFontWeight('bold');
-  deptRange.setFontColor('#000000');
+  deptRange.setFontColor(COLORS.TEXT_PRIMARY); // config.js
   deptRange.setHorizontalAlignment('left');
 
   // Row 4: Spacer
-  scheduleSheet.getRange(4, 1, 1, WEEK_SHEET.COL_STORED_AT).setBackground('#EEEEEE');
+  scheduleSheet.getRange(4, 1, 1, WEEK_SHEET.COL_STORED_AT).setBackground(COLORS.SPACER_BG); // config.js
 }
 
 

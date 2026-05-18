@@ -1,40 +1,25 @@
 /**
  * callLog.js — Absence log sheet management for COMET.
- * VERSION: 0.3.3
+ * VERSION: 0.6.1
  *
  * This file owns all server-side logic for the Absence Log feature:
- *   - Auto-creating a Call Log sheet for each new week
- *   - Reading absence entries for a given date
- *   - Writing new absence entries
+ *   - Creating and managing a single Call_Log sheet
+ *   - Reading absence entries for a date, week, month, or search query
+ *   - Writing new absence entries (JSON-serialized)
  *   - Triggering absence notification emails (construction/sending lives in notifier.js)
+ *   - Purging old entries based on retention policy
  *
- * CALL LOG SHEET NAMING:
- *   One sheet per fiscal week, named "Call Log MM-DD-YYYY" where the date is
- *   the Monday of that week. Example: "Call Log 04-21-2026".
- *   Sheets are created automatically on the first entry of each new week.
- *   Tab color: green (#57BB8A) to distinguish from infraction and config sheets.
+ * CALL LOG SHEET STRUCTURE (v0.6.0):
+ *   Single persistent sheet named "Call_Log" with 4 columns:
+ *   Col A — Date (JS Date object; used for retention and filtering)
+ *   Col B — Employee ID (string; for dedup)
+ *   Col C — Entry JSON (string; contains all absence entry fields)
+ *   Col D — Sent (string; blank if unsent, "sent at HH:MM" or "auto sent at HH:MM" if processed)
  *
- * CALL LOG COLUMN LAYOUT (from config.js CALL_LOG_COLUMN, 0-indexed):
- *   A (0)  — Employee Name
- *   B (1)  — Employee ID
- *   C (2)  — (reserved)
- *   D (3)  — Is Callout       (checkbox)
- *   E (4)  — (reserved)
- *   F (5)  — Is FMLA          (checkbox)
- *   G (6)  — Is No Show       (checkbox)
- *   H (7)  — Department
- *   I (8)  — Time Called      (HH:MM)
- *   J (9)  — Manager          (who took the call)
- *   K (10) — Scheduled Shift
- *   L-M    — (reserved)
- *   N (13) — Comment
- *   O (14) — Date          (date value)
- *
- * EMAIL NOTIFICATION:
- *   This file triggers absence notification emails via sendAbsenceEmail_() and
- *   resolveAbsenceRecipients_() in notifier.js. Recipients come from the
- *   department's "mailing" field in the Settings sheet. All email construction
- *   and sending lives in notifier.js.
+ * RETENTION POLICY:
+ *   Entries older than CALL_LOG_RETENTION_DAYS are auto-purged by a time-trigger.
+ *   Default: 365 days (one year rolling window).
+ *   Purge function: purgeExpiredCallLogEntries_() runs monthly.
  */
 
 
@@ -43,41 +28,102 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Returns all absence entries from the Call Log sheet for the given date.
- *
- * Reads every row in the sheet for the week containing dateString and filters
- * to only rows whose DATE column matches the target date. Returns an empty
- * array if no sheet exists for that week yet.
+ * Returns all absence entries for a specific date.
+ * Filters readAllCallLogEntries_() by date.
  *
  * @param {string} dateString — ISO date string (YYYY-MM-DD).
  * @returns {Array<CallLogEntry>}
  */
 function getCallLogEntriesForDate_(dateString) {
+  const timeZone = Session.getScriptTimeZone();
+  const targetDateKey = dateString; // already normalized in ISO format
+
+  return readAllCallLogEntries_().filter(entry => {
+    const entryDateKey = Utilities.formatDate(entry.date, timeZone, 'yyyy-MM-dd');
+    return entryDateKey === targetDateKey;
+  });
+}
+
+/**
+ * Returns all absence entries for the week containing the given date.
+ * Week runs Monday–Sunday.
+ *
+ * @param {string} dateString — ISO date string (YYYY-MM-DD).
+ * @returns {{ weekStart: string, weekEnd: string, entries: Array<CallLogEntry> }}
+ */
+function getCallLogEntriesForWeek_(dateString) {
   const date = new Date(dateString + 'T00:00:00');
-  const sheetName = getCallLogSheetName_(date);
-  const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = workbook.getSheetByName(sheetName);
-
-  if (!sheet) return [];
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow < CALL_LOG_DATA_START_ROW) return []; // config.js
-
-  const numRows = lastRow - CALL_LOG_DATA_START_ROW + 1;
-  const totalCols = CALL_LOG_COLUMN.DATE + 1; // config.js — read through DATE column
-  const data = sheet.getRange(CALL_LOG_DATA_START_ROW, 1, numRows, totalCols).getValues();
+  const monday = getMondayOfWeek_(date);
+  const sunday = new Date(monday);
+  sunday.setDate(sunday.getDate() + 6);
 
   const timeZone = Session.getScriptTimeZone();
-  const targetDateKey = Utilities.formatDate(date, timeZone, 'yyyy-MM-dd');
+  const weekStart = Utilities.formatDate(monday, timeZone, 'yyyy-MM-dd');
+  const weekEnd = Utilities.formatDate(sunday, timeZone, 'yyyy-MM-dd');
 
-  return data
-    .map((row, offset) => rowToCallLogEntry_(row, sheetName, CALL_LOG_DATA_START_ROW + offset))
-    .filter(entry => {
-      if (!entry.dateRaw) return false;
-      const entryDate = coerceCallLogDate_(entry.dateRaw);
-      if (!entryDate) return false;
-      return Utilities.formatDate(entryDate, timeZone, 'yyyy-MM-dd') === targetDateKey;
-    });
+  const allEntries = readAllCallLogEntries_();
+  const filtered = allEntries.filter(entry => {
+    const entryDateKey = Utilities.formatDate(entry.date, timeZone, 'yyyy-MM-dd');
+    return entryDateKey >= weekStart && entryDateKey <= weekEnd;
+  });
+
+  // Sort by date ascending (oldest first in the week)
+  filtered.sort((a, b) => a.date - b.date);
+
+  return { weekStart, weekEnd, entries: filtered };
+}
+
+/**
+ * Returns all absence entries for the month containing the given date.
+ *
+ * @param {string} dateString — ISO date string (YYYY-MM-DD).
+ * @returns {{ month: number, year: number, entries: Array<CallLogEntry> }}
+ */
+function getCallLogEntriesForMonth_(dateString) {
+  const date = new Date(dateString + 'T00:00:00');
+  const year = date.getFullYear();
+  const month = date.getMonth(); // 0-indexed
+
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+
+  const timeZone = Session.getScriptTimeZone();
+  const monthStartKey = Utilities.formatDate(firstDay, timeZone, 'yyyy-MM-dd');
+  const monthEndKey = Utilities.formatDate(lastDay, timeZone, 'yyyy-MM-dd');
+
+  const allEntries = readAllCallLogEntries_();
+  const filtered = allEntries.filter(entry => {
+    const entryDateKey = Utilities.formatDate(entry.date, timeZone, 'yyyy-MM-dd');
+    return entryDateKey >= monthStartKey && entryDateKey <= monthEndKey;
+  });
+
+  // Sort by date ascending
+  filtered.sort((a, b) => a.date - b.date);
+
+  return { month: month + 1, year, entries: filtered };
+}
+
+/**
+ * Returns all absence entries that match a search query (by employee name).
+ * Case-insensitive partial match on the name field.
+ * Results sorted by date descending (newest first).
+ *
+ * @param {string} query — Search query (e.g. "Smith" or "john").
+ * @returns {{ query: string, entries: Array<CallLogEntry> }}
+ */
+function searchCallLogEntries_(query) {
+  const queryLower = query.toLowerCase().trim();
+  if (queryLower.length === 0) return { query, entries: [] };
+
+  const allEntries = readAllCallLogEntries_();
+  const filtered = allEntries.filter(entry =>
+    entry.name.toLowerCase().includes(queryLower)
+  );
+
+  // Sort by date descending (newest first)
+  filtered.sort((a, b) => b.date - a.date);
+
+  return { query, entries: filtered };
 }
 
 
@@ -86,8 +132,9 @@ function getCallLogEntriesForDate_(dateString) {
 // ---------------------------------------------------------------------------
 
 /**
- * Appends a new absence entry to the Call Log sheet for today's week.
+ * Appends a new absence entry to the Call_Log sheet.
  * Creates the sheet if it does not exist yet.
+ * Entry fields are serialized to JSON in column C.
  *
  * @param {{
  *   name:             string,
@@ -104,28 +151,36 @@ function getCallLogEntriesForDate_(dateString) {
  * @returns {{ sheetName: string, rowNumber: number }}
  */
 function appendCallLogEntry_(data) {
+  const sheet = getOrCreateCallLogSheet_();
   const today = new Date();
-  const sheet = getOrCreateCallLogSheet_(today);
 
-  // Build the 15-column row matching the Call Log layout
-  const row = new Array(CALL_LOG_COLUMN.DATE + 1).fill('');
-  row[CALL_LOG_COLUMN.NAME]             = data.name            || '';
-  row[CALL_LOG_COLUMN.EMPLOYEE_ID]      = data.employeeId      || '';
-  row[CALL_LOG_COLUMN.IS_CALLOUT]       = !!data.isCallout;
-  row[CALL_LOG_COLUMN.IS_FMLA]          = !!data.isFmla;
-  row[CALL_LOG_COLUMN.IS_NOSHOW]        = !!data.isNoShow;
-  row[CALL_LOG_COLUMN.DEPARTMENT]       = data.department      || '';
-  row[CALL_LOG_COLUMN.TIME]             = data.time            || '';
-  row[CALL_LOG_COLUMN.MANAGER]          = data.manager         || '';
-  row[CALL_LOG_COLUMN.SCHEDULED_SHIFT]  = data.scheduledShift  || '';
-  row[CALL_LOG_COLUMN.COMMENT]          = data.comment         || '';
-  row[CALL_LOG_COLUMN.DATE]             = today;
+  // Build the entry JSON object
+  const entryJson = {
+    name:             data.name            || '',
+    department:       data.department      || '',
+    isCallout:        !!data.isCallout,
+    isFmla:           !!data.isFmla,
+    isNoShow:         !!data.isNoShow,
+    isLate:           !!data.isLate,
+    time:             data.time            || '',
+    manager:          data.manager         || '',
+    scheduledShift:   data.scheduledShift  || '',
+    comment:          data.comment         || '',
+  };
+
+  // Build the 4-column row
+  const row = [
+    today,                           // DATE
+    data.employeeId || '',           // EMPLOYEE_ID
+    JSON.stringify(entryJson),       // ENTRY_JSON
+    '',                              // SENT (empty until marked as sent)
+  ];
 
   const newRow = sheet.getLastRow() + 1;
-  sheet.getRange(newRow, 1, 1, row.length).setValues([row]);
+  sheet.getRange(newRow, 1, 1, 4).setValues([row]);
   SpreadsheetApp.flush();
 
-  return { sheetName: sheet.getName(), rowNumber: newRow };
+  return { sheetName: CALL_LOG_SHEET_NAME, rowNumber: newRow };
 }
 
 
@@ -135,40 +190,39 @@ function appendCallLogEntry_(data) {
 
 /**
  * Sends an absence notification email for the entry at the given row.
+ * Reads the row from the Call_Log sheet, parses the entry JSON, and
+ * determines recipients from the department's mailing list.
  *
- * Reads the row from the sheet, determines the correct recipients from
- * MAILING_LIST (config.js), and sends a plain-text email via GmailApp.
+ * When sendEmails is false in COMET Config, logs instead of sending.
  *
- * When sendEmails is false in the COMET Config sheet, logs the email content
- * instead of sending.
- *
- * @param {string} sheetName  — The Call Log sheet tab name.
+ * @param {string} sheetName  — Expected to be CALL_LOG_SHEET_NAME.
  * @param {number} rowNumber  — 1-indexed row number to send notification for.
- * @returns {{ sent: boolean, recipients: string[] }}
+ * @returns {{ sent: boolean, recipients: string[], sentLabel?: string, alreadySent?: boolean, disabled?: boolean, noRecipients?: boolean }}
  */
 function sendAbsenceNotification_(sheetName, rowNumber, isAutoSend = false) {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = workbook.getSheetByName(sheetName);
+  const sheet = workbook.getSheetByName(CALL_LOG_SHEET_NAME);
 
-  if (!sheet) throw new Error(`Call Log sheet "${sheetName}" not found.`);
+  if (!sheet) throw new Error(`Call_Log sheet not found.`);
 
-  const totalCols = CALL_LOG_COLUMN.SENT + 1;
-  const row = sheet.getRange(rowNumber, 1, 1, totalCols).getValues()[0];
-  const entry = rowToCallLogEntry_(row, sheetName, rowNumber);
+  const row = sheet.getRange(rowNumber, 1, 1, 4).getValues()[0];
 
   // Check if already sent
   const sentCell = row[CALL_LOG_COLUMN.SENT];
   if (sentCell && String(sentCell).trim().length > 0) {
-    console.log(`callLog: Email already sent for ${entry.name} (${entry.department}) — marked as "${sentCell}"`);
+    const entry = parseCallLogRow_(row);
+    console.log(`callLog: Email already sent for ${entry.name} — marked as "${sentCell}"`);
     return { sent: false, alreadySent: true, recipients: [] };
   }
 
-  // Check if email sending is enabled in UI settings
+  const entry = parseCallLogRow_(row);
+
+  // Check if email sending is enabled
   const config = readCometConfig_(); // setup.js
   const shouldSendEmails = !!config.sendEmails;
 
   if (!shouldSendEmails) {
-    console.log(`callLog: Email sending is disabled in settings for ${entry.name} (${entry.department})`);
+    console.log(`callLog: Email sending is disabled in settings for ${entry.name}`);
     return { sent: false, disabled: true, recipients: [] };
   }
 
@@ -188,10 +242,9 @@ function sendAbsenceNotification_(sheetName, rowNumber, isAutoSend = false) {
   sheet.getRange(rowNumber, CALL_LOG_COLUMN.SENT + 1).setValue(sentLabel);
   SpreadsheetApp.flush();
 
-  console.log(`callLog: Sent email for ${entry.name} (${entry.department}) to ${recipients.join(', ')} — marked as "${sentLabel}"`);
+  console.log(`callLog: Sent email for ${entry.name} to ${recipients.join(', ')} — marked as "${sentLabel}"`);
   return { sent: true, recipients, sentLabel };
 }
-
 
 
 // ---------------------------------------------------------------------------
@@ -199,104 +252,204 @@ function sendAbsenceNotification_(sheetName, rowNumber, isAutoSend = false) {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the Call Log sheet for the week containing the given date,
- * creating it (with headers and formatting) if it does not exist yet.
+ * Returns the Call_Log sheet, creating it (with headers and formatting) if it doesn't exist.
  *
- * @param {Date} date — Any date within the target week.
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
-function getOrCreateCallLogSheet_(date) {
+function getOrCreateCallLogSheet_() {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
-  const sheetName = getCallLogSheetName_(date);
-  const existing = workbook.getSheetByName(sheetName);
+  const existing = workbook.getSheetByName(CALL_LOG_SHEET_NAME);
   if (existing) return existing;
 
-  const sheet = workbook.insertSheet(sheetName);
-  writeCallLogHeader_(sheet, date);
+  const sheet = workbook.insertSheet(CALL_LOG_SHEET_NAME);
+  writeCallLogHeader_(sheet);
   return sheet;
 }
 
 /**
- * Writes the header row and applies formatting to a new Call Log sheet.
+ * Writes the header row and applies formatting to the Call_Log sheet.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
- * @param {Date} date — The Monday of the week (used in the title row).
  */
-function writeCallLogHeader_(sheet, date) {
-  const timeZone = Session.getScriptTimeZone();
-  const monday = getMondayOfWeek_(date);
-  const sunday = new Date(monday);
-  sunday.setDate(sunday.getDate() + 6);
+function writeCallLogHeader_(sheet) {
+  const headers = [
+    'Date',
+    'Employee ID',
+    'Entry',
+    'Sent',
+  ];
 
-  const weekLabel =
-    Utilities.formatDate(monday, timeZone, 'MMM d') + ' – ' +
-    Utilities.formatDate(sunday, timeZone, 'MMM d, yyyy');
-
-  // Row 1 — merged week title
-  const totalCols = CALL_LOG_COLUMN.SENT + 1;
-  sheet.getRange(1, 1, 1, totalCols)
-    .merge()
-    .setValue('Call Log — Week of ' + weekLabel)
-    .setFontWeight('bold')
-    .setFontSize(11)
-    .setBackground('#005DAA')
-    .setFontColor('#FFFFFF')
-    .setHorizontalAlignment('center');
-
-  // Row 2 — column headers
-  const headers = new Array(totalCols).fill('');
-  headers[CALL_LOG_COLUMN.NAME]             = 'Employee Name';
-  headers[CALL_LOG_COLUMN.EMPLOYEE_ID]      = 'Employee ID';
-  headers[CALL_LOG_COLUMN.IS_CALLOUT]       = 'Call-Out';
-  headers[CALL_LOG_COLUMN.IS_FMLA]          = 'FMLA';
-  headers[CALL_LOG_COLUMN.IS_NOSHOW]        = 'No Show';
-  headers[CALL_LOG_COLUMN.DEPARTMENT]       = 'Department';
-  headers[CALL_LOG_COLUMN.TIME]             = 'Time Called';
-  headers[CALL_LOG_COLUMN.MANAGER]          = 'Manager';
-  headers[CALL_LOG_COLUMN.SCHEDULED_SHIFT]  = 'Scheduled Shift';
-  headers[CALL_LOG_COLUMN.COMMENT]          = 'Comment';
-  headers[CALL_LOG_COLUMN.DATE]             = 'Date';
-  headers[CALL_LOG_COLUMN.SENT]             = 'Sent';
-
-  sheet.getRange(2, 1, 1, totalCols)
+  sheet.getRange(1, 1, 1, 4)
     .setValues([headers])
     .setFontWeight('bold')
-    .setBackground('#57BB8A')
-    .setFontColor('#FFFFFF');
+    .setBackground(COLORS.PT_SHIFT) // Green (#57BB8A) from config.js
+    .setFontColor(COLORS.HEADER_TEXT); // config.js
 
-  sheet.setFrozenRows(2);
-  sheet.setTabColor('#57BB8A');
+  sheet.setFrozenRows(1);
+  sheet.setTabColor(COLORS.PT_SHIFT);
 
-  // Column widths for data columns
-  sheet.setColumnWidth(CALL_LOG_COLUMN.NAME + 1,             180);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.EMPLOYEE_ID + 1,      110);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.DEPARTMENT + 1,       150);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.TIME + 1,             100);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.MANAGER + 1,          150);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.SCHEDULED_SHIFT + 1,  120);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.COMMENT + 1,          250);
-  sheet.setColumnWidth(CALL_LOG_COLUMN.DATE + 1,             110);
-
-  // Compress reserved columns (hide visual gaps)
-  sheet.setColumnWidth(3,  1); // Column C (2-indexed as 3)
-  sheet.setColumnWidth(5,  1); // Column E (4-indexed as 5)
-  sheet.setColumnWidth(10, 1); // Column J (9-indexed as 10)
-  sheet.setColumnWidth(11, 1); // Column K (10-indexed as 11)
-  sheet.setColumnWidth(12, 1); // Column L (11-indexed as 12)
-  sheet.setColumnWidth(13, 1); // Column M (12-indexed as 13)
+  // Set column widths
+  sheet.setColumnWidth(CALL_LOG_COLUMN.DATE + 1,        110);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.EMPLOYEE_ID + 1, 120);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.ENTRY_JSON + 1,  600);
+  sheet.setColumnWidth(CALL_LOG_COLUMN.SENT + 1,        150);
 }
 
 /**
- * Returns the canonical sheet name for the Call Log containing the given date.
- * Format: "Call Log MM-DD-YYYY" where the date is the Monday of the week.
- *
- * @param {Date} date
- * @returns {string} e.g. "Call Log 04-21-2026"
+ * Purges absence log entries older than CALL_LOG_RETENTION_DAYS.
+ * Called by a monthly time-based trigger.
+ * Runs as a batched delete operation (deletes from bottom to avoid shifting rows mid-operation).
  */
-function getCallLogSheetName_(date) {
-  const monday = getMondayOfWeek_(date);
-  const timeZone = Session.getScriptTimeZone();
-  return 'Call Log ' + Utilities.formatDate(monday, timeZone, 'MM-dd-yyyy');
+function purgeExpiredCallLogEntries_() {
+  if (CALL_LOG_RETENTION_DAYS <= 0) {
+    console.log('callLog: Retention is disabled (CALL_LOG_RETENTION_DAYS <= 0). Skipping purge.');
+    return;
+  }
+
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = workbook.getSheetByName(CALL_LOG_SHEET_NAME);
+
+  if (!sheet) {
+    console.log('callLog: Call_Log sheet does not exist yet. Nothing to purge.');
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < CALL_LOG_DATA_START_ROW) {
+    console.log('callLog: Call_Log sheet is empty. Nothing to purge.');
+    return;
+  }
+
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() - CALL_LOG_RETENTION_DAYS * 86400000);
+
+  const numRows = lastRow - CALL_LOG_DATA_START_ROW + 1;
+  const data = sheet.getRange(CALL_LOG_DATA_START_ROW, 1, numRows, 1).getValues();
+
+  const rowsToDelete = [];
+  data.forEach((row, index) => {
+    const dateCell = row[0];
+    const date = coerceCallLogDate_(dateCell);
+    if (date && date < cutoffDate) {
+      rowsToDelete.push(CALL_LOG_DATA_START_ROW + index);
+    }
+  });
+
+  // Delete from bottom to top to avoid shifting issues
+  rowsToDelete.reverse();
+  rowsToDelete.forEach(rowNum => {
+    sheet.deleteRow(rowNum);
+  });
+
+  if (rowsToDelete.length > 0) {
+    console.log(`callLog: Purged ${rowsToDelete.length} expired entries from Call_Log.`);
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Internal Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads all rows from the Call_Log sheet and returns parsed CallLogEntry objects.
+ * Used by all query functions to avoid duplicating sheet reads.
+ *
+ * @returns {Array<CallLogEntry>}
+ */
+function readAllCallLogEntries_() {
+  const workbook = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = workbook.getSheetByName(CALL_LOG_SHEET_NAME);
+
+  if (!sheet) return [];
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < CALL_LOG_DATA_START_ROW) return [];
+
+  const numRows = lastRow - CALL_LOG_DATA_START_ROW + 1;
+  const data = sheet.getRange(CALL_LOG_DATA_START_ROW, 1, numRows, 4).getValues();
+
+  return data
+    .map((row, offset) => parseCallLogRow_(row, CALL_LOG_DATA_START_ROW + offset))
+    .filter(entry => entry !== null);
+}
+
+/**
+ * Parses a 4-column row from the Call_Log sheet into a CallLogEntry object.
+ * Returns null if the row is invalid or missing date/entry data.
+ *
+ * @typedef {{
+ *   name:             string,
+ *   employeeId:       string,
+ *   isCallout:        boolean,
+ *   isFmla:           boolean,
+ *   isNoShow:         boolean,
+ *   department:       string,
+ *   time:             string,
+ *   manager:          string,
+ *   scheduledShift:   string,
+ *   comment:          string,
+ *   date:             Date,
+ *   sheetName:        string,
+ *   rowNumber:        number,
+ * }} CallLogEntry
+ *
+ * @param {any[]} row — 4-column array from Call_Log sheet
+ * @param {number} rowNumber — 1-indexed row number
+ * @returns {CallLogEntry|null}
+ */
+function parseCallLogRow_(row, rowNumber = 0) {
+  const dateCell = row[CALL_LOG_COLUMN.DATE];
+  const employeeId = String(row[CALL_LOG_COLUMN.EMPLOYEE_ID] || '').trim();
+  const entryJsonStr = String(row[CALL_LOG_COLUMN.ENTRY_JSON] || '').trim();
+
+  const date = coerceCallLogDate_(dateCell);
+  if (!date) return null;
+
+  let entryData = {};
+  if (entryJsonStr) {
+    try {
+      entryData = JSON.parse(entryJsonStr);
+    } catch (e) {
+      console.warn(`callLog: Failed to parse entry JSON at row ${rowNumber}: ${e.message}`);
+      return null;
+    }
+  }
+
+  return {
+    name:             entryData.name             || '',
+    employeeId,
+    isCallout:        !!entryData.isCallout,
+    isFmla:           !!entryData.isFmla,
+    isNoShow:         !!entryData.isNoShow,
+    isLate:           !!entryData.isLate,
+    department:       entryData.department      || '',
+    time:             entryData.time            || '',
+    manager:          entryData.manager         || '',
+    scheduledShift:   entryData.scheduledShift  || '',
+    comment:          entryData.comment         || '',
+    date,
+    sheetName:        CALL_LOG_SHEET_NAME,
+    rowNumber,
+  };
+}
+
+/**
+ * Normalizes a Call Log date cell value to a JavaScript Date, or null.
+ * Handles GAS Date objects, Sheets serial numbers, and ISO strings.
+ *
+ * @param {any} cellValue
+ * @returns {Date|null}
+ */
+function coerceCallLogDate_(cellValue) {
+  if (!cellValue) return null;
+  if (cellValue instanceof Date) return cellValue;
+  if (typeof cellValue === 'number') {
+    // Sheets date serial → JS Date
+    return new Date((cellValue - SHEETS_EPOCH_OFFSET) * 86400000);
+  }
+  const parsed = new Date(cellValue);
+  return isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /**
@@ -316,182 +469,63 @@ function getMondayOfWeek_(date) {
 
 
 // ---------------------------------------------------------------------------
-// Row Parsing
-// ---------------------------------------------------------------------------
-
-/**
- * @typedef {{
- *   name:             string,
- *   employeeId:       string,
- *   isCallout:        boolean,
- *   isFmla:           boolean,
- *   isNoShow:         boolean,
- *   department:       string,
- *   time:             string,
- *   manager:          string,
- *   scheduledShift:   string,
- *   comment:          string,
- *   dateRaw:          any,
- *   sheetName:        string,
- *   rowNumber:        number,
- * }} CallLogEntry
- */
-
-/**
- * Converts a raw getValues() row array into a CallLogEntry object.
- *
- * @param {any[]}  row
- * @param {string} sheetName
- * @param {number} rowNumber — 1-indexed sheet row number
- * @returns {CallLogEntry}
- */
-function rowToCallLogEntry_(row, sheetName, rowNumber) {
-  return {
-    name:             String(row[CALL_LOG_COLUMN.NAME]             || '').trim(),
-    employeeId:       String(row[CALL_LOG_COLUMN.EMPLOYEE_ID]      || '').trim(),
-    isCallout:        coerceBool_(row[CALL_LOG_COLUMN.IS_CALLOUT]),
-    isFmla:           coerceBool_(row[CALL_LOG_COLUMN.IS_FMLA]),
-    isNoShow:         coerceBool_(row[CALL_LOG_COLUMN.IS_NOSHOW]),
-    department:       String(row[CALL_LOG_COLUMN.DEPARTMENT]       || '').trim(),
-    time:             formatCallLogTime_(row[CALL_LOG_COLUMN.TIME]),
-    manager:          String(row[CALL_LOG_COLUMN.MANAGER]          || '').trim(),
-    scheduledShift:   String(row[CALL_LOG_COLUMN.SCHEDULED_SHIFT]  || '').trim(),
-    comment:          String(row[CALL_LOG_COLUMN.COMMENT]          || '').trim(),
-    dateRaw:          row[CALL_LOG_COLUMN.DATE],
-    sheetName,
-    rowNumber,
-  };
-}
-
-/**
- * Normalizes a Call Log date cell value to a JavaScript Date, or null.
- * Handles GAS Date objects, Sheets serial numbers, and ISO strings.
- *
- * @param {any} cellValue
- * @returns {Date|null}
- */
-function coerceCallLogDate_(cellValue) {
-  if (!cellValue) return null;
-  if (cellValue instanceof Date) return cellValue;
-  if (typeof cellValue === 'number') {
-    // Sheets date serial → JS Date
-    return new Date((cellValue - SHEETS_EPOCH_OFFSET) * 86400000); // config.js
-  }
-  const parsed = new Date(cellValue);
-  return isNaN(parsed.getTime()) ? null : parsed;
-}
-
-/**
- * Normalizes a checkbox cell value to a boolean.
- *
- * @param {any} cellValue
- * @returns {boolean}
- */
-function coerceBool_(cellValue) {
-  if (typeof cellValue === 'boolean') return cellValue;
-  if (typeof cellValue === 'string')  return cellValue.toUpperCase() === 'TRUE';
-  if (typeof cellValue === 'number')  return cellValue !== 0;
-  return false;
-}
-
-/**
- * Formats a GAS time value (decimal fraction of a day) to "HH:MM", or returns
- * the value as-is if it is already a string.
- *
- * @param {any} cellValue
- * @returns {string}
- */
-function formatCallLogTime_(cellValue) {
-  if (!cellValue && cellValue !== 0) return '';
-  if (typeof cellValue === 'string') return cellValue;
-  if (cellValue instanceof Date) {
-    const h = String(cellValue.getHours()).padStart(2, '0');
-    const m = String(cellValue.getMinutes()).padStart(2, '0');
-    return `${h}:${m}`;
-  }
-  // GAS time serial (fraction of a day)
-  if (typeof cellValue === 'number') {
-    const totalMinutes = Math.round(cellValue * 24 * 60);
-    const h = String(Math.floor(totalMinutes / 60) % 24).padStart(2, '0');
-    const m = String(totalMinutes % 60).padStart(2, '0');
-    return `${h}:${m}`;
-  }
-  return String(cellValue);
-}
-
-
-// ---------------------------------------------------------------------------
 // Auto-Send Notifications (Rolling 30-Minute Window)
 // ---------------------------------------------------------------------------
 
 /**
  * Auto-sends absence notifications for entries logged in the last 30 minutes.
- * Runs on a time-based trigger every 30 minutes. Marks sent entries with
- * "auto sent at HH:MM" in the SENT column.
- *
- * Called by: Time-based trigger (via setup.js)
- * Behavior: Finds all Call Log sheets for the current week, searches for
- * unsent entries within the rolling 30-minute window, and sends notifications.
+ * Runs on a time-based trigger every 30 minutes.
+ * Marks sent entries with "auto sent at HH:MM" in the SENT column.
  */
 function autoSendAbsenceNotifications_() {
   try {
-    const workbook = SpreadsheetApp.getActiveSpreadsheet();
-    const now = new Date();
-    const windowStart = new Date(now.getTime() - 30 * 60 * 1000); // 30 min ago
-    const timeZone = Session.getScriptTimeZone();
-
-    // Get all sheets and filter to Call Log sheets (named "Call Log MM-DD-YYYY")
-    const sheets = workbook.getSheets().filter(s => s.getName().match(/^Call Log/));
-
-    if (sheets.length === 0) {
-      console.log('callLog: No Call Log sheets found for autosend.');
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CALL_LOG_SHEET_NAME);
+    if (!sheet) {
+      console.log('callLog: Call_Log sheet not found. Skipping autosend.');
       return;
     }
 
-    sheets.forEach(sheet => {
-      const sheetName = sheet.getName();
-      const lastRow = sheet.getLastRow();
+    const now = new Date();
+    const windowStart = new Date(now.getTime() - 30 * 60 * 1000); // 30 min ago
+    const lastRow = sheet.getLastRow();
 
-      // Data starts at row 3 (row 1 = title, row 2 = headers)
-      if (lastRow < 3) return;
+    if (lastRow < CALL_LOG_DATA_START_ROW) return;
 
-      const totalCols = CALL_LOG_COLUMN.SENT + 1;
-      const values = sheet.getRange(3, 1, lastRow - 2, totalCols).getValues();
+    const numRows = lastRow - CALL_LOG_DATA_START_ROW + 1;
+    const values = sheet.getRange(CALL_LOG_DATA_START_ROW, 1, numRows, 4).getValues();
 
-      values.forEach((row, index) => {
-        const rowNumber = 3 + index;
-        const sentValue = String(row[CALL_LOG_COLUMN.SENT] || '').trim();
+    values.forEach((row, index) => {
+      const rowNumber = CALL_LOG_DATA_START_ROW + index;
+      const sentValue = String(row[CALL_LOG_COLUMN.SENT] || '').trim();
 
-        // Skip if already sent
-        if (sentValue) return;
+      // Skip if already sent
+      if (sentValue) return;
 
-        // Check if it's an absence entry
-        const isCallout = coerceBool_(row[CALL_LOG_COLUMN.IS_CALLOUT]);
-        const isFmla = coerceBool_(row[CALL_LOG_COLUMN.IS_FMLA]);
-        const isNoShow = coerceBool_(row[CALL_LOG_COLUMN.IS_NOSHOW]);
-        if (!isCallout && !isFmla && !isNoShow) return;
+      // Parse the entry
+      const entry = parseCallLogRow_(row, rowNumber);
+      if (!entry) return;
 
-        // Parse the time called
-        const timeValue = row[CALL_LOG_COLUMN.TIME];
-        const timeStr = formatCallLogTime_(timeValue);
-        if (!timeStr) return;
+      // Skip if not an absence entry
+      if (!entry.isCallout && !entry.isFmla && !entry.isNoShow) return;
 
-        // Parse HH:MM and create a time for today
-        const [hours, mins] = timeStr.split(':').map(Number);
-        const entryTime = new Date(now);
-        entryTime.setHours(hours, mins, 0, 0);
+      // Skip if no time recorded
+      if (!entry.time) return;
 
-        // Check if entry is within the 30-minute window
-        if (entryTime < windowStart || entryTime > now) return;
+      // Parse HH:MM and create a time for today
+      const [hours, mins] = entry.time.split(':').map(Number);
+      const entryTime = new Date(now);
+      entryTime.setHours(hours, mins, 0, 0);
 
-        // Send notification and mark as auto-sent
-        try {
-          sendAbsenceNotification_(sheetName, rowNumber, true);
-          console.log(`callLog: Auto-sent notification for row ${rowNumber} in "${sheetName}"`);
-        } catch (error) {
-          console.error(`callLog: Failed to auto-send row ${rowNumber} in "${sheetName}" — ${error.message}`);
-        }
-      });
+      // Check if entry is within the 30-minute window
+      if (entryTime < windowStart || entryTime > now) return;
+
+      // Send notification and mark as auto-sent
+      try {
+        sendAbsenceNotification_(CALL_LOG_SHEET_NAME, rowNumber, true);
+        console.log(`callLog: Auto-sent notification for row ${rowNumber}`);
+      } catch (error) {
+        console.error(`callLog: Failed to auto-send row ${rowNumber} — ${error.message}`);
+      }
     });
   } catch (error) {
     console.error(`callLog: autoSendAbsenceNotifications failed — ${error.message}`);

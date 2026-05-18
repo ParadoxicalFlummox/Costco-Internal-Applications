@@ -1,7 +1,7 @@
 <script>
   /* ============================================================
      javascript.html — COMET Frontend JavaScript
-     VERSION: 0.7.4
+     VERSION: 0.7.7
 
      Loaded via <?!= include('javascript') ?> at the bottom of
      index.html. All modules are plain-object namespaces; no
@@ -79,25 +79,23 @@
 
       setupModalButtons();
 
-      // Nav link routing
-      document.querySelectorAll('.nav-link[data-view]').forEach(function (link) {
+      // Nav link routing — scoped to the top navbar only (a tags), not sub-view tabs (buttons)
+      document.querySelectorAll('.navbar-nav .nav-link[data-view]').forEach(function (link) {
         link.addEventListener('click', function (e) {
           e.preventDefault();
           var viewName = link.dataset.view;
 
           // --- Cleanup outgoing view ---
-          // Close any open modals
           document.querySelectorAll('.modal.show').forEach(function (m) {
             closeModal(m.id);
           });
-          // Clear schedule grid so it doesn't linger when returning
           var scheduleContainer = document.getElementById('scheduleTableContainer');
           if (scheduleContainer) {
             scheduleContainer.innerHTML = '<div class="p-3 text-comet-muted small">Select a department and week, then click Generate.</div>';
           }
 
           // --- Switch view ---
-          document.querySelectorAll('.nav-link[data-view]').forEach(function (l) {
+          document.querySelectorAll('.navbar-nav .nav-link[data-view]').forEach(function (l) {
             l.classList.remove('active');
           });
           link.classList.add('active');
@@ -1031,34 +1029,152 @@
   // ------------------------------------------------------------
 
   var Absences = (function () {
-    var _employeeMap = {}; // Maps employee name → {id, department, shift}
+    var _employeeMap = {};
+    var _activeView = 'day'; // 'day' | 'week' | 'month'
+    var _isSearching = false;
+    var _searchDebounceTimer = null;
 
     function onShow() {
-      loadEntriesForDate(document.getElementById('absenceDate').value);
-      document.getElementById('absenceDate').onchange = function () {
-        loadEntriesForDate(this.value);
-      };
-      document.getElementById('btnNewAbsence').onclick = function () {
-        clearAbsenceForm();
-        openModal('absenceModal');
-      };
-      document.getElementById('btnSaveAbsence').onclick = handleSaveAbsence;
-      document.getElementById('absenceName').oninput = handleEmployeeNameChange;
+      var today = new Date().toISOString().slice(0, 10);
+      document.getElementById('absenceDate').value = today;
+      document.getElementById('absenceWeekDate').value = getMonday(today);
+      document.getElementById('absenceMonthDate').value = today.slice(0, 7);
 
+      switchView_('day');
+
+      // Tab buttons
+      document.querySelectorAll('#absenceViewTabs [data-view]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          // Switching tabs clears an active search
+          document.getElementById('absenceSearch').value = '';
+          _isSearching = false;
+          switchView_(this.dataset.view);
+        });
+      });
+
+      // Day controls
+      document.getElementById('absenceDate').onchange = function () {
+        if (!_isSearching && _activeView === 'day') loadCurrentView_();
+      };
       document.getElementById('btnPrevDay').onclick = function () {
         var input = document.getElementById('absenceDate');
         var d = new Date(input.value + 'T00:00:00');
         d.setDate(d.getDate() - 1);
         input.value = d.toISOString().slice(0, 10);
-        loadEntriesForDate(input.value);
+        if (!_isSearching && _activeView === 'day') loadCurrentView_();
       };
       document.getElementById('btnNextDay').onclick = function () {
         var input = document.getElementById('absenceDate');
         var d = new Date(input.value + 'T00:00:00');
         d.setDate(d.getDate() + 1);
         input.value = d.toISOString().slice(0, 10);
-        loadEntriesForDate(input.value);
+        if (!_isSearching && _activeView === 'day') loadCurrentView_();
       };
+
+      // Week controls
+      document.getElementById('absenceWeekDate').onchange = function () {
+        if (!_isSearching && _activeView === 'week') loadCurrentView_();
+      };
+      document.getElementById('btnPrevWeek').onclick = function () {
+        var input = document.getElementById('absenceWeekDate');
+        var d = new Date(input.value + 'T00:00:00');
+        d.setDate(d.getDate() - 7);
+        input.value = d.toISOString().slice(0, 10);
+        if (!_isSearching && _activeView === 'week') loadCurrentView_();
+      };
+      document.getElementById('btnNextWeek').onclick = function () {
+        var input = document.getElementById('absenceWeekDate');
+        var d = new Date(input.value + 'T00:00:00');
+        d.setDate(d.getDate() + 7);
+        input.value = d.toISOString().slice(0, 10);
+        if (!_isSearching && _activeView === 'week') loadCurrentView_();
+      };
+
+      // Month controls
+      document.getElementById('absenceMonthDate').onchange = function () {
+        if (!_isSearching && _activeView === 'month') loadCurrentView_();
+      };
+      document.getElementById('btnPrevMonth').onclick = function () {
+        var input = document.getElementById('absenceMonthDate');
+        var parts = input.value.split('-').map(Number);
+        var year = parts[0], month = parts[1];
+        month--;
+        if (month === 0) { month = 12; year--; }
+        input.value = year + '-' + String(month).padStart(2, '0');
+        if (!_isSearching && _activeView === 'month') loadCurrentView_();
+      };
+      document.getElementById('btnNextMonth').onclick = function () {
+        var input = document.getElementById('absenceMonthDate');
+        var parts = input.value.split('-').map(Number);
+        var year = parts[0], month = parts[1];
+        month++;
+        if (month === 13) { month = 1; year++; }
+        input.value = year + '-' + String(month).padStart(2, '0');
+        if (!_isSearching && _activeView === 'month') loadCurrentView_();
+      };
+
+      // Search — overlays whatever tab is active; clearing reverts to tab view
+      document.getElementById('absenceSearch').oninput = function () {
+        clearTimeout(_searchDebounceTimer);
+        var query = this.value.trim();
+        if (query.length === 0) {
+          _isSearching = false;
+          loadCurrentView_();
+          return;
+        }
+        if (query.length < 2) {
+          _isSearching = true;
+          document.getElementById('absenceTableBody').innerHTML =
+            '<tr><td colspan="8" class="text-comet-muted small p-3">Type at least 2 characters…</td></tr>';
+          return;
+        }
+        _isSearching = true;
+        _searchDebounceTimer = setTimeout(function () {
+          loadSearchResults(query);
+        }, 300);
+      };
+
+      document.getElementById('btnNewAbsence').onclick = function () {
+        clearAbsenceForm();
+        openModal('absenceModal');
+      };
+      document.getElementById('btnSaveAbsence').onclick = handleSaveAbsence;
+      document.getElementById('absenceName').oninput = handleEmployeeNameChange;
+    }
+
+    function switchView_(view) {
+      _activeView = view;
+
+      document.querySelectorAll('#absenceViewTabs [data-view]').forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.view === view);
+        btn.setAttribute('aria-selected', btn.dataset.view === view ? 'true' : 'false');
+      });
+
+      // Outer wrappers are plain divs (no d-flex) so inline display wins over Bootstrap
+      document.getElementById('absenceDayControls').style.display = view === 'day' ? 'block' : 'none';
+      document.getElementById('absenceWeekControls').style.display = view === 'week' ? 'block' : 'none';
+      document.getElementById('absenceMonthControls').style.display = view === 'month' ? 'block' : 'none';
+
+      loadCurrentView_();
+    }
+
+    function loadCurrentView_() {
+      if (_isSearching) {
+        var query = document.getElementById('absenceSearch').value.trim();
+        if (query.length >= 2) loadSearchResults(query);
+        return;
+      }
+      switch (_activeView) {
+        case 'day':
+          loadEntriesForDate(document.getElementById('absenceDate').value);
+          break;
+        case 'week':
+          loadEntriesForWeek(document.getElementById('absenceWeekDate').value);
+          break;
+        case 'month':
+          loadEntriesForMonth(document.getElementById('absenceMonthDate').value + '-01');
+          break;
+      }
     }
 
     function handleEmployeeNameChange() {
@@ -1085,6 +1201,7 @@
       document.getElementById('absenceIsCallout').checked = false;
       document.getElementById('absenceIsFmla').checked = false;
       document.getElementById('absenceIsNoShow').checked = false;
+      document.getElementById('absenceIsLate').checked = false;
       document.getElementById('absenceComment').value = '';
     }
 
@@ -1095,31 +1212,98 @@
       });
     }
 
+    function loadEntriesForWeek(dateString) {
+      if (!dateString) return;
+      UI.callServer('getAbsenceLogForWeek', dateString, function (data) {
+        renderAbsenceTableGrouped(data.entries || []);
+      });
+    }
+
+    function loadEntriesForMonth(dateString) {
+      if (!dateString) return;
+      UI.callServer('getAbsenceLogForMonth', dateString, function (data) {
+        renderAbsenceTableGrouped(data.entries || []);
+      });
+    }
+
+    function loadSearchResults(query) {
+      if (query.length < 2) return;
+      UI.callServer('searchAbsenceLog', query, function (data) {
+        var entries = data.entries || [];
+        if (entries.length === 0) {
+          document.getElementById('absenceTableBody').innerHTML =
+            '<tr><td colspan="8" class="text-comet-muted small p-3">No results for "' + esc(query) + '".</td></tr>';
+          return;
+        }
+        renderAbsenceTableGrouped(entries);
+      });
+    }
+
     function renderAbsenceTable(entries) {
       var tbody = document.getElementById('absenceTableBody');
       if (entries.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="11" class="text-comet-muted small p-3">No entries.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-comet-muted small p-3">No entries for this date.</td></tr>';
         return;
       }
-      tbody.innerHTML = entries.map(function (e) {
-        var btnId = 'sendBtn_' + e.sheetName.replace(/\s+/g, '_') + '_' + e.rowNumber;
-        return '<tr>'
-          + '<td>' + esc(e.name) + '</td>'
-          + '<td>' + esc(e.department) + '</td>'
-          + '<td>' + esc(e.time) + '</td>'
-          + '<td>' + esc(e.manager || '') + '</td>'
-          + '<td>' + esc(e.scheduledShift || '') + '</td>'
-          + '<td class="text-center">' + (e.isCallout ? '&#10003;' : '') + '</td>'
-          + '<td class="text-center">' + (e.isFmla ? '&#10003;' : '') + '</td>'
-          + '<td class="text-center">' + (e.isNoShow ? '&#10003;' : '') + '</td>'
-          + '<td>' + esc(e.comment) + '</td>'
-          + '<td><button id="' + btnId + '" class="btn btn-outline-primary btn-sm" '
-          + 'data-sheet-name="' + esc(e.sheetName) + '" data-row-number="' + e.rowNumber + '">'
-          + 'Send</button></td>'
-          + '</tr>';
-      }).join('');
+      tbody.innerHTML = entries.map(buildAbsenceTableRow_).join('');
+      wireAbsenceSendButtons_();
+    }
 
-      tbody.querySelectorAll('button').forEach(function (btn) {
+    function renderAbsenceTableGrouped(entries) {
+      var tbody = document.getElementById('absenceTableBody');
+      if (entries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-comet-muted small p-3">No entries.</td></tr>';
+        return;
+      }
+
+      var groupedByDate = {};
+      entries.forEach(function (e) {
+        var dateKey = e.date ? e.date.slice(0, 10) : 'Unknown';
+        if (!groupedByDate[dateKey]) groupedByDate[dateKey] = [];
+        groupedByDate[dateKey].push(e);
+      });
+
+      var dateKeys = Object.keys(groupedByDate).sort().reverse();
+
+      var html = '';
+      dateKeys.forEach(function (dateKey) {
+        var dateLabel = dateKey === 'Unknown'
+          ? 'Unknown date'
+          : new Date(dateKey + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        html += '<tr style="background: #f0f4f8;">'
+          + '<td colspan="8" class="small fw-semibold py-1 px-3" style="color: #374151; border-top: 2px solid #dee2e6;">'
+          + esc(dateLabel) + '</td></tr>';
+        groupedByDate[dateKey].forEach(function (e) {
+          html += buildAbsenceTableRow_(e);
+        });
+      });
+      tbody.innerHTML = html;
+      wireAbsenceSendButtons_();
+    }
+
+    function buildAbsenceTableRow_(e) {
+      var btnId = 'sendBtn_' + e.sheetName.replace(/\s+/g, '_') + '_' + e.rowNumber;
+      var typeChips = '';
+      if (e.isCallout) typeChips += '<span class="absence-chip absence-chip-callout">Call-Out</span>';
+      if (e.isFmla) typeChips += '<span class="absence-chip absence-chip-fmla">FMLA</span>';
+      if (e.isNoShow) typeChips += '<span class="absence-chip absence-chip-noshow">No Show</span>';
+      if (e.isLate) typeChips += '<span class="absence-chip absence-chip-late">Arriving Late</span>';
+      return '<tr>'
+        + '<td>' + esc(e.name) + '</td>'
+        + '<td>' + esc(e.department) + '</td>'
+        + '<td>' + esc(e.time) + '</td>'
+        + '<td>' + esc(e.manager || '') + '</td>'
+        + '<td>' + esc(e.scheduledShift || '') + '</td>'
+        + '<td>' + (typeChips || '<span class="text-muted small">—</span>') + '</td>'
+        + '<td>' + esc(e.comment) + '</td>'
+        + '<td><button id="' + btnId + '" class="btn btn-outline-primary btn-sm" '
+        + 'data-sheet-name="' + esc(e.sheetName) + '" data-row-number="' + e.rowNumber + '">'
+        + 'Send</button></td>'
+        + '</tr>';
+    }
+
+    function wireAbsenceSendButtons_() {
+      document.getElementById('absenceTableBody').querySelectorAll('button').forEach(function (btn) {
         btn.addEventListener('click', function (event) {
           sendRow(this.dataset.sheetName, parseInt(this.dataset.rowNumber, 10));
         });
@@ -1137,6 +1321,7 @@
         isCallout: document.getElementById('absenceIsCallout').checked,
         isFmla: document.getElementById('absenceIsFmla').checked,
         isNoShow: document.getElementById('absenceIsNoShow').checked,
+        isLate: document.getElementById('absenceIsLate').checked,
         comment: document.getElementById('absenceComment').value.trim(),
       };
       if (!data.name) { UI.showToast('Employee name is required.', 'error'); return; }
@@ -1144,9 +1329,17 @@
       UI.callServer('logAbsenceEntry', data, function () {
         closeModal('absenceModal');
         clearAbsenceForm();
-        loadEntriesForDate(document.getElementById('absenceDate').value);
+        loadCurrentView_();
         UI.showToast('Entry saved.', 'success');
       });
+    }
+
+    function getMonday(dateString) {
+      var d = new Date(dateString + 'T00:00:00');
+      var day = d.getDay();
+      var diff = day === 0 ? -6 : 1 - day;
+      d.setDate(d.getDate() + diff);
+      return d.toISOString().slice(0, 10);
     }
 
     function sendRow(sheetName, rowNumber) {
@@ -1422,13 +1615,13 @@
         pendingBody.addEventListener('click', function (event) {
           var btn = event.target.closest('.cn-action-btn');
           if (!btn) return;
-          var cnKey      = btn.getAttribute('data-cn-key');
+          var cnKey = btn.getAttribute('data-cn-key');
           var employeeId = btn.getAttribute('data-employee-id');
           if (!cnKey || !employeeId) return;
 
           var isApprove = btn.classList.contains('cn-approve-btn');
-          var action    = isApprove ? 'approveCN' : 'rejectCN';
-          var label     = isApprove ? 'Approving' : 'Rejecting';
+          var action = isApprove ? 'approveCN' : 'rejectCN';
+          var label = isApprove ? 'Approving' : 'Rejecting';
 
           btn.disabled = true;
           var siblingBtn = btn.closest('td').querySelector(isApprove ? '.cn-reject-btn' : '.cn-approve-btn');
@@ -1509,14 +1702,14 @@
     }
 
     function applyInfractionFilter() {
-      var tbody         = document.getElementById('cnTableBody');
-      var pendingBody   = document.getElementById('cnPendingBody');
+      var tbody = document.getElementById('cnTableBody');
+      var pendingBody = document.getElementById('cnPendingBody');
       var pendingSection = document.getElementById('cnPendingSection');
-      var pendingBadge  = document.getElementById('cnPendingBadge');
+      var pendingBadge = document.getElementById('cnPendingBadge');
       if (!tbody) return;
 
       var searchInput = document.getElementById('infractionSearch');
-      var searchTerm  = (searchInput ? searchInput.value : '').toLowerCase().trim();
+      var searchTerm = (searchInput ? searchInput.value : '').toLowerCase().trim();
 
       var filteredCNs = _allCNs.filter(function (cn) {
         return cn.employeeName.toLowerCase().includes(searchTerm);
@@ -1524,7 +1717,7 @@
 
       // Split into pending (proposed) and active
       var proposedCNs = filteredCNs.filter(function (cn) { return cn.status === 'proposed'; });
-      var activeCNs   = filteredCNs.filter(function (cn) { return cn.status === 'active'; });
+      var activeCNs = filteredCNs.filter(function (cn) { return cn.status === 'active'; });
       console.log('applyInfractionFilter — _allCNs:', _allCNs.length, 'filtered:', filteredCNs.length, 'proposed:', proposedCNs.length, 'active:', activeCNs.length);
       proposedCNs.forEach(function (cn) {
         console.log('  proposed CN:', cn.employeeName, cn.status);
@@ -1532,7 +1725,7 @@
 
       // --- Pending section ---
       if (pendingSection) pendingSection.style.display = proposedCNs.length ? '' : 'none';
-      if (pendingBadge)   pendingBadge.textContent = proposedCNs.length;
+      if (pendingBadge) pendingBadge.textContent = proposedCNs.length;
 
       if (pendingBody) {
         if (proposedCNs.length === 0) {
@@ -1541,8 +1734,8 @@
           proposedCNs.sort(function (a, b) { return a.employeeName.localeCompare(b.employeeName); });
           var pendingHtml = '';
           proposedCNs.forEach(function (cn) {
-            var cnKeyAttr  = 'data-cn-key="' + esc(cn.cnKey) + '"';
-            var empIdAttr  = 'data-employee-id="' + esc(cn.employeeId) + '"';
+            var cnKeyAttr = 'data-cn-key="' + esc(cn.cnKey) + '"';
+            var empIdAttr = 'data-employee-id="' + esc(cn.employeeId) + '"';
             pendingHtml += '<tr>'
               + '<td class="small fw-semibold">' + esc(cn.employeeName) + '</td>'
               + '<td><span class="badge bg-secondary">' + esc(cn.rule) + '</span></td>'
@@ -1584,10 +1777,10 @@
       Object.keys(groupedByEmployee).sort(function (a, b) {
         return groupedByEmployee[a].employeeName.localeCompare(groupedByEmployee[b].employeeName);
       }).forEach(function (groupKey) {
-        var group        = groupedByEmployee[groupKey];
-        var employeeId   = group.employeeId;
+        var group = groupedByEmployee[groupKey];
+        var employeeId = group.employeeId;
         var employeeName = group.employeeName;
-        var infractions  = group.cns;
+        var infractions = group.cns;
 
         html += '<tr class="cn-group-header bg-light">'
           + '<td colspan="6" class="fw-semibold ps-3">'
@@ -1626,9 +1819,9 @@
       // Wire up expired-CNs toggle buttons
       tbody.querySelectorAll('.cn-expired-toggle').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          var employeeId   = btn.getAttribute('data-employee-id');
-          var expanded     = btn.getAttribute('data-expanded') === 'true';
-          var container    = document.getElementById('cn-expired-' + employeeId);
+          var employeeId = btn.getAttribute('data-employee-id');
+          var expanded = btn.getAttribute('data-expanded') === 'true';
+          var container = document.getElementById('cn-expired-' + employeeId);
           if (!container) return;
 
           if (expanded) {
@@ -2141,6 +2334,7 @@
     var _dirtyState = {
       shifts: false,
       roles: false,
+      schedulePrefs: false,
       engineOptions: false,
       heatmap: false
     };
@@ -2162,10 +2356,9 @@
     // Saturday/Sunday typically close earlier; blocks starting at or after this hour are "Closed".
     var HEATMAP_CLOSING_HOURS_DEFAULT = { weekday: 21, saturday: 19, sunday: 18 };
 
-    // Representative door-count values per level. These are fed into the schedule engine
-    // (which classifies using low=100, high=300 thresholds) so Low stays below 100,
-    // Moderate between 100–300, High above 300.
-    var HEATMAP_LEVEL_VALUES = { Low: 50, Moderate: 200, High: 350 };
+    // Default thresholds (member door counts) that separate Low/Moderate/High levels.
+    // Must match HEATMAP_DEFAULTS.thresholds in config.js.
+    var HEATMAP_THRESHOLDS_DEFAULT = { low: 100, high: 300 };
 
     // Sensible defaults matching typical Costco traffic patterns (busier weekends, Fri evening rush).
     // Saturday/Sunday b6 values don't matter — those blocks are rendered as Closed by default.
@@ -2356,6 +2549,21 @@
         };
       }
 
+      // Save Schedule Preferences button
+      var btnSaveSchedulePrefs = document.getElementById('btnSaveSchedulePrefs');
+      if (btnSaveSchedulePrefs) {
+        btnSaveSchedulePrefs.onclick = function () {
+          if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
+          var updates = collectSchedulePrefsFromDom_();
+          if (updates.length === 0) { UI.showToast('No changes to save.', 'info'); return; }
+          UI.callServer('batchSaveSchedulePrefs', [updates], function () {
+            _dirtyState.schedulePrefs = false;
+            _updateDirtyIndicators();
+            UI.showToast('Schedule preferences saved.', 'success');
+          });
+        };
+      }
+
       // Enable/disable traffic heatmap toggle
       var heatmapEnabledCheckbox = document.getElementById('heatmapEnabled');
       if (heatmapEnabledCheckbox) {
@@ -2393,6 +2601,7 @@
             trafficBlocks: JSON.parse(JSON.stringify(HEATMAP_BLOCKS_DEFAULT)),
             levelNames: ['Low', 'Moderate', 'High'],
             closingHours: JSON.parse(JSON.stringify(HEATMAP_CLOSING_HOURS_DEFAULT)),
+            thresholds: JSON.parse(JSON.stringify(HEATMAP_THRESHOLDS_DEFAULT)),
             pool: { schedulingCounts: { Low: 1, Moderate: 3, High: 5 } },
           };
           renderHeatmapGrid_(_heatmapConfig);
@@ -2472,6 +2681,7 @@
             var sectionId = body.id;
             if (sectionId.includes('shifts')) _dirtyState.shifts = true;
             else if (sectionId.includes('roles')) _dirtyState.roles = true;
+            else if (sectionId.includes('schedule-prefs')) _dirtyState.schedulePrefs = true;
             else if (sectionId.includes('engine')) _dirtyState.engineOptions = true;
             else if (sectionId.includes('heatmap')) _dirtyState.heatmap = true;
             _updateDirtyIndicators();
@@ -2491,6 +2701,7 @@
         var isDirty = false;
         if (sectionId.includes('shifts')) isDirty = _dirtyState.shifts;
         else if (sectionId.includes('roles')) isDirty = _dirtyState.roles;
+        else if (sectionId.includes('schedule-prefs')) isDirty = _dirtyState.schedulePrefs;
         else if (sectionId.includes('engine')) isDirty = _dirtyState.engineOptions;
         else if (sectionId.includes('heatmap')) isDirty = _dirtyState.heatmap;
         span.textContent = isDirty ? text + ' •' : text;
@@ -2503,7 +2714,7 @@
         if (accordionContainer) accordionContainer.style.display = '';
 
         renderDeptSettings_(data);
-        _dirtyState = { shifts: false, roles: false, engineOptions: false, heatmap: false };
+        _dirtyState = { shifts: false, roles: false, schedulePrefs: false, engineOptions: false, heatmap: false };
         _updateDirtyIndicators();
       });
 
@@ -2544,11 +2755,13 @@
 
       // Load roles data
       loadRolesData_(data);
+
+      // Load schedule preferences (employee day-off and shift assignments)
+      loadSchedulePrefsData_(data);
     }
 
     function loadRolesData_(deptData) {
       var roles = deptData.roles || [];
-      var employeeRoles = deptData.employeeRoles || {};
 
       renderRoleDefinitions_(roles);
 
@@ -2562,19 +2775,11 @@
             return emp.department.toLowerCase().trim() === normalizedDept;
           });
 
-          // Apply saved employee roles (backwards-compatible: string → {primary, qualified})
+          // Column H and I (emp.role, emp.qualifiedRoles) are the single source of truth; Settings JSON is fallback
+          // and the source for qualified roles (which have no dedicated sheet column).
           deptEmployees.forEach(function (emp) {
-            var savedRole = employeeRoles[emp.employeeId];
-            if (typeof savedRole === 'string') {
-              emp.primaryRole = savedRole;
-              emp.qualifiedRoles = [];
-            } else if (savedRole && typeof savedRole === 'object') {
-              emp.primaryRole = savedRole.primary || '';
-              emp.qualifiedRoles = savedRole.qualified || [];
-            } else {
-              emp.primaryRole = emp.primaryRole || '';
-              emp.qualifiedRoles = [];
-            }
+            emp.primaryRole = emp.role || '';
+            emp.qualifiedRoles = emp.qualifiedRoles ? emp.qualifiedRoles.split(',').map(function (r) { return r.trim(); }).filter(Boolean) : [];
           });
 
           renderEmployeeRoleTable_(deptEmployees, roles);
@@ -2582,6 +2787,173 @@
       });
 
       renderRoleMinimumsCoverage_(deptData.roleMinimums || {}, roles);
+    }
+
+    function loadSchedulePrefsData_(deptData) {
+      var availableShifts = (deptData.shifts || []).map(function (s) { return s.name; }).filter(Boolean);
+      UI.callServer('getEmployeeList', undefined, function (empData) {
+        var empList = (empData && empData.data && empData.data.employees) || (empData && empData.employees);
+        if (!empList || !Array.isArray(empList)) return;
+        var normalizedDept = _currentDept.toLowerCase().trim();
+        var deptEmployees = empList.filter(function (emp) {
+          return emp.department.toLowerCase().trim() === normalizedDept;
+        });
+        deptEmployees.sort(function (a, b) { return (a.name || '').localeCompare(b.name || ''); });
+        renderEmployeeSchedulePrefTable_(deptEmployees, availableShifts);
+      });
+    }
+
+    var DAY_OPTIONS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+    function renderEmployeeSchedulePrefTable_(deptEmployees, availableShifts) {
+      var body = document.getElementById('schedulePrefsBody');
+      if (!body) return;
+      if (deptEmployees.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" class="text-muted small text-center py-3">No employees in this department</td></tr>';
+        return;
+      }
+
+      body.innerHTML = deptEmployees.map(function (emp) {
+        var qualified = emp.qualifiedShifts
+          ? emp.qualifiedShifts.split(',').map(function (s) { return s.trim(); }).filter(Boolean)
+          : [];
+
+        var dayOff1 = buildDaySelect_('day-off-one', emp.id, emp.dayOffPrefOne || '');
+        var dayOff2 = buildDaySelect_('day-off-two', emp.id, emp.dayOffPrefTwo || '');
+        var prefShift = buildShiftSelect_('pref-shift', emp.id, emp.preferredShift || '', availableShifts);
+
+        var qualifiedChips = qualified.map(function (shiftName) {
+          return buildShiftChip_(emp.id, shiftName);
+        }).join('');
+        var addQualifiedBtn = '<button type="button" class="btn btn-sm btn-outline-secondary btn-add-qual-shift" data-emp-id="' + esc(emp.id) + '">+ Add</button>';
+
+        return '<tr data-emp-id="' + esc(emp.id) + '">'
+          + '<td>' + esc(emp.name) + '</td>'
+          + '<td>' + dayOff1 + '</td>'
+          + '<td>' + dayOff2 + '</td>'
+          + '<td>' + prefShift + '</td>'
+          + '<td class="qualified-shifts-chips">' + qualifiedChips + addQualifiedBtn + '</td>'
+          + '</tr>';
+      }).join('');
+
+      body.onclick = function (e) {
+        var removeBtn = e.target.closest('.shift-chip-remove');
+        if (removeBtn) {
+          e.preventDefault();
+          removeBtn.closest('.shift-chip').remove();
+          _dirtyState.schedulePrefs = true;
+          _updateDirtyIndicators();
+          return;
+        }
+        var addBtn = e.target.closest('.btn-add-qual-shift');
+        if (addBtn) {
+          e.preventDefault();
+          showAddQualifiedShiftDropdown_(addBtn, availableShifts);
+        }
+      };
+    }
+
+    function buildDaySelect_(className, empId, selectedValue) {
+      var select = '<select class="form-select form-select-sm ' + className + '" data-emp-id="' + esc(empId) + '">';
+      DAY_OPTIONS.forEach(function (day) {
+        select += '<option value="' + esc(day) + '"' + (day === selectedValue ? ' selected' : '') + '>' + (day || '— none —') + '</option>';
+      });
+      return select + '</select>';
+    }
+
+    function buildShiftSelect_(className, empId, selectedValue, availableShifts) {
+      var select = '<select class="form-select form-select-sm ' + className + '" data-emp-id="' + esc(empId) + '">';
+      select += '<option value="">— none —</option>';
+      availableShifts.forEach(function (name) {
+        select += '<option value="' + esc(name) + '"' + (name === selectedValue ? ' selected' : '') + '>' + esc(name) + '</option>';
+      });
+      return select + '</select>';
+    }
+
+    function buildShiftChip_(empId, shiftName) {
+      return '<span class="shift-chip">'
+        + esc(shiftName)
+        + ' <button type="button" class="shift-chip-remove" data-emp-id="' + esc(empId) + '" data-shift="' + esc(shiftName) + '" aria-label="Remove ' + esc(shiftName) + '">✕</button>'
+        + '</span>';
+    }
+
+    function showAddQualifiedShiftDropdown_(btn, availableShifts) {
+      if (!btn || !btn.parentElement) return;
+      var empId = btn.dataset.empId;
+      var row = btn.closest('tr');
+
+      var prefSelect = row.querySelector('.pref-shift');
+      var usedShifts = prefSelect && prefSelect.value ? [prefSelect.value] : [];
+      row.querySelectorAll('.shift-chip-remove').forEach(function (chipBtn) {
+        usedShifts.push(chipBtn.dataset.shift);
+      });
+
+      var available = availableShifts.filter(function (name) {
+        return usedShifts.indexOf(name) === -1;
+      });
+
+      if (available.length === 0) {
+        UI.showToast('No additional shifts available.', 'info');
+        return;
+      }
+
+      var select = document.createElement('select');
+      select.className = 'form-select form-select-sm';
+      select.style.width = '130px';
+      select.style.display = 'inline-block';
+      available.forEach(function (name) {
+        var opt = document.createElement('option');
+        opt.value = opt.textContent = name;
+        select.appendChild(opt);
+      });
+
+      btn.replaceWith(select);
+      select.focus();
+
+      function commitSelection() {
+        var chosen = select.value;
+        var chipsCell = select.closest('.qualified-shifts-chips');
+        var newAddBtn = document.createElement('button');
+        newAddBtn.type = 'button';
+        newAddBtn.className = 'btn btn-sm btn-outline-secondary btn-add-qual-shift';
+        newAddBtn.dataset.empId = empId;
+        newAddBtn.textContent = '+ Add';
+        select.replaceWith(newAddBtn);
+        if (chosen) {
+          chipsCell.insertBefore(
+            document.createRange().createContextualFragment(buildShiftChip_(empId, chosen)),
+            newAddBtn
+          );
+          _dirtyState.schedulePrefs = true;
+          _updateDirtyIndicators();
+        }
+      }
+
+      select.onchange = commitSelection;
+      select.onblur = function () { setTimeout(commitSelection, 150); };
+    }
+
+    function collectSchedulePrefsFromDom_() {
+      var updates = [];
+      document.querySelectorAll('#schedulePrefsBody tr[data-emp-id]').forEach(function (tr) {
+        var empId = tr.dataset.empId;
+        if (!empId) return;
+        var dayOff1El = tr.querySelector('.day-off-one');
+        var dayOff2El = tr.querySelector('.day-off-two');
+        var prefShiftEl = tr.querySelector('.pref-shift');
+        var qualShifts = [];
+        tr.querySelectorAll('.shift-chip-remove').forEach(function (chipBtn) {
+          if (chipBtn.dataset.shift) qualShifts.push(chipBtn.dataset.shift);
+        });
+        updates.push({
+          id: empId,
+          dayOffPrefOne: dayOff1El ? dayOff1El.value : '',
+          dayOffPrefTwo: dayOff2El ? dayOff2El.value : '',
+          preferredShift: prefShiftEl ? prefShiftEl.value : '',
+          qualifiedShifts: qualShifts.join(', '),
+        });
+      });
+      return updates;
     }
 
     function renderRoleDefinitions_(roles) {
@@ -2622,14 +2994,14 @@
           }).join('');
 
         var qualifiedChips = (emp.qualifiedRoles || []).map(function (qRole) {
-          return buildRoleChip_(emp.employeeId, qRole);
+          return buildRoleChip_(emp.id, qRole);
         }).join('');
 
-        var addQualifiedBtn = '<button type="button" class="btn btn-sm btn-outline-secondary btn-add-qualified" data-emp-id="' + esc(emp.employeeId) + '">+ Add</button>';
+        var addQualifiedBtn = '<button type="button" class="btn btn-sm btn-outline-secondary btn-add-qualified" data-emp-id="' + esc(emp.id) + '">+ Add</button>';
 
         return '<tr>'
           + '<td>' + esc(emp.name) + '</td>'
-          + '<td><select class="form-select form-select-sm employee-primary-role" data-emp-id="' + esc(emp.employeeId) + '">' + roleOptions + '</select></td>'
+          + '<td><select class="form-select form-select-sm employee-primary-role" data-emp-id="' + esc(emp.id) + '">' + roleOptions + '</select></td>'
           + '<td class="qualified-roles-chips">' + qualifiedChips + addQualifiedBtn + '</td>'
           + '</tr>';
       }).join('');
@@ -2844,6 +3216,13 @@
       if (satEl) satEl.value = formatHourToTimeString_(closingHours.saturday || 18);
       if (sunEl) sunEl.value = formatHourToTimeString_(closingHours.sunday || 18);
 
+      // Door count thresholds
+      var thresholds = config.thresholds || HEATMAP_THRESHOLDS_DEFAULT;
+      var lowThreshEl = document.getElementById('heatmapLowThreshold');
+      var highThreshEl = document.getElementById('heatmapHighThreshold');
+      if (lowThreshEl) lowThreshEl.value = thresholds.low || HEATMAP_THRESHOLDS_DEFAULT.low;
+      if (highThreshEl) highThreshEl.value = thresholds.high || HEATMAP_THRESHOLDS_DEFAULT.high;
+
       // Pool counts and labels
       var counts = (config.pool && config.pool.schedulingCounts) || { Low: 1, Moderate: 3, High: 5 };
       var poolLow = document.getElementById('poolCountLow');
@@ -2925,12 +3304,39 @@
       });
     }
 
+    /** Reads door count threshold inputs from DOM, returns { low, high } integers. */
+    function getThresholdsFromDom_() {
+      var lowEl = document.getElementById('heatmapLowThreshold');
+      var highEl = document.getElementById('heatmapHighThreshold');
+      var low = parseInt(lowEl && lowEl.value, 10) || HEATMAP_THRESHOLDS_DEFAULT.low;
+      var high = parseInt(highEl && highEl.value, 10) || HEATMAP_THRESHOLDS_DEFAULT.high;
+      // Enforce low < high
+      if (low >= high) high = low + 1;
+      return { low: low, high: high };
+    }
+
     /** Reads closing hour time inputs from DOM, returns { weekday, saturday, sunday } integers. */
     function getClosingHoursFromDom_() {
       return {
         weekday: parseTimeStringToHour_(document.getElementById('closeHourWeekday')) || 21,
         saturday: parseTimeStringToHour_(document.getElementById('closeHourSaturday')) || 18,
         sunday: parseTimeStringToHour_(document.getElementById('closeHourSunday')) || 18,
+      };
+    }
+
+    /**
+     * Derives representative door-count values for each level from threshold boundaries.
+     * Low = midpoint of 0 and lowThreshold; Moderate = midpoint of both thresholds;
+     * High = 50% above highThreshold (so it classifies unambiguously above the boundary).
+     * @param {number} lowThreshold
+     * @param {number} highThreshold
+     * @returns {{ Low: number, Moderate: number, High: number }}
+     */
+    function computeLevelValues_(lowThreshold, highThreshold) {
+      return {
+        Low: Math.round(lowThreshold * 0.5),
+        Moderate: Math.round((lowThreshold + highThreshold) / 2),
+        High: Math.round(highThreshold * 1.5),
       };
     }
 
@@ -2967,6 +3373,8 @@
       var enableCheckbox = document.getElementById('heatmapEnabled');
       var levelNames = getLevelNamesFromDom_();
       var closingHours = getClosingHoursFromDom_();
+      var thresholds = getThresholdsFromDom_();
+      var levelValues = computeLevelValues_(thresholds.low, thresholds.high);
       var trafficBlocks = {};
       var trafficCurves = {};
 
@@ -2986,7 +3394,7 @@
         var closingHour = getClosingHourForDay_(day, closingHours);
         HEATMAP_BLOCK_DEFS.forEach(function (block) {
           if (block.startHour >= closingHour) return;
-          var value = HEATMAP_LEVEL_VALUES[dayBlocks[block.key] || 'Low'];
+          var value = levelValues[dayBlocks[block.key] || 'Low'];
           block.hours.forEach(function (hour) {
             if (hour < closingHour) curve[hour] = value;
           });
@@ -2996,7 +3404,7 @@
 
       return {
         enabled: enableCheckbox ? enableCheckbox.checked : false,
-        thresholds: { low: 100, high: 300 },
+        thresholds: thresholds,
         trafficBlocks: trafficBlocks,
         trafficCurves: trafficCurves,
         levelNames: levelNames,
@@ -3513,440 +3921,6 @@
     if (current && departments.indexOf(current) !== -1) sel.value = current;
   }
 
-  // ============================================================================
-  // Traffic Heatmap Configuration UI
-  // VERSION: 0.3.5
-  // ============================================================================
-
-  var _currentHeatmapConfig = null;
-  var _heatmapCanvasStates = {};  // { dayName: { isDragging: bool } }
-  var _dayNamesInOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  var _heatmapResizeListenerAdded = false;
-
-  // Canvas padding for heatmap traffic curve visualization
-  var HEATMAP_CANVAS_PADDING = {
-    left: 38,
-    top: 8,
-    bottom: 28,
-    right: 8
-  };
-
-  // Default 24-element traffic curves (hours 0-23). Values represent expected door count.
-  // Pattern: slow ramp from 4 AM, peak mid-morning, taper in late afternoon.
-  // Keep in sync with TRAFFIC_HEATMAP.defaultTrafficCurves in config.js.
-  var HEATMAP_CONFIG_DEFAULT = {
-    enabled: false,
-    thresholds: { low: 100, high: 300 },
-    trafficCurves: {
-      //           12a 1  2  3  4  5  6  7  8   9am  10   11  12p   1    2    3    4   5pm   6   7pm   8  9pm 10 11
-      Monday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
-      Tuesday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
-      Wednesday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
-      Thursday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
-      Friday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 80, 110, 140, 200, 155, 140, 200, 180, 250, 195, 205, 170, 0, 0, 0],
-      Saturday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 320, 330, 330, 320, 330, 320, 310, 200, 0, 0, 0, 0, 0],
-      Sunday: [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 310, 330, 325, 320, 320, 300, 250, 0, 0, 0, 0, 0, 0],
-    },
-    pool: {
-      schedulingCounts: { Low: 1, Moderate: 3, High: 5 },
-    },
-  };
-
-  function loadTrafficHeatmapConfig(deptName) {
-    UI.callServer('getTrafficHeatmapConfig', [deptName], function (config) {
-      _currentHeatmapConfig = config;
-      renderHeatmapConfig(config);
-    });
-  }
-
-  function renderHeatmapConfig(config) {
-    var enableCheckbox = document.getElementById('heatmapEnabled');
-    var controlsDiv = document.getElementById('heatmapConfigControls');
-    if (!enableCheckbox || !controlsDiv) {
-      console.error('heatmapEnabled or heatmapConfigControls not found');
-      return;
-    }
-
-    // Enable toggle
-    enableCheckbox.checked = config.enabled || false;
-    controlsDiv.style.display = enableCheckbox.checked ? '' : 'none';
-
-    // Thresholds
-    var thresholds = config.thresholds || { low: 100, high: 300 };
-    document.getElementById('heatmapLowThreshold').value = thresholds.low || 100;
-    document.getElementById('heatmapHighThreshold').value = thresholds.high || 300;
-
-    // Pool counts
-    var schedulingCounts = (config.pool && config.pool.schedulingCounts) || { Low: 1, Moderate: 3, High: 5 };
-    document.getElementById('poolCountLow').value = schedulingCounts.Low || 1;
-    document.getElementById('poolCountModerate').value = schedulingCounts.Moderate || 3;
-    document.getElementById('poolCountHigh').value = schedulingCounts.High || 5;
-
-    // Render canvas for each day
-    var canvasContainer = document.getElementById('heatmapCanvases');
-    canvasContainer.innerHTML = '';
-
-    _dayNamesInOrder.forEach(function (dayName) {
-      var curve = config.trafficCurves && config.trafficCurves[dayName];
-      // Ensure we have a 24-element array
-      if (!Array.isArray(curve) || curve.length !== 24) {
-        curve = (HEATMAP_CONFIG_DEFAULT.trafficCurves[dayName] || []).slice();
-        if (_currentHeatmapConfig && _currentHeatmapConfig.trafficCurves) {
-          _currentHeatmapConfig.trafficCurves[dayName] = curve;
-        }
-      }
-
-      var dayDiv = document.createElement('div');
-      dayDiv.style.display = 'flex';
-      dayDiv.style.flexDirection = 'column';
-
-      // Header row: day name + traffic level badge
-      var headerDiv = document.createElement('div');
-      headerDiv.style.display = 'flex';
-      headerDiv.style.alignItems = 'center';
-      headerDiv.style.gap = '0.5rem';
-      headerDiv.style.marginBottom = '2px';
-
-      var label = document.createElement('label');
-      label.className = 'small fw-semibold mb-0';
-      label.textContent = dayName;
-
-      var badge = document.createElement('span');
-      badge.id = 'heatmap_badge_' + dayName;
-      badge.className = 'badge rounded-pill';
-      badge.style.fontSize = '0.7rem';
-
-      headerDiv.appendChild(label);
-      headerDiv.appendChild(badge);
-
-      var canvas = document.createElement('canvas');
-      canvas.id = 'heatmap_canvas_' + dayName;
-      canvas.style.border = '1px solid #ddd';
-      canvas.style.borderRadius = '4px';
-      canvas.style.cursor = 'crosshair';
-      canvas.style.display = 'block';
-      canvas.style.width = '100%';
-      canvas.style.height = '160px';
-
-      dayDiv.appendChild(headerDiv);
-      dayDiv.appendChild(canvas);
-      canvasContainer.appendChild(dayDiv);
-
-      // Initialize canvas state
-      _heatmapCanvasStates[dayName] = { isDragging: false };
-
-      // Wire up mouse events for dragging
-      canvas.addEventListener('mousedown', function (e) {
-        _heatmapCanvasStates[dayName].isDragging = true;
-        handleHeatmapCanvasDrag(canvas, dayName, e);
-      });
-      canvas.addEventListener('mousemove', function (e) {
-        if (_heatmapCanvasStates[dayName].isDragging) handleHeatmapCanvasDrag(canvas, dayName, e);
-      });
-      canvas.addEventListener('mouseup', function () { _heatmapCanvasStates[dayName].isDragging = false; });
-      canvas.addEventListener('mouseleave', function () { _heatmapCanvasStates[dayName].isDragging = false; });
-
-      // Set canvas resolution after layout
-      requestAnimationFrame(function () {
-        resizeCanvas(canvas);
-        redrawHeatmapCanvas(canvas, dayName);
-      });
-    });
-
-    // Responsive resize — add listener only once
-    if (!_heatmapResizeListenerAdded) {
-      window.addEventListener('resize', function () {
-        _dayNamesInOrder.forEach(function (day) {
-          var canvas = document.getElementById('heatmap_canvas_' + day);
-          if (canvas) { resizeCanvas(canvas); redrawHeatmapCanvas(canvas, day); }
-        });
-      });
-      _heatmapResizeListenerAdded = true;
-    }
-  }
-
-  function resizeCanvas(canvas) {
-    var rect = canvas.getBoundingClientRect();
-    var dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(rect.width * dpr);
-    canvas.height = Math.floor(rect.height * dpr);
-    var ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-  }
-
-  function handleHeatmapCanvasDrag(canvas, dayName, event) {
-    if (!_currentHeatmapConfig) return;
-    var curve = _currentHeatmapConfig.trafficCurves && _currentHeatmapConfig.trafficCurves[dayName];
-    if (!curve) return;
-
-    var rect = canvas.getBoundingClientRect();
-    var mouseX = event.clientX - rect.left;
-    var mouseY = event.clientY - rect.top;
-
-    var leftPadding = HEATMAP_CANVAS_PADDING.left;
-    var topPadding = HEATMAP_CANVAS_PADDING.top;
-    var bottomPadding = HEATMAP_CANVAS_PADDING.bottom;
-    var rightPadding = HEATMAP_CANVAS_PADDING.right;
-
-    // Compute using CSS pixels (canvas is scaled by DPR but getBoundingClientRect returns CSS pixels)
-    var cssWidth = rect.width;
-    var cssHeight = rect.height;
-    var graphWidth = cssWidth - leftPadding - rightPadding;
-    var graphHeight = cssHeight - bottomPadding - topPadding;
-    var baselineY = cssHeight - bottomPadding;
-
-    // Allow dragging into the bottom padding so the user can reach 0 — relativeY is
-    // clamped to [0, graphHeight] below, so values below the baseline map cleanly to 0.
-    if (mouseX < leftPadding || mouseX > cssWidth - rightPadding ||
-      mouseY < topPadding || mouseY > cssHeight) return;
-
-    // Find nearest of 24 control points
-    var pointSpacing = graphWidth / 24;
-    var nearest = -1;
-    var nearestDist = pointSpacing * 0.7; // snap within 70% of spacing
-
-    for (var i = 0; i < 24; i++) {
-      var cpX = leftPadding + (i + 0.5) * pointSpacing;
-      var dist = Math.abs(mouseX - cpX);
-      if (dist < nearestDist) {
-        nearest = i;
-        nearestDist = dist;
-      }
-    }
-
-    if (nearest >= 0) {
-      var maxDoorCount = getHeatmapMaxDoorCount_();
-      var relativeY = Math.min(graphHeight, mouseY - topPadding);
-      var doorCount = Math.round((1.0 - (relativeY / graphHeight)) * maxDoorCount);
-      doorCount = Math.max(0, Math.min(maxDoorCount, doorCount));
-      curve[nearest] = doorCount;
-      redrawHeatmapCanvas(canvas, dayName);
-    }
-  }
-
-  function getHeatmapMaxDoorCount_() {
-    // Find the highest value across all curves so Y-axis scales consistently
-    if (!_currentHeatmapConfig || !_currentHeatmapConfig.trafficCurves) return 500;
-    var max = 100;
-    _dayNamesInOrder.forEach(function (day) {
-      var curve = _currentHeatmapConfig.trafficCurves[day];
-      if (Array.isArray(curve)) {
-        curve.forEach(function (v) { if (v > max) max = v; });
-      }
-    });
-    // Round up to next 100 for a clean axis
-    return Math.ceil(max / 100) * 100;
-  }
-
-  function redrawAllHeatmapCanvases() {
-    _dayNamesInOrder.forEach(function (dayName) {
-      var canvas = document.getElementById('heatmap_canvas_' + dayName);
-      if (canvas) redrawHeatmapCanvas(canvas, dayName);
-    });
-  }
-
-  function redrawHeatmapCanvas(canvas, dayName) {
-    if (!_currentHeatmapConfig) return;
-    var curve = _currentHeatmapConfig.trafficCurves && _currentHeatmapConfig.trafficCurves[dayName];
-    if (!curve || curve.length !== 24) return;
-
-    var ctx = canvas.getContext('2d');
-    // Use CSS pixels for all drawing (canvas is scaled via DPR in resizeCanvas)
-    var cssWidth = canvas.clientWidth || (canvas.width / (window.devicePixelRatio || 1));
-    var cssHeight = canvas.clientHeight || (canvas.height / (window.devicePixelRatio || 1));
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
-
-    var lowThreshold = (_currentHeatmapConfig.thresholds && _currentHeatmapConfig.thresholds.low) || 100;
-    var highThreshold = (_currentHeatmapConfig.thresholds && _currentHeatmapConfig.thresholds.high) || 300;
-    var maxDoorCount = getHeatmapMaxDoorCount_();
-
-    var leftPadding = HEATMAP_CANVAS_PADDING.left;
-    var topPadding = HEATMAP_CANVAS_PADDING.top;
-    var bottomPadding = HEATMAP_CANVAS_PADDING.bottom;
-    var rightPadding = HEATMAP_CANVAS_PADDING.right;
-    var graphWidth = cssWidth - leftPadding - rightPadding;
-    var graphHeight = cssHeight - bottomPadding - topPadding;
-    var pointSpacing = graphWidth / 24;
-    var baselineY = cssHeight - bottomPadding;
-
-    function doorCountToY(v) {
-      return baselineY - (v / maxDoorCount) * graphHeight;
-    }
-
-    // Build control points (one per hour 0-23, centered in each column)
-    var controlPoints = [];
-    for (var i = 0; i < 24; i++) {
-      controlPoints.push({
-        x: leftPadding + (i + 0.5) * pointSpacing,
-        y: doorCountToY(curve[i] || 0),
-        value: curve[i] || 0,
-      });
-    }
-
-    // Helper: Catmull-Rom interpolation
-    function catmullRom(p0, p1, p2, p3, t) {
-      var v0 = (p2 - p0) * 0.5;
-      var v1 = (p3 - p1) * 0.5;
-      var t2 = t * t, t3 = t2 * t;
-      return (2 * p1 - 2 * p2 + v0 + v1) * t3 + (-3 * p1 + 3 * p2 - 2 * v0 - v1) * t2 + v0 * t + p1;
-    }
-
-    // ===== Draw color zone bands (below low=green, mid=yellow, above high=red) =====
-    var lowY = doorCountToY(lowThreshold);
-    var highY = doorCountToY(highThreshold);
-
-    // Red zone (high traffic — above high threshold)
-    ctx.fillStyle = 'rgba(220, 53, 69, 0.07)';
-    ctx.fillRect(leftPadding, topPadding, graphWidth, Math.max(0, highY - topPadding));
-
-    // Yellow zone (moderate — between low and high)
-    ctx.fillStyle = 'rgba(255, 193, 7, 0.10)';
-    ctx.fillRect(leftPadding, highY, graphWidth, Math.max(0, lowY - highY));
-
-    // Green zone (low traffic — below low threshold)
-    ctx.fillStyle = 'rgba(40, 167, 69, 0.07)';
-    ctx.fillRect(leftPadding, lowY, graphWidth, Math.max(0, baselineY - lowY));
-
-    // ===== Draw axis lines =====
-    ctx.strokeStyle = '#ccc';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(leftPadding, topPadding);
-    ctx.lineTo(leftPadding, baselineY);
-    ctx.lineTo(cssWidth - rightPadding, baselineY);
-    ctx.stroke();
-
-    // ===== Draw threshold lines =====
-    // Low threshold (green/yellow boundary)
-    ctx.strokeStyle = 'rgba(40, 167, 69, 0.6)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.moveTo(leftPadding, lowY);
-    ctx.lineTo(cssWidth - rightPadding, lowY);
-    ctx.stroke();
-
-    // High threshold (yellow/red boundary)
-    ctx.strokeStyle = 'rgba(220, 53, 69, 0.6)';
-    ctx.beginPath();
-    ctx.moveTo(leftPadding, highY);
-    ctx.lineTo(cssWidth - rightPadding, highY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // ===== Build spline path =====
-    function buildSplinePath() {
-      ctx.beginPath();
-      ctx.moveTo(controlPoints[0].x, controlPoints[0].y);
-      for (var seg = 0; seg < 23; seg++) {
-        var p0 = controlPoints[Math.max(0, seg - 1)];
-        var p1 = controlPoints[seg];
-        var p2 = controlPoints[seg + 1];
-        var p3 = controlPoints[Math.min(23, seg + 2)];
-        for (var ti = 0.05; ti <= 1; ti += 0.05) {
-          ctx.lineTo(
-            catmullRom(p0.x, p1.x, p2.x, p3.x, ti),
-            catmullRom(p0.y, p1.y, p2.y, p3.y, ti)
-          );
-        }
-      }
-    }
-
-    // ===== Draw filled area under curve =====
-    buildSplinePath();
-    ctx.lineTo(controlPoints[23].x, baselineY);
-    ctx.lineTo(controlPoints[0].x, baselineY);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(52, 168, 224, 0.20)';
-    ctx.fill();
-
-    // ===== Draw curve stroke =====
-    buildSplinePath();
-    ctx.strokeStyle = 'rgba(52, 168, 224, 0.85)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // ===== Draw control point dots (all 24 hours, with value labels) =====
-    for (var i = 0; i < 24; i++) {
-      var pt = controlPoints[i];
-      var dotRadius = pt.value > 0 ? 5 : 3;
-      ctx.fillStyle = pt.value > highThreshold ? '#dc3545' : pt.value > lowThreshold ? '#ffc107' : '#198754';
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, dotRadius, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-
-      // Draw door count number above each dot (skip zeros to reduce clutter)
-      if (pt.value > 0) {
-        ctx.fillStyle = '#333';
-        ctx.font = 'bold 9px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(String(pt.value), pt.x, pt.y - dotRadius - 2);
-      }
-    }
-
-    // ===== X-axis labels (every 3 hours: 12a, 3a, 6a, 9a, 12p, 3p, 6p, 9p) =====
-    var xLabels = ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'];
-    ctx.fillStyle = '#888';
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    for (var i = 0; i < 8; i++) {
-      var hourIndex = i * 3;
-      var xPos = leftPadding + (hourIndex + 0.5) * pointSpacing;
-      ctx.fillText(xLabels[i], xPos, baselineY + 4);
-    }
-
-    // ===== Y-axis labels =====
-    ctx.fillStyle = '#888';
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    [0, lowThreshold, highThreshold, maxDoorCount].forEach(function (v) {
-      if (v > maxDoorCount) return;
-      var y = doorCountToY(v);
-      if (y < topPadding + 4 || y > baselineY - 4) return; // skip if clipped
-      ctx.fillText(String(v), leftPadding - 4, y);
-    });
-
-    // ===== Update traffic level badge =====
-    var badge = document.getElementById('heatmap_badge_' + dayName);
-    if (badge) {
-      var dominantLevel = computeDayTrafficLevel_(curve, lowThreshold, highThreshold);
-      if (dominantLevel === 'High') {
-        badge.textContent = 'High';
-        badge.style.background = '#dc3545';
-        badge.style.color = '#fff';
-      } else if (dominantLevel === 'Moderate') {
-        badge.textContent = 'Moderate';
-        badge.style.background = '#ffc107';
-        badge.style.color = '#000';
-      } else {
-        badge.textContent = 'Low';
-        badge.style.background = '#198754';
-        badge.style.color = '#fff';
-      }
-    }
-  }
-
-  /** Classifies a 24-hour traffic curve as Low / Moderate / High based on dominant level. */
-  function computeDayTrafficLevel_(curve, lowThreshold, highThreshold) {
-    var lowCount = 0, moderateCount = 0, highCount = 0;
-    curve.forEach(function (v) {
-      if (v === 0) return; // Skip zero-traffic hours (closed periods like before 9am, after 8pm)
-      if (v >= highThreshold) highCount++;
-      else if (v >= lowThreshold) moderateCount++;
-      else lowCount++;
-    });
-    if (highCount >= moderateCount && highCount >= lowCount) return 'High';
-    if (moderateCount >= lowCount) return 'Moderate';
-    return 'Low';
-  }
-
-
   /** Escapes HTML special characters to prevent XSS in innerHTML. */
   function esc(str) {
     if (str == null) return '';
@@ -4064,6 +4038,10 @@
 
     // Load CNs on startup so badge data is ready before the user visits Schedule
     AttendanceCalendar.loadActiveCNs();
+
+    // Load employee list on startup so absence autofill and attendance search work
+    // without requiring the user to visit Admin first
+    Admin.loadEmployeeList();
 
     // Absences is the default view — trigger its onShow so the table loads
     Absences.onShow();

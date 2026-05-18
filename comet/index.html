@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <!-- index.html — COMET UI
-     VERSION: 0.7.1
+     VERSION: 0.7.3
 -->
 
 <head>
@@ -238,6 +238,38 @@
           </div>
         </div>
 
+        <!-- Accordion 3b: Schedule Preferences -->
+        <div class="comet-accordion-card">
+          <button class="comet-accordion-header" aria-expanded="false" aria-controls="accordion-schedule-prefs">
+            <span>Schedule Preferences</span>
+            <span class="comet-accordion-toggle">▼</span>
+          </button>
+          <div id="accordion-schedule-prefs" class="comet-accordion-body">
+            <p class="small text-muted mb-2">Assign preferred days off and shift assignments per employee. Preferred
+              shift is scheduled first; qualified shifts are fallbacks.</p>
+            <div style="max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;">
+              <table class="employee-roles-table" id="schedulePrefsTable">
+                <thead>
+                  <tr>
+                    <th scope="col">Employee Name</th>
+                    <th scope="col">Day Off 1</th>
+                    <th scope="col">Day Off 2</th>
+                    <th scope="col">Preferred Shift</th>
+                    <th scope="col">Qualified Shifts</th>
+                  </tr>
+                </thead>
+                <tbody id="schedulePrefsBody">
+                  <tr>
+                    <td colspan="5" class="text-muted small text-center py-3">Select a department to load employees
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <button id="btnSaveSchedulePrefs" class="btn btn-primary btn-sm mt-2">Save Schedule Preferences</button>
+          </div>
+        </div>
+
         <!-- Accordion 4: Engine Options -->
         <div class="comet-accordion-card">
           <button class="comet-accordion-header" aria-expanded="false" aria-controls="accordion-engine">
@@ -331,6 +363,31 @@
                 </div>
               </div>
 
+              <!-- Door count thresholds -->
+              <div class="mb-3 pt-2 border-top">
+                <p class="small fw-semibold mb-1">Door Count Thresholds</p>
+                <p class="small text-muted mb-2">Member counts that define each traffic level. Used to generate hourly
+                  traffic curves for the schedule engine.</p>
+                <div class="d-flex gap-3 flex-wrap align-items-end">
+                  <div>
+                    <label class="form-label small mb-1" for="heatmapLowThreshold">Low / Moderate boundary</label>
+                    <div class="input-group input-group-sm" style="width:140px;">
+                      <input type="number" id="heatmapLowThreshold" class="form-control form-control-sm" min="1"
+                        max="9999" value="100">
+                      <span class="input-group-text small">members</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="form-label small mb-1" for="heatmapHighThreshold">Moderate / High boundary</label>
+                    <div class="input-group input-group-sm" style="width:140px;">
+                      <input type="number" id="heatmapHighThreshold" class="form-control form-control-sm" min="1"
+                        max="9999" value="300">
+                      <span class="input-group-text small">members</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- Traffic level grid -->
               <div class="table-responsive mb-1 pt-2 border-top">
                 <table class="table table-bordered table-sm comet-heat-grid" id="heatmapGrid"
@@ -388,22 +445,63 @@
          Absences View
          ------------------------------------------------------------------- -->
     <div id="view-absences" class="comet-view">
+
+      <!-- Header: title left | actions right (no tabs here) -->
       <div class="comet-view-header d-flex align-items-center justify-content-between">
         <h1 class="comet-view-title">Absence Log</h1>
-        <div class="d-flex align-items-center gap-3">
-          <div class="d-flex align-items-center gap-2">
-            <label class="form-label mb-0 small fw-semibold" for="absenceDate">Date</label>
-            <button id="btnPrevDay" class="btn btn-outline-secondary btn-sm" title="Previous day">&#8592;</button>
-            <input type="date" id="absenceDate" class="form-control form-control-sm" style="width:auto;">
-            <button id="btnNextDay" class="btn btn-outline-secondary btn-sm" title="Next day">&#8594;</button>
-          </div>
-          <div class="d-flex align-items-center gap-2" style="border-left: 1px solid #dee2e6; padding-left: 1rem;">
-            <div class="form-check mb-0">
-              <input class="form-switch" type="checkbox" id="absenceSendEmailToggle" checked>
-              <label class="form-check-label ms-1 small" for="absenceSendEmailToggle">Send Email</label>
-            </div>
+        <div class="d-flex align-items-center gap-2">
+          <div class="form-check form-switch mb-0 d-flex align-items-center">
+            <input class="form-check-input" type="checkbox" id="absenceSendEmailToggle" checked>
+            <label class="form-check-label ms-2 small" for="absenceSendEmailToggle">Send Email</label>
           </div>
           <button id="btnNewAbsence" class="btn btn-primary btn-sm">+ New Entry</button>
+        </div>
+      </div>
+
+      <!-- Full-width tab bar (matches Infractions / Attendance style) -->
+      <ul id="absenceViewTabs" class="nav nav-tabs mb-0" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="tab-day" data-view="day" role="tab" aria-selected="true">Day</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-week" data-view="week" role="tab" aria-selected="false">Week</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="tab-month" data-view="month" role="tab" aria-selected="false">Month</button>
+        </li>
+      </ul>
+
+      <!-- Toolbar: search left | date controls right (only the active tab's controls show) -->
+      <!-- Outer wrappers intentionally have no d-flex so inline display:none wins over Bootstrap -->
+      <div class="d-flex align-items-center justify-content-between gap-2 px-3 py-2" style="background: #f8f9fa; border-bottom: 1px solid #dee2e6;">
+        <input type="text" id="absenceSearch" class="form-control form-control-sm"
+          placeholder="Search employee name…" style="width: 240px;">
+
+        <div id="absenceDayControls">
+          <div class="d-flex align-items-center gap-2">
+            <span class="small text-muted fw-semibold">Date</span>
+            <button id="btnPrevDay" class="btn btn-outline-secondary btn-sm" title="Previous day">&#8592;</button>
+            <input type="date" id="absenceDate" class="form-control form-control-sm" style="width: auto;">
+            <button id="btnNextDay" class="btn btn-outline-secondary btn-sm" title="Next day">&#8594;</button>
+          </div>
+        </div>
+
+        <div id="absenceWeekControls" style="display: none;">
+          <div class="d-flex align-items-center gap-2">
+            <span class="small text-muted fw-semibold">Week of</span>
+            <button id="btnPrevWeek" class="btn btn-outline-secondary btn-sm" title="Previous week">&#8592;</button>
+            <input type="date" id="absenceWeekDate" class="form-control form-control-sm" style="width: auto;">
+            <button id="btnNextWeek" class="btn btn-outline-secondary btn-sm" title="Next week">&#8594;</button>
+          </div>
+        </div>
+
+        <div id="absenceMonthControls" style="display: none;">
+          <div class="d-flex align-items-center gap-2">
+            <span class="small text-muted fw-semibold">Month</span>
+            <button id="btnPrevMonth" class="btn btn-outline-secondary btn-sm" title="Previous month">&#8592;</button>
+            <input type="month" id="absenceMonthDate" class="form-control form-control-sm" style="width: auto;">
+            <button id="btnNextMonth" class="btn btn-outline-secondary btn-sm" title="Next month">&#8594;</button>
+          </div>
         </div>
       </div>
 
@@ -416,16 +514,14 @@
               <th>Time</th>
               <th>Manager</th>
               <th>Shift</th>
-              <th>Callout</th>
-              <th>FMLA</th>
-              <th>No Show</th>
+              <th>Type</th>
               <th>Comment</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="absenceTableBody">
             <tr>
-              <td colspan="11" class="text-comet-muted small p-3">No entries yet.</td>
+              <td colspan="8" class="text-comet-muted small p-3">No entries yet.</td>
             </tr>
           </tbody>
         </table>
@@ -497,7 +593,7 @@
                   <tr>
                     <th>Employee</th>
                     <th>Rule</th>
-                    <th>Count</th>
+                    <th class="text-center">Count</th>
                     <th>Start Date</th>
                     <th>End Date</th>
                     <th>Issued</th>
@@ -515,11 +611,11 @@
               <thead>
                 <tr>
                   <th>Rule</th>
-                  <th>Count</th>
+                  <th class="text-center">Count</th>
                   <th>Start Date</th>
                   <th>End Date</th>
                   <th>Issued</th>
-                  <th>Days Left</th>
+                  <th class="text-center">Days Left</th>
                 </tr>
               </thead>
               <tbody id="cnTableBody">
@@ -727,18 +823,30 @@
           </div>
           <div class="mb-2">
             <label class="form-label small">Type</label>
-            <div class="d-flex gap-3 border rounded p-2">
+            <div class="d-flex flex-wrap gap-3 border rounded p-2">
               <div class="form-check mb-0">
                 <input class="form-check-input" type="checkbox" id="absenceIsCallout">
-                <label class="form-check-label small" for="absenceIsCallout">Call-Out</label>
+                <label class="form-check-label small" for="absenceIsCallout">
+                  <span class="absence-chip absence-chip-callout">Call-Out</span>
+                </label>
               </div>
               <div class="form-check mb-0">
                 <input class="form-check-input" type="checkbox" id="absenceIsFmla">
-                <label class="form-check-label small" for="absenceIsFmla">FMLA</label>
+                <label class="form-check-label small" for="absenceIsFmla">
+                  <span class="absence-chip absence-chip-fmla">FMLA</span>
+                </label>
               </div>
               <div class="form-check mb-0">
                 <input class="form-check-input" type="checkbox" id="absenceIsNoShow">
-                <label class="form-check-label small" for="absenceIsNoShow">No Show</label>
+                <label class="form-check-label small" for="absenceIsNoShow">
+                  <span class="absence-chip absence-chip-noshow">No Show</span>
+                </label>
+              </div>
+              <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="absenceIsLate">
+                <label class="form-check-label small" for="absenceIsLate">
+                  <span class="absence-chip absence-chip-late">Arriving Late</span>
+                </label>
               </div>
             </div>
           </div>

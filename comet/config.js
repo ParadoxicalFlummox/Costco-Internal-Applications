@@ -1,6 +1,6 @@
 /**
  * config.js — Unified configuration constants for COMET.
- * VERSION: 0.5.16
+ * VERSION: 0.6.1
  *
  * This file is the single source of truth for every magic number, color, column
  * position, and rule across all COMET modules. Nothing in any other file should
@@ -56,38 +56,40 @@ const EMPLOYEE_SHEET_STALENESS_THRESHOLD_DAYS = 7;
  *   B — Employee ID
  *   C — Hire Date
  *   D — Department
- *   E — Status ("Active", "LOA", or "Archived")
+ *   E — Secondary Depts   (comma-separated dept names; cross-dept scheduling)
+ *   F — Status            ("Active", "LOA", or "Archived")
  *         Active  = employed and available for scheduling
  *         LOA     = on Leave of Absence; excluded from schedule generation
  *         Archived = no longer employed (terminated / resigned)
- *   F — FT/PT             ("FT", "PT", or "LPT")
+ *   G — FT/PT             ("FT", "PT", or "LPT")
  *         FT  = full-time, 40 h/week
  *         PT  = part-time, 24–40 h/week
  *         LPT = limited part-time (students / weekenders), 0–12 h/week
- *   G — Day Off Pref 1    (day name, e.g. "Monday")
- *   H — Day Off Pref 2    (day name)
- *   I — Preferred Shift   (shift name from dept settings)
- *   J — Qualified Shifts  (comma-separated shift names)
- *   K — Vacation Dates    (comma-separated dates, YYYY-MM-DD or MM/DD)
- *   L — Role              (e.g. "Cashier", "Maintenance Associate")
- *   M — Seniority Rank    (calculated; do not edit manually)
- *   N — Secondary Depts   (comma-separated dept names; cross-dept scheduling)
+ *   H — Role              (e.g. "Cashier", "Maintenance Associate")
+ *   I — Qualified Roles   (comma-separated role names)
+ *   J — Day Off Pref 1    (day name, e.g. "Monday")
+ *   K — Day Off Pref 2    (day name)
+ *   L — Preferred Shift   (shift name from dept settings)
+ *   M — Qualified Shifts  (comma-separated shift names)
+ *   N — Vacation Dates    (comma-separated dates, YYYY-MM-DD or MM/DD)
+ *   O — Seniority Rank    (calculated; do not edit manually)
  */
 const EMPLOYEE_COLUMN = {
-  NAME:                  1,  // A
-  ID:                    2,  // B
-  HIRE_DATE:             3,  // C
-  DEPARTMENT:            4,  // D
-  STATUS:                5,  // E
-  FTPT:                  6,  // F
-  DAY_OFF_PREF_ONE:      7,  // G
-  DAY_OFF_PREF_TWO:      8,  // H
-  PREFERRED_SHIFT:       9,  // I
-  QUALIFIED_SHIFTS:      10, // J
-  VACATION_DATES:        11, // K
-  ROLE:                  12, // L
-  SENIORITY_RANK:        13, // M
-  SECONDARY_DEPARTMENTS: 14, // N
+  NAME: 1,  // A
+  ID: 2,  // B
+  HIRE_DATE: 3,  // C
+  DEPARTMENT: 4,  // D
+  SECONDARY_DEPARTMENTS: 5,  // E
+  STATUS: 6,  // F
+  FTPT: 7,  // G
+  ROLE: 8,  // H
+  QUALIFIED_ROLES: 9,  // I
+  DAY_OFF_PREF_ONE: 10, // J
+  DAY_OFF_PREF_TWO: 11, // K
+  PREFERRED_SHIFT: 12, // L
+  QUALIFIED_SHIFTS: 13, // M
+  VACATION_DATES: 14, // N
+  SENIORITY_RANK: 15, // O
 };
 
 
@@ -95,11 +97,24 @@ const EMPLOYEE_COLUMN = {
 // Department Settings Sheets
 // ---------------------------------------------------------------------------
 
+/** Name of the consolidated department settings sheet. */
+const SETTINGS_SHEET_NAME = 'Settings';
+
 /**
  * Prefix for per-department settings sheet names.
  * e.g. "Settings_Maintenance", "Settings_Night Merch"
  */
 const DEPT_SETTINGS_PREFIX = 'Settings_';
+
+/**
+ * Default shift templates used when a department's settings are first created.
+ * Centralized here so both getDefaultDeptSettings_() and findOrCreateDeptRow_()
+ * in scheduleSettings.js use the same starting point.
+ */
+const DEFAULT_SHIFTS = [
+  { name: 'Morning', ftpt: 'FT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 8,  hasLunch: true,  flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' },
+  { name: 'Morning', ftpt: 'PT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 5,  hasLunch: false, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' },
+];
 
 /** Default staffing head-count written to new Settings sheets. */
 const DEFAULT_STAFFING_COUNT = 6;
@@ -128,22 +143,22 @@ const STAFFING_MODE = {
  */
 const SETTINGS_RANGE = {
   STAFFING_REQUIREMENTS_TABLE: 'A2:C8',
-  SHIFT_DEFINITIONS_TABLE:     'E2:N50',
+  SHIFT_DEFINITIONS_TABLE: 'E2:N50',
 };
 
 const SETTINGS_ROWS = {
   ENGINE_OPTIONS_HEADER: 10,  // merged section label
-  ENGINE_OPTIONS_START:  11,  // row 11 = Enforce Role Minimums, row 12 = Enable Gap Fill
-  ENGINE_OPTIONS_COUNT:  2,
-  ROLE_MINIMUMS_HEADER:  14,  // merged section label
-  ROLE_MINIMUMS_LABELS:  15,  // Role | Low | Moderate | High column headers
-  ROLE_MINIMUMS_START:   16,  // first role data row
-  ROLES_HEADER:          18,  // merged section label (Role Definitions)
-  ROLES_LABELS:          19,  // Role Name | Is Pool Role column headers
-  ROLES_START:           20,  // first role definition row
+  ENGINE_OPTIONS_START: 11,  // row 11 = Enforce Role Minimums, row 12 = Enable Gap Fill
+  ENGINE_OPTIONS_COUNT: 2,
+  ROLE_MINIMUMS_HEADER: 14,  // merged section label
+  ROLE_MINIMUMS_LABELS: 15,  // Role | Low | Moderate | High column headers
+  ROLE_MINIMUMS_START: 16,  // first role data row
+  ROLES_HEADER: 18,  // merged section label (Role Definitions)
+  ROLES_LABELS: 19,  // Role Name | Is Pool Role column headers
+  ROLES_START: 20,  // first role definition row
   EMPLOYEE_ROLES_HEADER: 50,  // merged section label (Employee Roles)
   EMPLOYEE_ROLES_LABELS: 51,  // Employee ID | Role Name column headers
-  EMPLOYEE_ROLES_START:  52,  // first employee role assignment row
+  EMPLOYEE_ROLES_START: 52,  // first employee role assignment row
 };
 
 /**
@@ -157,13 +172,13 @@ const SETTINGS_ROWS = {
  * End time is computed: anchorStart + paidHours × 60 + (hasLunch ? 30 : 0)
  */
 const SHIFT_TABLE_COLUMN = {
-  NAME:          0,  // E — Shift display name (e.g. "Morning", "Night Merch")
-  STATUS:        1,  // F — "FT" or "PT" — this shift applies only to employees of this status
+  NAME: 0,  // E — Shift display name (e.g. "Morning", "Night Merch")
+  STATUS: 1,  // F — "FT" or "PT" — this shift applies only to employees of this status
   WEEKDAY_START: 2,  // G — Mon–Fri anchor start time (stored as "HH:MM" string)
-  SAT_START:     3,  // H — Saturday anchor start time (blank = same as WEEKDAY_START)
-  SUN_START:     4,  // I — Sunday anchor start time   (blank = same as WEEKDAY_START)
-  PAID_HOURS:    5,  // J — Hours counted toward the employee's weekly minimum/maximum
-  HAS_LUNCH:     6,  // K — TRUE if this shift includes an unpaid 30-minute lunch break
+  SAT_START: 3,  // H — Saturday anchor start time (blank = same as WEEKDAY_START)
+  SUN_START: 4,  // I — Sunday anchor start time   (blank = same as WEEKDAY_START)
+  PAID_HOURS: 5,  // J — Hours counted toward the employee's weekly minimum/maximum
+  HAS_LUNCH: 6,  // K — TRUE if this shift includes an unpaid 30-minute lunch break
 };
 
 
@@ -190,20 +205,20 @@ const SHIFT_TABLE_COLUMN = {
  *     Col E (5): ISO timestamp of last write
  */
 const WEEK_SHEET = {
-  HEADER_ROW:        1,
-  TIMESTAMP_ROW:     2,
-  DEPARTMENT_ROW:    3,
+  HEADER_ROW: 1,
+  TIMESTAMP_ROW: 2,
+  DEPARTMENT_ROW: 3,
   COLUMN_HEADER_ROW: 5,
-  DATA_START_ROW:    6,
+  DATA_START_ROW: 6,
 
-  COL_NAME:          1,  // A — employee name
-  COL_EMPLOYEE_ID:   2,  // B — employee ID
+  COL_NAME: 1,  // A — employee name
+  COL_EMPLOYEE_ID: 2,  // B — employee ID
   COL_SCHEDULE_JSON: 3,  // C — JSON string of the 7-day schedule
-  COL_TOTAL_HOURS:   4,  // D — total paid hours for the week
-  COL_STORED_AT:     5,  // E — ISO timestamp of last write
+  COL_TOTAL_HOURS: 4,  // D — total paid hours for the week
+  COL_STORED_AT: 5,  // E — ISO timestamp of last write
 
-  DAYS_IN_WEEK:      7,
-  SCHEMA_VERSION:    2,
+  DAYS_IN_WEEK: 7,
+  SCHEMA_VERSION: 2,
 };
 
 /**
@@ -228,12 +243,12 @@ const DAY_NAMES_IN_ORDER = [
  *      weekend-only workers who cannot commit to standard PT hours.
  */
 const HOUR_RULES = {
-  FT_MIN:   40,
-  FT_MAX:   40,
-  PT_MIN:   24,
-  PT_MAX:   40,
-  LPT_MIN:   0,  // No weekly minimum — schedule as needed
-  LPT_MAX:  12,  // Hard cap: never exceed 12 paid hours per week
+  FT_MIN: 40,
+  FT_MAX: 40,
+  PT_MIN: 24,
+  PT_MAX: 40,
+  LPT_MIN: 0,  // No weekly minimum — schedule as needed
+  LPT_MAX: 12,  // Hard cap: never exceed 12 paid hours per week
 };
 
 
@@ -325,13 +340,13 @@ const HEATMAP_DEFAULTS = {
   //   both weekends run consistent high traffic (~330) from 11am–5pm.
   defaultTrafficCurves: {
     //                       12a 1  2  3  4  5  6  7  8   9am 10  11  12p  1   2   3   4   5pm  6   7pm  8   9pm 10  11
-    'Monday':    [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-    'Tuesday':   [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-    'Wednesday': [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-    'Thursday':  [0, 0, 0, 0, 0, 0, 0, 0, 0,  75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150,   0, 0, 0],
-    'Friday':    [0, 0, 0, 0, 0, 0, 0, 0, 0,  80, 110, 140, 200, 155, 140, 200, 180, 250, 195, 205, 170,   0, 0, 0],
-    'Saturday':  [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 320, 330, 330, 320, 330, 320, 310, 200,   0,   0,   0, 0, 0],
-    'Sunday':    [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 310, 330, 325, 320, 320, 300, 250,   0,   0,   0,   0, 0, 0],
+    'Monday': [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+    'Tuesday': [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+    'Wednesday': [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+    'Thursday': [0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 100, 120, 180, 140, 120, 180, 160, 225, 170, 180, 150, 0, 0, 0],
+    'Friday': [0, 0, 0, 0, 0, 0, 0, 0, 0, 80, 110, 140, 200, 155, 140, 200, 180, 250, 195, 205, 170, 0, 0, 0],
+    'Saturday': [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 320, 330, 330, 320, 330, 320, 310, 200, 0, 0, 0, 0, 0],
+    'Sunday': [0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 200, 310, 330, 325, 320, 320, 300, 250, 0, 0, 0, 0, 0, 0],
   },
 };
 
@@ -346,9 +361,9 @@ const HEATMAP_DEFAULTS = {
  * Extended offsets (0-indexed, relative to the E2:N50 range start):
  */
 const SHIFT_TABLE_FLEX_COLUMNS = {
-  FLEX_ENABLED:         7,  // L
+  FLEX_ENABLED: 7,  // L
   FLEX_WINDOW_EARLIEST: 8,  // M
-  FLEX_WINDOW_LATEST:   9,  // N
+  FLEX_WINDOW_LATEST: 9,  // N
 };
 
 
@@ -397,9 +412,9 @@ const SPLIT_SHIFT_CONFIG = {
  * employee can ever out-rank an FT employee by tenure alone.
  */
 const SENIORITY = {
-  FT_BASE:                200000000,
-  PT_BASE:                100000000,
-  REFERENCE_DATE_STRING:  '2050-01-01',
+  FT_BASE: 200000000,
+  PT_BASE: 100000000,
+  REFERENCE_DATE_STRING: '2050-01-01',
 };
 
 
@@ -414,9 +429,9 @@ const SENIORITY = {
  * A slot's index = Math.floor((minutesSinceMidnight - COVERAGE_START_MINUTE) / SLOT_DURATION_MINUTES)
  */
 const COVERAGE = {
-  SLOT_COUNT:             39,   // 04:00–23:30 in 30-minute windows
-  COVERAGE_START_MINUTE:  240,  // 04:00 = 4 × 60
-  SLOT_DURATION_MINUTES:  30,
+  SLOT_COUNT: 39,   // 04:00–23:30 in 30-minute windows
+  COVERAGE_START_MINUTE: 240,  // 04:00 = 4 × 60
+  SLOT_DURATION_MINUTES: 30,
 };
 
 /**
@@ -424,13 +439,13 @@ const COVERAGE = {
  * Phase 3 only fills gaps within these windows; slots outside are not penalized.
  */
 const COVERAGE_WINDOW = {
-  Monday:    { startMinute: 240, endMinute: 1410 },
-  Tuesday:   { startMinute: 240, endMinute: 1410 },
+  Monday: { startMinute: 240, endMinute: 1410 },
+  Tuesday: { startMinute: 240, endMinute: 1410 },
   Wednesday: { startMinute: 240, endMinute: 1410 },
-  Thursday:  { startMinute: 240, endMinute: 1410 },
-  Friday:    { startMinute: 240, endMinute: 1410 },
-  Saturday:  { startMinute: 240, endMinute: 1320 },
-  Sunday:    { startMinute: 240, endMinute: 1260 },
+  Thursday: { startMinute: 240, endMinute: 1410 },
+  Friday: { startMinute: 240, endMinute: 1410 },
+  Saturday: { startMinute: 240, endMinute: 1320 },
+  Sunday: { startMinute: 240, endMinute: 1260 },
 };
 
 
@@ -446,20 +461,33 @@ const COVERAGE_WINDOW = {
  * Lavender = Role row background
  */
 const COLORS = {
-  FT_SHIFT:      '#4A90D9',  // Blue — full-time shift background
-  PT_SHIFT:      '#57BB8A',  // Green — part-time shift background
-  COMBO_SHIFT:   '#FF7043',  // Deep orange — hybrid/combo shift (cross-dept handoff)
-  VACATION:      '#FFD966',  // Yellow — vacation day background
-  DAY_OFF:       '#B7B7B7',  // Gray — RDO/OFF background
-  UNDER_HOURS:   '#E06666',  // Red — name cell when employee is below weekly minimum
-  OVER_HOURS_FT: '#FF9900',  // Orange — total-hours cell when FT is above 40 hours
-  HEADER_BG:     '#263238',  // Dark slate — column header row background
-  HEADER_TEXT:   '#FFFFFF',  // White — column header text
-  SUMMARY_OK:    '#B7E1CD',  // Light green — STATUS row when coverage is met
-  SUMMARY_UNDER: '#F4C7C3',  // Light red — STATUS row when coverage is short
-  ROW_LABEL_BG:  '#F5F5F5',  // Light gray — VAC/RDO/SHIFT label column background
-  ROLE_ROW_BG:   '#EDE7F6',  // Lavender — ROLE row background (non-working days and label)
-  POOL_SECTION_BG: '#F3E5F5',  // Light purple — pool member section background (traffic heatmap v0.5.0)
+  FT_SHIFT: '#4A90D9',      // Blue — full-time shift background
+  PT_SHIFT: '#57BB8A',      // Green — part-time shift background
+  COMBO_SHIFT: '#FF7043',   // Deep orange — hybrid/combo shift (cross-dept handoff)
+  VACATION: '#FFD966',      // Yellow — vacation day background
+  DAY_OFF: '#B7B7B7',       // Gray — RDO/OFF background
+  UNDER_HOURS: '#E06666',   // Red — name cell when employee is below weekly minimum
+  OVER_HOURS_FT: '#FF9900', // Orange — total-hours cell when FT is above 40 hours
+  HEADER_BG: '#263238',     // Dark slate — schedule column header row background
+  HEADER_TEXT: '#FFFFFF',   // White — header text (schedule headers, sheet headers)
+  SUMMARY_OK: '#B7E1CD',    // Light green — STATUS row when coverage is met
+  SUMMARY_UNDER: '#F4C7C3', // Light red — STATUS row when coverage is short
+  ROW_LABEL_BG: '#F5F5F5',  // Light gray — VAC/RDO/SHIFT label column background
+  ROLE_ROW_BG: '#EDE7F6',   // Lavender — ROLE row background (non-working days and label)
+  POOL_SECTION_BG: '#F3E5F5', // Light purple — pool member section background
+  TEXT_MUTED: '#666666',    // Gray — secondary/timestamp text
+  TEXT_PRIMARY: '#000000',  // Black — primary label text
+  SPACER_BG: '#EEEEEE',     // Light gray — spacer row background
+};
+
+/**
+ * Tab colors for each sheet type. Centralizes Costco brand colors so a single
+ * change here propagates to every sheet creation and wipe function.
+ */
+const SHEET_TAB_COLORS = {
+  EMPLOYEES: '#005DAA',  // Costco blue — core data sheets (Employees, Settings)
+  ACTIVE:    '#E31837',  // Costco red  — active manager views (Active CNs, COMET Config)
+  ARCHIVE:   '#B7B7B7',  // Gray        — archive/hidden sheets (Expired CNs)
 };
 
 /**
@@ -469,47 +497,47 @@ const COLORS = {
  */
 const ROLE_COLORS = {
   // Front End — blue / cyan / purple family
-  'Cashier':               '#DBEAFE',  // Blue
-  'Assistant':             '#BFDBFE',  // Medium blue  (cashier assistant)
-  'SCO':                   '#BAE6FD',  // Sky blue
-  'Liquor':                '#A5F3FC',  // Cyan
-  'PreScan':               '#EDE9FE',  // Purple
-  'Go Backs':              '#F5D0FE',  // Fuchsia
-  'Carts':                 '#CBD5E1',  // Slate
-  'Floater':               '#FEF08A',  // Yellow
+  'Cashier': '#DBEAFE',  // Blue
+  'Assistant': '#BFDBFE',  // Medium blue  (cashier assistant)
+  'SCO': '#BAE6FD',  // Sky blue
+  'Liquor': '#A5F3FC',  // Cyan
+  'PreScan': '#EDE9FE',  // Purple
+  'Go Backs': '#F5D0FE',  // Fuchsia
+  'Carts': '#CBD5E1',  // Slate
+  'Floater': '#FEF08A',  // Yellow
 
   // Merchandising — green / indigo family
-  'Morning':               '#D1FAE5',  // Green
-  'Night':                 '#C7D2FE',  // Indigo
-  'Produce':               '#BBF7D0',  // Bright green
-  'Stocker':               '#ECFDF5',  // Mint
-  'Driver':                '#FDBA74',  // Orange
+  'Morning': '#D1FAE5',  // Green
+  'Night': '#C7D2FE',  // Indigo
+  'Produce': '#BBF7D0',  // Bright green
+  'Stocker': '#ECFDF5',  // Mint
+  'Driver': '#FDBA74',  // Orange
 
   // Bakery / Food — rose and warm yellow
   // Bakery uses rose so it reads distinctly alongside Maintenance amber in
   // the Bakery dept schedule when cross-trained Merch employees appear there.
-  'Bakery':                '#FECACA',  // Rose
-  'Deli':                  '#FDE68A',  // Warm yellow
-  'Food Service':          '#FDE68A',  // Warm yellow (Food Court / Service Deli)
-  'Food Court':            '#FDE68A',  // Warm yellow
+  'Bakery': '#FECACA',  // Rose
+  'Deli': '#FDE68A',  // Warm yellow
+  'Food Service': '#FDE68A',  // Warm yellow (Food Court / Service Deli)
+  'Food Court': '#FDE68A',  // Warm yellow
 
   // Maintenance — amber
   'Maintenance Associate': '#FEF3C7',  // Amber
-  'Maintenance':           '#FEF3C7',  // Amber (alias)
+  'Maintenance': '#FEF3C7',  // Amber (alias)
 
   // Other departments
-  'Receiving':             '#A7F3D0',  // Teal green
-  'Membership Service':    '#FFFBEB',  // Light warm
-  'Security':              '#E2E8F0',  // Neutral gray-blue
-  'Tire Tech':             '#F0FDF4',  // Light mint
-  'Gas Attendant':         '#FFEDD5',  // Light orange
-  'Pharmacy Tech':         '#F3E8FF',  // Light purple
-  'Optician':              '#F0F9FF',  // Very light blue
-  'Hearing Specialist':    '#FFF0F5',  // Very light pink
+  'Receiving': '#A7F3D0',  // Teal green
+  'Membership Service': '#FFFBEB',  // Light warm
+  'Security': '#E2E8F0',  // Neutral gray-blue
+  'Tire Tech': '#F0FDF4',  // Light mint
+  'Gas Attendant': '#FFEDD5',  // Light orange
+  'Pharmacy Tech': '#F3E8FF',  // Light purple
+  'Optician': '#F0F9FF',  // Very light blue
+  'Hearing Specialist': '#FFF0F5',  // Very light pink
 
   // Leadership
-  'Lead':                  '#FEE2E2',  // Light red
-  'Supervisor':            '#FCE7F3',  // Pink
+  'Lead': '#FEE2E2',  // Light red
+  'Supervisor': '#FCE7F3',  // Pink
 };
 
 /**
@@ -545,13 +573,13 @@ const THRESHOLD_COUNT = 3;
  * Derived from the Costco Employee Agreement (March 2025).
  */
 const CODE_RULES = {
-  'TD-1': { threshold: 3, windowDays: 30  },  // Tardy 4-29 min (§11.4.2a)
-  'TD-2': { threshold: 2, windowDays: 30  },  // Tardy 30-119 min (§11.4.2b)
-  'TD-3': { threshold: 1, windowDays: 30  },  // Tardy 120+ min (§11.4.2c)
-  NS:     { threshold: 1, windowDays: 30  },  // No Show (§11.4.3e)
-  SE:     { threshold: 3, windowDays: 30  },  // Swiping Error (§11.4.12a)
-  MP:     { threshold: 3, windowDays: 30  },  // Meal Period Occurrence (§11.4.12b)
-  SZ:     { threshold: 3, windowDays: 365 },  // Suspension (§11.3.11a)
+  'TD-1': { threshold: 3, windowDays: 30 },  // Tardy 4-29 min (§11.4.2a)
+  'TD-2': { threshold: 2, windowDays: 30 },  // Tardy 30-119 min (§11.4.2b)
+  'TD-3': { threshold: 1, windowDays: 30 },  // Tardy 120+ min (§11.4.2c)
+  NS: { threshold: 1, windowDays: 30 },  // No Show (§11.4.3e)
+  SE: { threshold: 3, windowDays: 30 },  // Swiping Error (§11.4.12a)
+  MP: { threshold: 3, windowDays: 30 },  // Meal Period Occurrence (§11.4.12b)
+  SZ: { threshold: 3, windowDays: 365 },  // Suspension (§11.3.11a)
 };
 
 /** Codes that count as infractions when present in an employee's calendar. */
@@ -580,12 +608,12 @@ const EMPLOYEE_TAB_PATTERN = /^.+,\s*.+\s*-\s*\d+$/;
  *   Col C (3) — StoredAt (ISO timestamp)
  */
 const ATTENDANCE_JSON = {
-  HEADER_ROW:      1,
-  DATA_START_ROW:  2,
-  COL_YEAR:        1,        // A
-  COL_CODES_JSON:  2,        // B
-  COL_STORED_AT:   3,        // C
-  SCHEMA_VERSION:  1,
+  HEADER_ROW: 1,
+  DATA_START_ROW: 2,
+  COL_YEAR: 1,        // A
+  COL_CODES_JSON: 2,        // B
+  COL_STORED_AT: 3,        // C
+  SCHEMA_VERSION: 1,
 };
 
 /** Active counseling notices sheet tab name. */
@@ -603,10 +631,10 @@ const CN_STORE_HEADERS = ['Employee ID', 'Employee Name', 'Department', 'CNs (JS
 
 /** 1-based column positions in the CN store sheets. */
 const CN_STORE_COL = {
-  employeeId:   1,
+  employeeId: 1,
   employeeName: 2,
-  department:   3,
-  cnsJson:      4,
+  department: 3,
+  cnsJson: 4,
 };
 
 
@@ -614,41 +642,30 @@ const CN_STORE_COL = {
 // Absence Log (Call Log)
 // ---------------------------------------------------------------------------
 
+/** Sheet name for the unified call log. */
+const CALL_LOG_SHEET_NAME = 'Call_Log';
+
 /**
- * Column positions (0-indexed) for the Call Log sheet.
+ * Column positions (0-indexed) for the single Call_Log sheet.
  *
- *   A (0)  — Employee Name
- *   B (1)  — Employee ID
- *   C (2)  — (reserved)
- *   D (3)  — Is Callout       (checkbox)
- *   E (4)  — (reserved)
- *   F (5)  — Is FMLA          (checkbox)
- *   G (6)  — Is No Show       (checkbox)
- *   H (7)  — Department
- *   I (8)  — Time Called
- *   J (9)  — Manager (who took the call)
- *   K (10) — Scheduled Shift
- *   L-M (11-12) — (reserved)
- *   N (13) — Comment
- *   O (14) — Date
+ * New format (v0.6.0): one row per entry with JSON serialization.
+ *   A (0) — Date (JS Date object or serial)
+ *   B (1) — Employee ID (string)
+ *   C (2) — Entry JSON (string) — contains name, department, type flags, times, manager, shift, comment
+ *   D (3) — Sent (string) — blank if unsent, "sent at HH:MM" or "auto sent at HH:MM" if processed
  */
 const CALL_LOG_COLUMN = {
-  NAME:             0,
-  EMPLOYEE_ID:      1,
-  IS_CALLOUT:       3,
-  IS_FMLA:          5,
-  IS_NOSHOW:        6,
-  DEPARTMENT:       7,
-  TIME:             8,
-  MANAGER:          9,
-  SCHEDULED_SHIFT:  10,
-  COMMENT:          13,
-  DATE:             14,
-  SENT:             15,
+  DATE: 0,
+  EMPLOYEE_ID: 1,
+  ENTRY_JSON: 2,
+  SENT: 3,
 };
 
-/** Row number where Call Log data begins (row 1 = title, row 2 = headers, row 3 = data). */
-const CALL_LOG_DATA_START_ROW = 3;
+/** Row number where Call Log data begins (row 1 = header, row 2+ = data). */
+const CALL_LOG_DATA_START_ROW = 2;
+
+/** Number of days to retain in the call log before auto-purging. Set to 0 to disable retention. */
+const CALL_LOG_RETENTION_DAYS = 365;
 
 /**
  * Google Sheets uses a serial date where Dec 30, 1899 = 0.

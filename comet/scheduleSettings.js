@@ -1,6 +1,6 @@
 /**
  * scheduleSettings.js — Department settings read/write for COMET.
- * VERSION: 0.9.0
+ * VERSION: 0.9.1
  *
  * STORAGE ARCHITECTURE:
  *   All department settings are stored in a single consolidated "Settings" sheet.
@@ -195,10 +195,7 @@ function ensureDeptSettingsBaseStructure_(deptName) {
 function getDefaultDeptSettings_() {
   return {
     staffingReqs: DAY_NAMES_IN_ORDER.map(day => ({ day, count: DEFAULT_STAFFING_COUNT, mode: STAFFING_MODE.COUNT })),
-    shifts: [
-      { name: 'Morning', ftpt: 'FT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 8, hasLunch: true, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' },
-      { name: 'Morning', ftpt: 'PT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 5, hasLunch: false, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' }
-    ],
+    shifts: DEFAULT_SHIFTS, // config.js
     engineOptions: { enforceRoleMinimums: true, gapFillEnabled: true },
     roleMinimums: {},
     roles: [],
@@ -218,7 +215,7 @@ function getDefaultDeptSettings_() {
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
 function getOrCreateSettingsSheet_(workbook) {
-  const sheetName = 'Settings';
+  const sheetName = SETTINGS_SHEET_NAME; // config.js
   let sheet = workbook.getSheetByName(sheetName);
   if (sheet) return sheet;
 
@@ -252,10 +249,7 @@ function findOrCreateDeptRow_(sheet, deptName) {
   // Initialize with default settings JSON
   const defaultSettings = {
     staffingReqs: DAY_NAMES_IN_ORDER.map(day => ({ day, count: DEFAULT_STAFFING_COUNT, mode: STAFFING_MODE.COUNT })),
-    shifts: [
-      { name: 'Morning', ftpt: 'FT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 8, hasLunch: true, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' },
-      { name: 'Morning', ftpt: 'PT', weekdayStart: '08:00', satStart: '', sunStart: '', paidHours: 5, hasLunch: false, flexEnabled: true, flexWindowEarliest: '07:30', flexWindowLatest: '09:00' }
-    ],
+    shifts: DEFAULT_SHIFTS, // config.js
     engineOptions: { enforceRoleMinimums: true, gapFillEnabled: true },
     roleMinimums: {},
     roles: [],
@@ -275,7 +269,7 @@ function writeDefaultSettingsSheet_(sheet) {
   // --- Header row ---
   const headerRange = sheet.getRange(1, 1, 1, 2);
   headerRange.setValues([['Department', 'Settings JSON (Do not edit manually)']]);
-  headerRange.setFontWeight('bold').setBackground('#005DAA').setFontColor('#FFFFFF');
+  headerRange.setFontWeight('bold').setBackground(SHEET_TAB_COLORS.EMPLOYEES).setFontColor(COLORS.HEADER_TEXT); // config.js
 
   // Set column widths
   sheet.setColumnWidth(1, 150);  // Department name
@@ -285,7 +279,7 @@ function writeDefaultSettingsSheet_(sheet) {
   sheet.setFrozenRows(1);
 
   // Set tab color
-  sheet.setTabColor('#005DAA');
+  sheet.setTabColor(SHEET_TAB_COLORS.EMPLOYEES); // config.js
 }
 
 

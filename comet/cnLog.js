@@ -1,6 +1,6 @@
 /**
  * cnLog.js — CN store management, deduplication indexes, and CN expiry processing.
- * VERSION: 0.4.7
+ * VERSION: 0.4.8
  *
  * STORAGE MODEL
  * -------------
@@ -70,7 +70,7 @@ function getOrCreateActiveCNsSheet_() {
   let sheet = workbook.getSheetByName(ACTIVE_CNS_SHEET_NAME); // config.js
   if (!sheet) {
     sheet = workbook.insertSheet(ACTIVE_CNS_SHEET_NAME);
-    initializeCNStoreSheet_(sheet, 'Active Counseling Notices', '#E31837', '#FFFFFF');
+    initializeCNStoreSheet_(sheet, 'Active Counseling Notices', SHEET_TAB_COLORS.ACTIVE, COLORS.HEADER_TEXT); // config.js
     console.log(`cnLog: Created Active CNs sheet in "${workbook.getName()}".`);
   }
   return sheet;
@@ -86,7 +86,7 @@ function getOrCreateExpiredCNsSheet_() {
   let sheet = workbook.getSheetByName(EXPIRED_CNS_SHEET_NAME); // config.js
   if (!sheet) {
     sheet = workbook.insertSheet(EXPIRED_CNS_SHEET_NAME);
-    initializeCNStoreSheet_(sheet, 'Expired Counseling Notices (Archive)', '#B7B7B7', '#FFFFFF');
+    initializeCNStoreSheet_(sheet, 'Expired Counseling Notices (Archive)', SHEET_TAB_COLORS.ARCHIVE, COLORS.HEADER_TEXT); // config.js
     sheet.hideSheet();
     console.log(`cnLog: Created (Expired CNs) sheet (hidden) in "${workbook.getName()}".`);
   }

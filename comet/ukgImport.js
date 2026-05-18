@@ -1,6 +1,6 @@
 /**
  * ukgImport.js — UKG employee data import for COMET.
- * VERSION: 0.2.7
+ * VERSION: 0.3.0
  *
  * This file owns the server-side logic for upserting employee rows into the
  * Employees sheet from a parsed UKG CSV export.
@@ -20,7 +20,8 @@
  *   B — Employee ID
  *   C — Hire Date
  *   D — Department
- *   E — Status ("Active" or "Archived")
+ *   E — Secondary Departments (blank on import; filled later)
+ *   F — Status ("Active" or "Archived")
  *
  * RETURN VALUE:
  *   { added: number, updated: number, skipped: number }
@@ -75,13 +76,15 @@ function importEmployeesFromUkg_(rows) {
       sheet.getRange(sheetRow, EMPLOYEE_COLUMN.DEPARTMENT).setValue(incoming.department || '');
       updated++;
     } else {
-      // Queue new row for batch append
+      // Queue new row for batch append — columns must match EMPLOYEE_COLUMN layout exactly:
+      // A=Name, B=ID, C=HireDate, D=Department, E=SecondaryDepartments(blank), F=Status
       newRows.push([
         name,
         id,
         incoming.hireDate || '',
         incoming.department || '',
-        'Active',
+        '',        // E: Secondary Departments — blank on initial import
+        'Active',  // F: Status
       ]);
     }
   });
@@ -119,9 +122,8 @@ function getAllEmployees_() {
   if (lastRow < EMPLOYEES_DATA_START_ROW) return []; // config.js
 
   const numRows = lastRow - EMPLOYEES_DATA_START_ROW + 1;
-  // Read all 14 columns (A–N) so schedule-specific fields F–N are included,
-  // including Secondary Departments (column N) needed by the Admin modal.
-  const numCols = Math.max(5, EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS); // 14
+  // Read all 15 columns (A–O) so all schedule-specific fields are included.
+  const numCols = Math.max(5, EMPLOYEE_COLUMN.SENIORITY_RANK); // 15
   const data = sheet.getRange(EMPLOYEES_DATA_START_ROW, 1, numRows, numCols).getValues();
 
   return data
@@ -135,20 +137,21 @@ function getAllEmployees_() {
         hireDate = String(hireDateRaw).trim();
       }
       return {
-        name:            String(row[EMPLOYEE_COLUMN.NAME            - 1] || '').trim(),
-        id:              String(row[EMPLOYEE_COLUMN.ID              - 1] || '').trim(),
+        name: String(row[EMPLOYEE_COLUMN.NAME - 1] || '').trim(),
+        id: String(row[EMPLOYEE_COLUMN.ID - 1] || '').trim(),
         hireDate,
-        department:      String(row[EMPLOYEE_COLUMN.DEPARTMENT      - 1] || '').trim(),
-        status:          String(row[EMPLOYEE_COLUMN.STATUS          - 1] || 'Active').trim(),
-        ftpt:            String(row[EMPLOYEE_COLUMN.FTPT            - 1] || '').trim(),
-        dayOffPrefOne:   String(row[EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE - 1] || '').trim(),
-        dayOffPrefTwo:   String(row[EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO - 1] || '').trim(),
-        preferredShift:  String(row[EMPLOYEE_COLUMN.PREFERRED_SHIFT - 1] || '').trim(),
+        department: String(row[EMPLOYEE_COLUMN.DEPARTMENT - 1] || '').trim(),
+        secondaryDepartments: String(row[EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS - 1] || '').trim(),
+        status: String(row[EMPLOYEE_COLUMN.STATUS - 1] || 'Active').trim(),
+        ftpt: String(row[EMPLOYEE_COLUMN.FTPT - 1] || '').trim(),
+        role: String(row[EMPLOYEE_COLUMN.ROLE - 1] || '').trim(),
+        qualifiedRoles: String(row[EMPLOYEE_COLUMN.QUALIFIED_ROLES - 1] || '').trim(),
+        dayOffPrefOne: String(row[EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE - 1] || '').trim(),
+        dayOffPrefTwo: String(row[EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO - 1] || '').trim(),
+        preferredShift: String(row[EMPLOYEE_COLUMN.PREFERRED_SHIFT - 1] || '').trim(),
         qualifiedShifts: String(row[EMPLOYEE_COLUMN.QUALIFIED_SHIFTS - 1] || '').trim(),
-        vacationDates:   String(row[EMPLOYEE_COLUMN.VACATION_DATES  - 1] || '').trim(),
-        role:                  String(row[EMPLOYEE_COLUMN.ROLE                  - 1] || '').trim(),
-        seniorityRank:         Number(row[EMPLOYEE_COLUMN.SENIORITY_RANK         - 1] || 0),
-        secondaryDepartments:  String(row[EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS  - 1] || '').trim(),
+        vacationDates: String(row[EMPLOYEE_COLUMN.VACATION_DATES - 1] || '').trim(),
+        seniorityRank: Number(row[EMPLOYEE_COLUMN.SENIORITY_RANK - 1] || 0),
       };
     });
 }
@@ -211,32 +214,37 @@ function getOrCreateEmployeesSheet_(workbook) {
  */
 function writeEmployeesSheetHeader_(sheet) {
   const headers = [
-    'Name (Last, First)', 'Employee ID', 'Hire Date', 'Department', 'Status',
-    'FT/PT', 'Day Off Pref 1', 'Day Off Pref 2', 'Preferred Shift',
-    'Qualified Shifts', 'Vacation Dates', 'Role', 'Seniority Rank', 'Secondary Departments',
+    'Name (Last, First)', 'Employee ID', 'Hire Date', 'Department',
+    'Secondary Departments',
+    'Status', 'FT/PT',
+    'Role', 'Qualified Roles',
+    'Day Off Pref 1', 'Day Off Pref 2', 'Preferred Shift', 'Qualified Shifts',
+    'Vacation Dates',
+    'Seniority Rank',
   ];
   const headerRange = sheet.getRange(1, 1, 1, headers.length);
 
   headerRange
     .setValues([headers])
     .setFontWeight('bold')
-    .setBackground('#005DAA')
-    .setFontColor('#FFFFFF');
+    .setBackground(SHEET_TAB_COLORS.EMPLOYEES)
+    .setFontColor(COLORS.HEADER_TEXT); // config.js
 
-  sheet.setColumnWidth(1,  200); // Name
-  sheet.setColumnWidth(2,  110); // ID
-  sheet.setColumnWidth(3,  110); // Hire Date
-  sheet.setColumnWidth(4,  160); // Department
-  sheet.setColumnWidth(5,   90); // Status
-  sheet.setColumnWidth(6,   70); // FT/PT
-  sheet.setColumnWidth(7,  120); // Day Off Pref 1
-  sheet.setColumnWidth(8,  120); // Day Off Pref 2
-  sheet.setColumnWidth(9,  140); // Preferred Shift
-  sheet.setColumnWidth(10, 180); // Qualified Shifts
-  sheet.setColumnWidth(11, 180); // Vacation Dates
-  sheet.setColumnWidth(12, 160); // Role
-  sheet.setColumnWidth(13, 110); // Seniority Rank
-  sheet.setColumnWidth(14, 200); // Secondary Departments
+  sheet.setColumnWidth(1,  200); // A  Name
+  sheet.setColumnWidth(2,  110); // B  Employee ID
+  sheet.setColumnWidth(3,  110); // C  Hire Date
+  sheet.setColumnWidth(4,  160); // D  Department
+  sheet.setColumnWidth(5,  200); // E  Secondary Departments
+  sheet.setColumnWidth(6,   90); // F  Status
+  sheet.setColumnWidth(7,   70); // G  FT/PT
+  sheet.setColumnWidth(8,  140); // H  Role
+  sheet.setColumnWidth(9,  180); // I  Qualified Roles
+  sheet.setColumnWidth(10, 120); // J  Day Off Pref 1
+  sheet.setColumnWidth(11, 120); // K  Day Off Pref 2
+  sheet.setColumnWidth(12, 140); // L  Preferred Shift
+  sheet.setColumnWidth(13, 180); // M  Qualified Shifts
+  sheet.setColumnWidth(14, 180); // N  Vacation Dates
+  sheet.setColumnWidth(15, 110); // O  Seniority Rank
 
   sheet.setFrozenRows(1);
 }
@@ -274,15 +282,16 @@ function updateEmployeeScheduleFields_(id, fields) {
 
   const sheetRow = index.get(String(id));
   const writes = [
-    [EMPLOYEE_COLUMN.STATUS,                 'status'],
-    [EMPLOYEE_COLUMN.FTPT,                   'ftpt'],
-    [EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE,       'dayOffPrefOne'],
-    [EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO,       'dayOffPrefTwo'],
-    [EMPLOYEE_COLUMN.PREFERRED_SHIFT,        'preferredShift'],
-    [EMPLOYEE_COLUMN.QUALIFIED_SHIFTS,       'qualifiedShifts'],
-    [EMPLOYEE_COLUMN.VACATION_DATES,         'vacationDates'],
-    [EMPLOYEE_COLUMN.ROLE,                   'role'],
-    [EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS,  'secondaryDepartments'],
+    [EMPLOYEE_COLUMN.SECONDARY_DEPARTMENTS, 'secondaryDepartments'],
+    [EMPLOYEE_COLUMN.STATUS, 'status'],
+    [EMPLOYEE_COLUMN.FTPT, 'ftpt'],
+    [EMPLOYEE_COLUMN.ROLE, 'role'],
+    [EMPLOYEE_COLUMN.QUALIFIED_ROLES, 'qualifiedRoles'],
+    [EMPLOYEE_COLUMN.DAY_OFF_PREF_ONE, 'dayOffPrefOne'],
+    [EMPLOYEE_COLUMN.DAY_OFF_PREF_TWO, 'dayOffPrefTwo'],
+    [EMPLOYEE_COLUMN.PREFERRED_SHIFT, 'preferredShift'],
+    [EMPLOYEE_COLUMN.QUALIFIED_SHIFTS, 'qualifiedShifts'],
+    [EMPLOYEE_COLUMN.VACATION_DATES, 'vacationDates'],
   ];
 
   writes.forEach(([col, key]) => {
