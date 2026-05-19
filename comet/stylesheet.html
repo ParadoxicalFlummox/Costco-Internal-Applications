@@ -1836,6 +1836,11 @@
     transition: border-color 0.15s ease, color 0.15s ease;
   }
 
+  /* Schedule Preferences table — left-border color by employee FT/PT status */
+  .sched-pref-row-ft td:first-child  { border-left: 3px solid #3B82F6; padding-left: 8px; }
+  .sched-pref-row-pt td:first-child  { border-left: 3px solid #22C55E; padding-left: 8px; }
+  .sched-pref-row-lpt td:first-child { border-left: 3px solid #F97316; padding-left: 8px; }
+
   /* shift-chip mirrors role-chip for the Schedule Preferences accordion */
   .shift-chip {
     display: inline-flex;
@@ -1849,6 +1854,10 @@
     color: var(--comet-text);
     white-space: nowrap;
   }
+
+  .shift-chip-ft  { background-color: #DBEAFE; border-color: #93C5FD; color: #1E40AF; }
+  .shift-chip-pt  { background-color: #DCFCE7; border-color: #86EFAC; color: #166534; }
+  .shift-chip-lpt { background-color: #FFF7ED; border-color: #FED7AA; color: #9A3412; }
 
   .shift-chip-remove {
     background: none;

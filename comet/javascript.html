@@ -2331,6 +2331,7 @@
     var _currentDept = null;
     var _cachedDepartments = null;
     var _heatmapConfig = null;
+    var _shiftFtptMap = {}; // name.toLowerCase() → 'FT'|'PT'|'LPT' for chip/dropdown coloring
     var _dirtyState = {
       shifts: false,
       roles: false,
@@ -2394,6 +2395,9 @@
         };
       }
 
+      // Re-fetch settings when returning to this tab so saved changes are reflected.
+      if (_currentDept) loadDeptSettings_(_currentDept);
+
       // Initialize accordion handlers
       _initializeAccordions();
 
@@ -2439,7 +2443,7 @@
         btnAddRoleDef.onclick = function () {
           var newRow = '<tr>'
             + '<td><input type="text" class="form-control form-control-sm role-name" placeholder="Role name"></td>'
-            + '<td><input type="checkbox" class="form-check-input role-pool-checkbox"></td>'
+            + '<td style="text-align: center;"><input type="checkbox" class="form-check-input role-pool-checkbox"></td>'
             + '<td><button class="btn btn-sm btn-outline-danger" onclick="this.closest(\'tr\').remove()">✕</button></td>'
             + '</tr>';
           document.getElementById('roleDefsBody').insertAdjacentHTML('beforeend', newRow);
@@ -2540,6 +2544,18 @@
           document.getElementById('roleMinimumsCoverageBody').insertAdjacentHTML('beforeend', newRow);
         };
       }
+
+      // Pool seniority slider — update display label in real time
+      var poolSlider = document.getElementById('poolSeniorityYearsSlider');
+      var poolSliderDisplay = document.getElementById('poolSeniorityYearsDisplay');
+      function updatePoolSliderDisplay_() {
+        if (!poolSlider || !poolSliderDisplay) return;
+        var years = parseInt(poolSlider.value, 10);
+        poolSliderDisplay.textContent = years === 0
+          ? 'All employees (0 years)'
+          : 'Less than ' + years + ' year' + (years === 1 ? '' : 's');
+      }
+      if (poolSlider) poolSlider.oninput = updatePoolSliderDisplay_;
 
       // Save Pool Config button
       var btnSavePoolConfig = document.getElementById('btnSavePoolConfig');
@@ -2791,7 +2807,9 @@
     }
 
     function loadSchedulePrefsData_(deptData) {
-      var availableShifts = (deptData.shifts || []).map(function (s) { return s.name; }).filter(Boolean);
+      var availableShifts = (deptData.shifts || []).filter(function (s) { return s.name; });
+      _shiftFtptMap = {};
+      availableShifts.forEach(function (s) { _shiftFtptMap[s.name.toLowerCase()] = s.ftpt || ''; });
       UI.callServer('getEmployeeList', undefined, function (empData) {
         var empList = (empData && empData.data && empData.data.employees) || (empData && empData.employees);
         if (!empList || !Array.isArray(empList)) return;
@@ -2828,7 +2846,8 @@
         }).join('');
         var addQualifiedBtn = '<button type="button" class="btn btn-sm btn-outline-secondary btn-add-qual-shift" data-emp-id="' + esc(emp.id) + '">+ Add</button>';
 
-        return '<tr data-emp-id="' + esc(emp.id) + '">'
+        var ftptClass = emp.ftpt === 'FT' ? 'sched-pref-row-ft' : (emp.ftpt === 'LPT' ? 'sched-pref-row-lpt' : 'sched-pref-row-pt');
+        return '<tr data-emp-id="' + esc(emp.id) + '" class="' + ftptClass + '">'
           + '<td>' + esc(emp.name) + '</td>'
           + '<td>' + dayOff1 + '</td>'
           + '<td>' + dayOff2 + '</td>'
@@ -2865,14 +2884,22 @@
     function buildShiftSelect_(className, empId, selectedValue, availableShifts) {
       var select = '<select class="form-select form-select-sm ' + className + '" data-emp-id="' + esc(empId) + '">';
       select += '<option value="">— none —</option>';
-      availableShifts.forEach(function (name) {
-        select += '<option value="' + esc(name) + '"' + (name === selectedValue ? ' selected' : '') + '>' + esc(name) + '</option>';
+      availableShifts.forEach(function (shift) {
+        var name = shift.name || shift;
+        var ftpt = shift.ftpt || _shiftFtptMap[name.toLowerCase()] || '';
+        var style = ftpt === 'FT' ? ' style="background:#DBEAFE;color:#1E40AF;"'
+                  : ftpt === 'PT' ? ' style="background:#DCFCE7;color:#166534;"'
+                  : ftpt === 'LPT' ? ' style="background:#FFF7ED;color:#9A3412;"' : '';
+        var label = name + (ftpt ? ' (' + ftpt + ')' : '');
+        select += '<option value="' + esc(name) + '"' + (name === selectedValue ? ' selected' : '') + style + '>' + esc(label) + '</option>';
       });
       return select + '</select>';
     }
 
     function buildShiftChip_(empId, shiftName) {
-      return '<span class="shift-chip">'
+      var ftpt = _shiftFtptMap[(shiftName || '').toLowerCase()] || '';
+      var ftptClass = ftpt === 'FT' ? ' shift-chip-ft' : ftpt === 'LPT' ? ' shift-chip-lpt' : ftpt === 'PT' ? ' shift-chip-pt' : '';
+      return '<span class="shift-chip' + ftptClass + '">'
         + esc(shiftName)
         + ' <button type="button" class="shift-chip-remove" data-emp-id="' + esc(empId) + '" data-shift="' + esc(shiftName) + '" aria-label="Remove ' + esc(shiftName) + '">✕</button>'
         + '</span>';
@@ -2889,7 +2916,8 @@
         usedShifts.push(chipBtn.dataset.shift);
       });
 
-      var available = availableShifts.filter(function (name) {
+      var available = availableShifts.filter(function (shift) {
+        var name = shift.name || shift;
         return usedShifts.indexOf(name) === -1;
       });
 
@@ -2900,11 +2928,17 @@
 
       var select = document.createElement('select');
       select.className = 'form-select form-select-sm';
-      select.style.width = '130px';
+      select.style.width = '150px';
       select.style.display = 'inline-block';
-      available.forEach(function (name) {
+      available.forEach(function (shift) {
+        var name = shift.name || shift;
+        var ftpt = shift.ftpt || _shiftFtptMap[name.toLowerCase()] || '';
         var opt = document.createElement('option');
-        opt.value = opt.textContent = name;
+        opt.value = name;
+        opt.textContent = name + (ftpt ? ' (' + ftpt + ')' : '');
+        if (ftpt === 'FT')  { opt.style.background = '#DBEAFE'; opt.style.color = '#1E40AF'; }
+        if (ftpt === 'PT')  { opt.style.background = '#DCFCE7'; opt.style.color = '#166534'; }
+        if (ftpt === 'LPT') { opt.style.background = '#FFF7ED'; opt.style.color = '#9A3412'; }
         select.appendChild(opt);
       });
 
@@ -3420,7 +3454,11 @@
       };
     }
 
-    return { onShow };
+    function refreshCurrentDept() {
+      if (_currentDept) loadDeptSettings_(_currentDept);
+    }
+
+    return { onShow, refreshCurrentDept };
   })();
 
   // ------------------------------------------------------------
@@ -4028,7 +4066,7 @@
       });
       AttendanceCalendar.loadActiveCNs();
       if (typeof Admin !== 'undefined') Admin.loadEmployeeList();
-      if (_currentDept) loadDeptSettings_(_currentDept);
+      if (typeof Settings !== 'undefined') Settings.refreshCurrentDept();
       UI.showToast('Refreshed.', 'success');
     });
 

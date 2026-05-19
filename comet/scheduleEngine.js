@@ -415,7 +415,7 @@ function loadRosterSortedBySeniority_(deptName, weekStartDate, preloadedSheets) 
   const employeesSheet = workbook.getSheetByName(EMPLOYEES_SHEET_NAME);
   const employeesData = employeesSheet ? employeesSheet.getDataRange().getValues() : [];
 
-  // Build a lookup from employee ID → column N secondary departments string
+  // Build a lookup from employee ID → secondary departments string (column E)
   const secondaryDeptByEmployeeId = {};
   if (employeesData && employeesData.length > 0) {
     for (let rowIdx = EMPLOYEES_DATA_START_ROW - 1; rowIdx < employeesData.length; rowIdx++) {

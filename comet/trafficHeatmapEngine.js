@@ -186,7 +186,7 @@ function buildStaggeredStartMap_(shiftTimingMap, dayTrafficLevels, weekStartDate
       if (shiftDef.flexEnabled === false) {
         // Fixed shift: use the day-specific anchor start time (sat/sun may differ)
         const fixedStart = getStartMinutesForDay_(shiftDef, dayName); // settingsManager.js
-        staggerMap[dayName][shiftKey] = [formatMinutesAsTimeString(fixedStart)];
+        staggerMap[dayName][shiftKey] = [minutesToHHMM_(fixedStart)];
         return;
       }
 
@@ -251,10 +251,8 @@ function computeStaggerPositions_(shiftDef, trafficLevel, dayName, dayIndex, wee
   // Bias the positions based on traffic level
   const biased = biasStaggerPositions_(positions, trafficLevel);
 
-  // Convert to "HH:MM" strings
-  return biased.map(function(minSinceMidnight) {
-    return formatMinutesAsTimeString(minSinceMidnight);
-  });
+  // Convert to 24-hour HH:MM strings for round-trip compatibility with timeStringToMinutes_().
+  return biased.map(minutesToHHMM_);
 }
 
 /**
@@ -382,18 +380,17 @@ function selectPoolMembers_(poolMembers, trafficLevel, heatmapConfig) {
 // ---------------------------------------------------------------------------
 
 /**
- * Converts minutes since midnight to a 12-hour "h:mm AM/PM" string.
- * Reuses the function from settingsManager.js.
+ * Converts minutes since midnight to a 24-hour "HH:MM" string.
+ * Used for stagger map storage so timeStringToMinutes_() can round-trip correctly.
+ * Display conversion to 12-hour happens in formatMinutesAsTimeRange (scheduleEngine/settingsManager).
  *
  * @param {number} totalMinutes
- * @returns {string}
+ * @returns {string} e.g. "14:30"
  */
-function formatMinutesAsTimeString(totalMinutes) {
-  const totalHours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  const period = totalHours >= 12 ? 'PM' : 'AM';
-  const twelve = totalHours % 12 === 0 ? 12 : totalHours % 12;
-  return twelve + ':' + String(minutes).padStart(2, '0') + ' ' + period;
+function minutesToHHMM_(totalMinutes) {
+  const h = Math.floor(totalMinutes / 60) % 24;
+  const m = totalMinutes % 60;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
 
 /**
