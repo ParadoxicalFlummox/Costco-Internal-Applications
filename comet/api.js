@@ -162,6 +162,11 @@ function generateSchedule(deptName, mondayDate) {
       const staffingRequirements = loadStaffingRequirements(deptName); // settingsManager.js
       writeAndFormatSchedule(sheet, result.employeeList, result.weekGrid, staffingRequirements, weekStartDate, deptName, result.poolMemberIds, result.comboParticipantIds); // formatter.js
 
+      // Remove vacation dates that were consumed by this week's schedule.
+      logExecutionTime_('Consume vacation dates', function () {
+        consumeVacationDatesForWeek_(result.employeeList, result.weekGrid, weekStartDate);
+      });
+
       // Sort workbook tabs and clean up stale Week sheets.
       logExecutionTime_('Cleanup and sort sheets', function () {
         cleanupWeekSheets_();
@@ -1575,6 +1580,53 @@ function getScheduleWeeksForMonth(deptName, monthDate) {
  *
  * @returns {{ hidden: number, deleted: number }}
  */
+/**
+ * After a schedule is written, removes vacation dates that fell within the
+ * scheduled week from each employee's VACATION_DATES cell in the Employees sheet.
+ * Only YYYY-MM-DD dates are removed; MM/DD entries are left as-is since they
+ * are year-relative and may apply to future years.
+ *
+ * @param {Array} employeeList  — from generateWeeklySchedule_ result
+ * @param {Array} weekGrid      — parallel grid; VAC cells identify consumed dates
+ * @param {Date}  weekStartDate — Monday of the scheduled week
+ */
+function consumeVacationDatesForWeek_(employeeList, weekGrid, weekStartDate) {
+  const weekEndDate = new Date(weekStartDate);
+  weekEndDate.setDate(weekStartDate.getDate() + 6);
+  weekEndDate.setHours(23, 59, 59, 999);
+
+  const weekStart = new Date(weekStartDate); weekStart.setHours(0, 0, 0, 0);
+
+  employeeList.forEach(function (employee, employeeIndex) {
+    if (!employee.vacationDateStrings || employee.vacationDateStrings.length === 0) return;
+
+    // Determine which dates were actually consumed (cell type is VAC this week).
+    const consumedDayIndices = new Set();
+    for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+      if (weekGrid[employeeIndex] && weekGrid[employeeIndex][dayIndex] &&
+          weekGrid[employeeIndex][dayIndex].type === 'VAC') {
+        consumedDayIndices.add(dayIndex);
+      }
+    }
+    if (consumedDayIndices.size === 0) return;
+
+    // Filter out only the YYYY-MM-DD dates that match a consumed day.
+    const remaining = employee.vacationDateStrings.filter(function (dateString) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString.trim())) return true; // keep MM/DD and unparseable
+      const d = new Date(dateString.trim() + 'T00:00:00');
+      if (isNaN(d.getTime())) return true;
+      const dayIndex = Math.round((d.getTime() - weekStart.getTime()) / 86400000);
+      return !consumedDayIndices.has(dayIndex);
+    });
+
+    if (remaining.length === employee.vacationDateStrings.length) return; // nothing consumed
+
+    updateEmployeeScheduleFields_(employee.employeeId, {
+      vacationDates: remaining.join(', '),
+    }); // ukgImport.js
+  });
+}
+
 function cleanupWeekSheets_() {
   const workbook = SpreadsheetApp.getActiveSpreadsheet();
   const now = new Date();
