@@ -1,6 +1,6 @@
 /**
  * setup.js — First-run sheet bootstrap and onOpen menu for COMET.
- * VERSION: 0.3.5
+ * VERSION: 0.3.6
  *
  * This file has two responsibilities:
  *
@@ -181,7 +181,7 @@ function menuValidateEmployees() {
     for (let row = EMPLOYEES_DATA_START_ROW; row <= data.length; row++) {
       const rowData = data[row - 1];
       const name = rowData[EMPLOYEE_COLUMN.NAME - 1];
-      const ftpt = rowData[EMPLOYEE_COLUMN.FT_PT - 1];
+      const ftpt = rowData[EMPLOYEE_COLUMN.FTPT - 1];
       const hireDate = rowData[EMPLOYEE_COLUMN.HIRE_DATE - 1];
       const qualifiedShifts = rowData[EMPLOYEE_COLUMN.QUALIFIED_SHIFTS - 1];
 

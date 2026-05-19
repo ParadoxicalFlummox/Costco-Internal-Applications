@@ -2421,13 +2421,14 @@
           if (!_currentDept) { UI.showToast('Select a department first.', 'error'); return; }
           var shifts = collectShiftsFromDom_();
           if (shifts.length === 0) { UI.showToast('Add at least one shift before saving.', 'warning'); return; }
-          var shiftNames = shifts.map(function (s) { return s.name.toLowerCase(); });
-          var hasDuplicates = shiftNames.some(function (n, i) { return shiftNames.indexOf(n) !== i; });
-          if (hasDuplicates) { UI.showToast('Shift names must be unique.', 'warning'); return; }
+          var shiftKeys = shifts.map(function (s) { return s.name.toLowerCase() + '|' + (s.ftpt || '').trim(); });
+          var hasDuplicates = shiftKeys.some(function (k, i) { return shiftKeys.indexOf(k) !== i; });
+          if (hasDuplicates) { UI.showToast('Shift name + FT/PT combination must be unique (e.g. you can have "Night FT" and "Night PT" but not two "Night FT" rows).', 'warning'); return; }
           UI.callServer('saveDeptSettings', [_currentDept, { shifts: shifts }], function () {
             UI.showToast('Shifts saved.', 'success');
             _dirtyState.shifts = false;
             _updateDirtyIndicators();
+            loadSchedulePrefsData_({ shifts: shifts });
           });
         };
       }
@@ -4027,6 +4028,7 @@
       });
       AttendanceCalendar.loadActiveCNs();
       if (typeof Admin !== 'undefined') Admin.loadEmployeeList();
+      if (_currentDept) loadDeptSettings_(_currentDept);
       UI.showToast('Refreshed.', 'success');
     });
 
